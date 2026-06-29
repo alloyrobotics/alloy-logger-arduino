@@ -44,9 +44,16 @@ When we want **live** telemetry + richest replay:
   moving from JSONL-direct to frames→shim→MCAP is a transport swap, not a rewrite.
 
 ## Files
-- `RoboLog.h` — the logger (channels, bounded queue, core-1 JSONL writer, on-change helper, `end()`).
-- `AlloyUploader.h` — confirmed two-step session + SigV4 PutObject (UNSIGNED-PAYLOAD).
-- `esp32-robolog.ino` — control-loop skeleton: WiFi+SNTP, declare channels, record a run, finalize, upload.
+- `RoboLog.h` — logger (channels, bounded queue, core-1 JSONL writer, on-change, `end()`) + **rolling
+  chunks** (`beginRolling`) with a free-space guard so flash never fills.
+- `AlloyUploader.h` — confirmed session + SigV4 PutObject (UNSIGNED-PAYLOAD); **session cached/reused**
+  across chunks (one R2 PUT per chunk).
+- `ChunkUploader.h` — background task: drains closed chunks → upload + delete, retry w/ backoff.
+- `esp32-robolog.ino` — control loop, WiFi+SNTP, rolling record → chunked upload. **LittleFS only (SD removed).**
+
+> **Update 2026-06-29:** SD removed per scope change — on-chip **LittleFS only**, with rolling chunked
+> upload giving **unlimited runtime** (each chunk uploads to Alloy then is deleted). Verified live on a
+> classic ESP32: 40s/50Hz → 5 chunks in Alloy, `dropped=0 chunks_dropped=0`.
 
 ## Decision framework (recap)
 | Situation | Path |

@@ -1,21 +1,19 @@
-// AlloyUploader.h — upload a finalized session file directly to the Alloy data API from an ESP32.
+// AlloyUploader.h — upload a finalized file directly to the Alloy data API from an ESP32.
 //
-// Protocol (confirmed against alloy-sdk 0.1.1 source + a live call — backend is Cloudflare R2,
-// path-style, region "auto"):
-//   1. POST {ALLOY_DATA_URL}/mesh/storage/upload-session
-//        header: Authorization: Bearer {ALLOY_API_KEY}
-//        body  : {"path":"<mesh-folder>","ttl_seconds":<n>}
-//      -> {"bucket","endpoint_url","region","prefix","expires_at",
-//          "credentials":{"access_key_id","secret_access_key","session_token"}}
-//      File lands at mesh key  uploads/sdk-uploads/<path>/<filename>  (prefix carries that).
-//   2. S3 PutObject  {endpoint_url}/{bucket}/{prefix}{filename}  signed with the TEMP STS creds
-//      via AWS SigV4. Over TLS we use x-amz-content-sha256: UNSIGNED-PAYLOAD (no whole-file hashing).
-//      VERIFIED: this exact signing lands a file in Alloy Mesh (R2 PUT 200).
+// Protocol (confirmed against alloy-sdk 0.1.1 + a live call — backend is Cloudflare R2, path-style,
+// region "auto"):
+//   1. POST {ALLOY_DATA_URL}/mesh/storage/upload-session, Authorization: Bearer {ALLOY_API_KEY},
+//      body {"path":"<folder>","ttl_seconds":900}
+//      -> {bucket, endpoint_url, region, prefix, expires_at, credentials{access_key_id,
+//          secret_access_key, session_token}}.  File key = uploads/sdk-uploads/<path>/<filename>.
+//   2. S3 PutObject {endpoint_url}/{bucket}/{prefix}{filename} SigV4-signed with the temp creds,
+//      x-amz-content-sha256: UNSIGNED-PAYLOAD. VERIFIED to land a file in Alloy Mesh (R2 PUT 200).
 //
-// Requires: WiFi connected, clock set via configTime()/SNTP (SigV4 needs real UTC), ArduinoJson v7.
+// The upload-session is CACHED and reused across files (creds live ~15 min) so streaming many
+// rolling chunks costs one TLS handshake per chunk (the R2 PUT) instead of two.
 //
-// SECURITY: this puts an org ALLOY_API_KEY on the device. Fine for a single dev rig; for a fleet,
-// move to per-device keys or the Option-3 server shim (which keeps creds off the robot entirely).
+// Requires: WiFi connected, SNTP UTC clock (SigV4), ArduinoJson v7.
+// SECURITY: org ALLOY_API_KEY on-device — fine for one rig; for a fleet use per-device keys / Option 3.
 
 #pragma once
 #include <FS.h>
@@ -29,27 +27,35 @@ class AlloyUploader {
 public:
   void begin(const char* dataUrl, const char* apiKey) { _dataUrl = dataUrl; _apiKey = apiKey; }
 
-  // Upload localPath (on `fs`, e.g. SD or LittleFS) into mesh folder `meshPath`. Blocking.
+  // Upload localPath (on `fs`) into mesh folder `meshPath`. Reuses a cached session when possible.
   bool uploadFile(fs::FS& fs, const char* localPath, const char* meshPath) {
-    String bucket, endpoint, region, prefix, ak, sk, tok;
-    if (!createSession(meshPath, bucket, endpoint, region, prefix, ak, sk, tok)) return false;
-
+    if (!ensureSession(meshPath)) return false;
     File f = fs.open(localPath, FILE_READ);
     if (!f) return false;
     size_t size = f.size();
     const char* base = strrchr(localPath, '/'); base = base ? base + 1 : localPath;
-    String key = prefix + String(base);                 // prefix already ends with '/'
-
-    bool ok = putObject(endpoint, bucket, region, key, ak, sk, tok, f, size);
+    String key = _prefix + String(base);
+    bool ok = putObject(_endpoint, _bucket, _region, key, _ak, _sk, _tok, f, size);
     f.close();
+    if (!ok) _haveSession = false;   // force a fresh session next time (e.g. creds expired)
     return ok;
   }
 
 private:
   String _dataUrl, _apiKey;
+  // cached session
+  String _bucket, _endpoint, _region, _prefix, _ak, _sk, _tok, _meshCached;
+  bool _haveSession = false; time_t _sessAt = 0;
 
-  bool createSession(const char* meshPath, String& bucket, String& endpoint, String& region,
-                     String& prefix, String& ak, String& sk, String& tok) {
+  bool ensureSession(const char* meshPath) {
+    time_t now = time(nullptr);
+    if (_haveSession && _meshCached == meshPath && (now - _sessAt) < 720) return true;  // <15min ttl
+    if (!createSession(meshPath)) return false;
+    _meshCached = meshPath; _sessAt = now; _haveSession = true;
+    return true;
+  }
+
+  bool createSession(const char* meshPath) {
     WiFiClientSecure cli; cli.setInsecure();           // TODO: pin Alloy/R2 CA for production
     HTTPClient http;
     if (!http.begin(cli, _dataUrl + "/mesh/storage/upload-session")) return false;
@@ -62,15 +68,15 @@ private:
 
     JsonDocument doc;
     if (deserializeJson(doc, resp)) return false;
-    bucket   = doc["bucket"].as<String>();
-    endpoint = doc["endpoint_url"].as<String>();
-    region   = doc["region"].as<String>();
-    prefix   = doc["prefix"].as<String>();
-    ak = doc["credentials"]["access_key_id"].as<String>();
-    sk = doc["credentials"]["secret_access_key"].as<String>();
-    tok = doc["credentials"]["session_token"].as<String>();
-    if (prefix.length() && prefix[prefix.length()-1] != '/') prefix += '/';
-    return bucket.length() && endpoint.length() && ak.length();
+    _bucket   = doc["bucket"].as<String>();
+    _endpoint = doc["endpoint_url"].as<String>();
+    _region   = doc["region"].as<String>();
+    _prefix   = doc["prefix"].as<String>();
+    _ak = doc["credentials"]["access_key_id"].as<String>();
+    _sk = doc["credentials"]["secret_access_key"].as<String>();
+    _tok = doc["credentials"]["session_token"].as<String>();
+    if (_prefix.length() && _prefix[_prefix.length()-1] != '/') _prefix += '/';
+    return _bucket.length() && _endpoint.length() && _ak.length();
   }
 
   // ---- SigV4 PutObject (path-style, UNSIGNED-PAYLOAD) ----

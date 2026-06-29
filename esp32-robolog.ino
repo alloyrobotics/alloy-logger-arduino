@@ -1,42 +1,40 @@
-// esp32-robolog.ino — robot black-box recorder (no camera, no audio).
-// Records sensor INPUTS + actuator OUTPUTS on one timeline -> JSONL on SD -> uploads the
-// finalized file DIRECTLY to the Alloy data API. No laptop, no intermediary.
+// esp32-robolog.ino — robot black-box recorder (no camera, no audio, NO SD card).
+// Records sensor INPUTS + actuator OUTPUTS on one timeline -> rolling JSONL chunks on on-chip
+// LittleFS -> each chunk uploaded DIRECTLY to the Alloy data API then deleted. UNLIMITED runtime.
 //
-// Session model: record a run -> end() -> upload. Triggered here by a fixed duration; swap for a
-// button / e-stop / "mission end" signal as needed. Small data (no AV) = a run is KB..few MB.
+// The recorder rolls a new chunk every CHUNK_MS/CHUNK_BYTES; a separate ChunkUploader task uploads
+// and deletes closed chunks, so the TLS upload never blocks recording. If WiFi drops, chunks queue
+// on flash (bounded; drop-oldest) and flush when it returns = store-and-forward. The pending buffer
+// can never overrun the FS (openNextChunk sheds oldest chunks if flash is full).
 //
-// Board: ESP32 / ESP32-S3 + SPI SD. Libs: ArduinoJson. WiFi for upload; SNTP for SigV4 UTC clock.
+// Board: ESP32 / ESP32-S3. Libs: ArduinoJson. SNTP for SigV4 UTC clock.
 // Config (WiFi + Alloy key) lives in secrets.h (gitignored) — copy secrets.h.example.
 
 #include <WiFi.h>
+#include <LittleFS.h>
 #include "secrets.h"
-
-// Storage backend: 0 = on-chip LittleFS (NO SD card needed), 1 = SPI SD card.
-#define USE_SD 0
-#if USE_SD
-  #include <SD.h>
-  #include <SPI.h>
-  #define LOGFS SD
-  #define SD_CS 5
-#else
-  #include <LittleFS.h>
-  #define LOGFS LittleFS
-#endif
-
 #include "RoboLog.h"
 #include "AlloyUploader.h"
+#include "ChunkUploader.h"
 
 RoboLog logger;
 AlloyUploader alloy;
+ChunkUploader chunker;
 
 uint16_t CH_IMU, CH_M0, CH_M1, CH_ENC, CH_ANALOG, CH_ESTOP, CH_MODE;
 
 static const uint32_t CONTROL_HZ = 1000;               // controller rate
-static const uint32_t LOG_HZ     = 100;                // recorder rate (decimated; keeps JSONL light)
+static const uint32_t LOG_HZ     = 50;                 // recorder rate (decimated)
 static const uint32_t LOG_EVERY  = CONTROL_HZ / LOG_HZ;
-// LittleFS holds ~1.4MB on a 4MB board, so a no-SD run is capped (~10s here ≈ 0.4MB).
-// Set USE_SD 1 (or stream in chunks) to lift the cap.
-static const uint32_t RUN_SECONDS = 10;
+
+// Rolling-chunk upload: roll every CHUNK_MS or CHUNK_BYTES (whichever first); each closed chunk
+// uploads to Alloy then is deleted, so RUNTIME IS UNLIMITED on flash alone. Sustained logging rate
+// is bounded by upload throughput (~one R2 PUT per chunk over WiFi); if the uplink can't keep up,
+// the oldest pending chunks are shed (counted as chunks_dropped), recording never stalls.
+static const uint32_t CHUNK_MS    = 8000;              // ~8s per chunk...
+static const uint32_t CHUNK_BYTES = 300000;            // ...or ~300KB, whichever first
+static const uint8_t  CHUNK_QDEPTH = 5;                // max pending chunks buffered before drop-oldest
+static const uint32_t RUN_SECONDS = 40;                // demo length; set 0 to run forever
 
 #pragma pack(push,1)
 struct ImuRec   { float ax,ay,az,gx,gy,gz; };
@@ -44,16 +42,13 @@ struct MotorRec { float cmd, current; int32_t enc; };
 struct AnalogRec{ uint16_t ch[8]; };
 #pragma pack(pop)
 
-const char* RUN_FILE = "/run.jsonl";
-
 void setup() {
   Serial.begin(115200);
-#if USE_SD
-  SPI.begin();
-  if (!SD.begin(SD_CS)) { Serial.println("SD fail"); while(1) delay(1000); }
-#else
   if (!LittleFS.begin(true)) { Serial.println("LittleFS fail"); while(1) delay(1000); }
-#endif
+  // clear any leftover chunk files from a previous boot (we don't resume undelivered chunks yet)
+  { File root = LittleFS.open("/"); for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+      String n = f.name(); f.close();
+      if (n.indexOf("c_") >= 0) LittleFS.remove(n.startsWith("/") ? n : ("/" + n)); } }
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(250); Serial.print("."); }
@@ -61,7 +56,12 @@ void setup() {
   while (time(nullptr) < 1700000000) delay(100);
   alloy.begin(ALLOY_DATA_URL, ALLOY_API_KEY);
 
-  if (!logger.begin(LOGFS, RUN_FILE, /*writerCore=*/1)) { Serial.println("log fail"); while(1) delay(1000); }
+  if (!logger.beginRolling(LittleFS, CHUNK_BYTES, CHUNK_MS, /*writerCore=*/1, /*flush=*/64, CHUNK_QDEPTH)) {
+    Serial.println("log fail"); while(1) delay(1000);
+  }
+  if (!chunker.begin(LittleFS, alloy, logger.uploadQueue(), MESH_PATH, /*core=*/1)) {
+    Serial.println("uploader fail"); while(1) delay(1000);
+  }
   CH_IMU    = logger.channel("imu",     "ax:f32,ay:f32,az:f32,gx:f32,gy:f32,gz:f32");
   CH_M0     = logger.channel("motor0",  "cmd:f32,current:f32,enc:i32");
   CH_M1     = logger.channel("motor1",  "cmd:f32,current:f32,enc:i32");
@@ -106,14 +106,17 @@ void controlTask(void*) {
     logger.writeOnChange(CH_ESTOP, 0, digitalRead(0), t);
     logger.writeOnChange(CH_MODE,  1, 0, t);
 
-    if (t >= endAt) break;
+    if (RUN_SECONDS && t >= endAt) break;   // RUN_SECONDS==0 -> record forever
     tick++;
     vTaskDelayUntil(&next, period);
   }
 
-  // ---- finalize + upload directly to Alloy ----
-  Serial.printf("run done, dropped=%u — finalizing\n", logger.dropped());
+  // ---- finalize: roll the last partial chunk, wait for the uploader to drain ----
+  Serial.printf("run done, dropped=%u chunks_dropped=%u — flushing final chunk\n",
+                logger.dropped(), logger.droppedChunks());
   logger.end();
-  Serial.println(alloy.uploadFile(LOGFS, RUN_FILE, MESH_PATH) ? "uploaded to Alloy" : "upload FAILED");
+  while (!chunker.idle()) vTaskDelay(pdMS_TO_TICKS(200));
+  Serial.printf("DONE: %u chunks uploaded, %u failed, %u dropped\n",
+                chunker.uploaded(), chunker.failed(), logger.droppedChunks());
   vTaskDelete(nullptr);
 }
