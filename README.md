@@ -17,24 +17,16 @@ nanosecond timestamp = every channel aligned by construction, with 50–100× wr
 
 ## How it works
 
-```
-   control loop (core 0, fixed rate)              writer task (core 1)
-   ┌───────────────────────────────┐              ┌────────────────────────────┐
-   │ t = esp_timer ns  (one stamp)  │   record     │ format JSONL, append to the │
-   │ read sensors  ───────────────► │   queue      │ current chunk file          │
-   │ compute / actuate             │ ───────────► │ roll a new chunk every       │
-   │ log(channel, t, payload)      │              │ CHUNK_MS / CHUNK_BYTES       │
-   └───────────────────────────────┘              └─────────────┬──────────────┘
-                                                    closed chunk │ (bounded queue)
-                                                                 ▼
-                                              ┌────────────────────────────────┐
-                                              │ ChunkUploader task              │
-                                              │  upload-session (cached) ──┐    │
-                                              │  SigV4 PutObject ──► R2 ────┘    │
-                                              │  delete local chunk on success  │
-                                              └────────────────────────────────┘
-                                                                 ▼
-                                       Alloy Mesh Storage  →  Replay · SQL · DuckDB
+```mermaid
+flowchart TD
+    A["<b>control loop</b> · core 0 · fixed rate<br/>t = esp_timer ns &nbsp;(one stamp)<br/>read sensors → compute → actuate<br/>log(channel, t, payload)"]
+    B["<b>writer task</b> · core 1<br/>format JSONL, append to current chunk<br/>roll a new chunk every CHUNK_MS / CHUNK_BYTES"]
+    U["<b>ChunkUploader task</b> · core 1<br/>upload-session (cached) → SigV4 PutObject → R2<br/>delete local chunk on success"]
+    S["<b>Alloy Mesh Storage</b><br/>Replay · SQL · DuckDB"]
+
+    A -->|record queue| B
+    B -->|closed chunk · bounded queue| U
+    U -->|HTTPS / SigV4| S
 ```
 
 - **One master clock.** `esp_timer` (µs → ns). Everything written in a control tick shares one
