@@ -18,16 +18,28 @@
 #include <ArduinoJson.h>
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
+#include "esp_arduino_version.h"
+
+// The ESP32 Arduino core's prebuilt SDK embeds the full Mozilla root CA bundle
+// (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL) inside libmbedtls; reference its
+// linker symbols so TLS verifies against it without shipping any certs ourselves.
+extern "C" {
+  extern const uint8_t alloy_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
+  extern const uint8_t alloy_crt_bundle_end[]   asm("_binary_x509_crt_bundle_end");
+}
 
 class AlloyUploader {
 public:
-  void begin(const char* dataUrl, const char* apiKey) { _dataUrl = dataUrl; _apiKey = apiKey; }
+  void begin(const char* dataUrl, const char* apiKey, bool insecure = false) {
+    _dataUrl = dataUrl; _apiKey = apiKey; _insecure = insecure;
+  }
 
   // Upload `len` bytes as <meshPath>/<filename> in Alloy. Returns true on 2xx.
-  bool uploadBuffer(const uint8_t* data, size_t len, const char* filename, const char* meshPath) {
+  bool uploadBuffer(const uint8_t* data, size_t len, const char* filename, const char* meshPath,
+                    const char* contentType = "text/csv") {
     if (!ensureSession(meshPath)) return false;
     String key = _prefix + String(filename);
-    bool ok = putObject(key, data, len);
+    bool ok = putObject(key, data, len, contentType);
     if (!ok) _haveSession = false;          // force a fresh session next time
     return ok;
   }
@@ -35,7 +47,17 @@ public:
 private:
   String _dataUrl, _apiKey;
   String _bucket, _endpoint, _region, _prefix, _ak, _sk, _tok, _meshCached;
+  bool _insecure = false;
   bool _haveSession = false; time_t _sessAt = 0;
+
+  void setupTLS(WiFiClientSecure& cli) {
+    if (_insecure) { cli.setInsecure(); return; }
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+    cli.setCACertBundle(alloy_crt_bundle_start, alloy_crt_bundle_end - alloy_crt_bundle_start);
+#else
+    cli.setCACertBundle(alloy_crt_bundle_start);
+#endif
+  }
 
   bool ensureSession(const char* meshPath) {
     time_t now = time(nullptr);
@@ -46,12 +68,14 @@ private:
   }
 
   bool createSession(const char* meshPath) {
-    WiFiClientSecure cli; cli.setInsecure();      // TODO: pin Alloy/R2 CA for production
+    WiFiClientSecure cli; setupTLS(cli);
     HTTPClient http;
     if (!http.begin(cli, _dataUrl + "/mesh/storage/upload-session")) return false;
     http.addHeader("Authorization", "Bearer " + _apiKey);
     http.addHeader("Content-Type", "application/json");
-    int code = http.POST(String("{\"path\":\"") + meshPath + "\",\"ttl_seconds\":900}");
+    JsonDocument body; body["path"] = meshPath; body["ttl_seconds"] = 900;
+    String payload; serializeJson(body, payload);
+    int code = http.POST(payload);
     if (code != 200 && code != 201) { http.end(); return false; }
     String resp = http.getString(); http.end();
     JsonDocument doc;
@@ -65,9 +89,12 @@ private:
     return _bucket.length() && _endpoint.length() && _ak.length();
   }
 
-  bool putObject(const String& key, const uint8_t* data, size_t len) {
+  bool putObject(const String& key, const uint8_t* data, size_t len, const char* contentType) {
+    // _endpoint may carry a path; both signing and the request URL want scheme://host only
+    String scheme = _endpoint.startsWith("http://") ? "http://" : "https://";
     String host = _endpoint; host.replace("https://", ""); host.replace("http://", "");
     int sl = host.indexOf('/'); if (sl >= 0) host = host.substring(0, sl);
+    String base = scheme + host;
 
     time_t now = time(nullptr); struct tm tm; gmtime_r(&now, &tm);
     char amzdate[20], datestamp[12];
@@ -97,14 +124,14 @@ private:
     String auth = "AWS4-HMAC-SHA256 Credential=" + _ak + "/" + scope
                 + ", SignedHeaders=" + sh + ", Signature=" + sigx;
 
-    WiFiClientSecure cli; cli.setInsecure();
+    WiFiClientSecure cli; setupTLS(cli);
     HTTPClient http;
-    if (!http.begin(cli, _endpoint + canonUri)) return false;
+    if (!http.begin(cli, base + canonUri)) return false;
     http.addHeader("Authorization", auth);
     http.addHeader("x-amz-content-sha256", ph);
     http.addHeader("x-amz-date", amzdate);
     http.addHeader("x-amz-security-token", _tok);
-    http.addHeader("Content-Type", "application/x-ndjson");
+    http.addHeader("Content-Type", contentType);
     int code = http.sendRequest("PUT", (uint8_t*)data, len);
     http.end();
     return code == 200 || code == 204;
@@ -120,7 +147,7 @@ private:
   }
   static String uriEncode(const String& s) {
     String o; for (size_t i = 0; i < s.length(); i++) { char c = s[i];
-      if (isalnum(c) || c=='/'||c=='-'||c=='_'||c=='.'||c=='~') o += c;
+      if (isalnum((uint8_t)c) || c=='/'||c=='-'||c=='_'||c=='.'||c=='~') o += c;
       else { char b[4]; sprintf(b, "%%%02X", (uint8_t)c); o += b; } }
     return o;
   }

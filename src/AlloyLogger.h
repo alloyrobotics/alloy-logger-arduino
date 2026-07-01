@@ -1,7 +1,7 @@
 // AlloyLogger — stream Arduino sensor/telemetry data straight to Alloy (usealloy.ai).
 //
 // Dead-simple, drop-in for any ESP32 Arduino project. You log name→value pairs at the call site;
-// the library RAM-buffers them and uploads JSONL to Alloy in the background (no SD, no flash wear,
+// the library RAM-buffers them and uploads CSV to Alloy in the background (no SD, no flash wear,
 // never blocks your loop). Alloy AI reasons over the tag + field names + values, so you usually
 // don't describe anything — but describe() lets you hand it units/ranges for richer context.
 //
@@ -15,6 +15,9 @@
 //     alloy.log("battery", volts);            // single value
 //   }
 //
+// Each channel uploads as its own CSV chunk: a one-line header (t_ns + your field names) followed
+// by bare value rows. One channel = one consistent schema = one queryable table in Alloy.
+//
 // See README for the full picture. MIT licensed.
 
 #pragma once
@@ -24,16 +27,31 @@
 #include "freertos/semphr.h"
 #include "AlloyUploader.h"
 
-#ifndef ALLOY_RECORD_MAX
-#define ALLOY_RECORD_MAX 320      // max bytes in one JSONL line
+#ifndef ALLOY_CHAN_MAX
+#define ALLOY_CHAN_MAX 24         // max bytes in a channel name
+#endif
+#ifndef ALLOY_HDR_MAX
+#define ALLOY_HDR_MAX 160         // max bytes in one CSV header (t_ns + field names)
+#endif
+#ifndef ALLOY_ROW_MAX
+#define ALLOY_ROW_MAX 200         // max bytes in one CSV value row
+#endif
+#ifndef ALLOY_MAX_CHANNELS
+#define ALLOY_MAX_CHANNELS 8      // max distinct channels logged concurrently
 #endif
 #ifndef ALLOY_MAX_DESC
 #define ALLOY_MAX_DESC 48         // max describe() entries
 #endif
+#ifndef ALLOY_MAX_WATCH
+#define ALLOY_MAX_WATCH 16        // max watch() auto-sampled signals
+#endif
+
+#define ALLOY_EPOCH_SANE 1700000000  // time() below this = SNTP hasn't synced yet
 
 class AlloyLogger;
 
 // One log record. Built on the stack, commits to the buffer when the statement ends (its ';').
+// Carries the field names (CSV header) and their values (CSV row) side by side.
 class AlloyRecord {
 public:
   AlloyRecord& set(const char* name, float value);
@@ -48,9 +66,11 @@ private:
   friend class AlloyLogger;
   AlloyRecord(AlloyLogger* log, const char* chan);
   AlloyLogger* _log;
-  int  _len;
+  char _chan[ALLOY_CHAN_MAX];
+  char _hdr[ALLOY_HDR_MAX];        // "t_ns,heading,pitch,roll"
+  char _row[ALLOY_ROW_MAX];        // "1782715694000000000,-1.23,0.52,3.14"
+  int  _hlen, _rlen;
   bool _done;
-  char _buf[ALLOY_RECORD_MAX];
 };
 
 class AlloyLogger {
@@ -61,6 +81,20 @@ public:
   AlloyLogger& buffers(uint8_t count, size_t bytes) { _nBuf = count; _bufBytes = bytes; return *this; }
   AlloyLogger& flushEvery(uint32_t ms) { _flushMs = ms; return *this; }
   AlloyLogger& core(int c) { _core = c; return *this; }
+  // Escape hatch for networks where TLS verification can't work (TLS-intercepting proxies etc.).
+  // Default is full verification against the ESP32 core's embedded Mozilla root CA bundle.
+  AlloyLogger& insecure(bool on = true) { _insecure = on; return *this; }
+
+  // ---- v2: automatic capture (set-and-forget) ----
+  // Register a signal ONCE (must be before begin(); later calls are ignored) and the library
+  // samples it for you on a timer — no code in loop(). Each tick becomes one aligned CSV row per
+  // channel, streamed like everything else. So when something unexpected happens, the data is
+  // just already there.
+  AlloyLogger& watch(uint8_t pin, const char* field = nullptr);         // digital pin  -> "io"
+  AlloyLogger& watchAnalog(uint8_t pin, const char* field = nullptr);   // analog pin   -> "adc"
+  AlloyLogger& watch(const char* channel, const char* field, float (*fn)());  // any variable/expr
+  AlloyLogger& watchSystem();                                           // heap/rssi/uptime -> "sys"
+  AlloyLogger& sampleEvery(uint32_t ms) { _sampleMs = ms; return *this; }     // sampler period (100)
 
   // Optional richer semantics for Alloy AI (units/range/description). Call in setup() before begin().
   AlloyLogger& describe(const char* channel, const char* field,
@@ -84,14 +118,29 @@ public:
 
 private:
   friend class AlloyRecord;
-  struct Buf { char* data; size_t len; };
+  struct Buf { char* data; size_t len; char chan[ALLOY_CHAN_MAX]; };
 
-  void commitLine(const char* line, int len);
-  Buf* getFree();
+  // One open CSV stream per channel: which buffer it's filling, since when, and the field-set hash.
+  struct Slot { char chan[ALLOY_CHAN_MAX]; Buf* active; uint32_t since; uint32_t sig; };
+
+  void commitRow(const char* chan, const char* hdr, int hlen, const char* row, int rlen);
+  Buf* getFree(Buf* avoid = nullptr);
   void seal(Buf* b);
+  void rebaseRows(Buf* b);
+  void teardown();
+  Slot* slotFor(const char* chan);
+  static uint32_t hashStr(const char* s, int n);
   static void taskTramp(void* self);
   void taskLoop();
   String buildMetaJson();
+
+  // v2 auto-capture
+  struct Watch { char chan[ALLOY_CHAN_MAX]; char field[24]; uint8_t kind; uint8_t pin; float (*fn)(); };
+  AlloyLogger& addWatch(const char* chan, const char* field, uint8_t kind, uint8_t pin, float (*fn)());
+  static float readWatch(const Watch& w);
+  static void samplerTramp(void* self);
+  void samplerLoop();
+  void sampleTick();
 
   // config
   const char *_ssid = nullptr, *_pass = nullptr, *_dev = nullptr, *_fw = nullptr;
@@ -100,18 +149,23 @@ private:
   size_t   _bufBytes = 24 * 1024;
   uint32_t _flushMs = 4000;
   int      _core = 0;
+  uint32_t _sampleMs = 100;
+  bool     _insecure = false;
 
   // describe() store
   struct Desc { char chan[24], field[20], unit[12], about[48]; float lo, hi; };
   Desc    _desc[ALLOY_MAX_DESC]; uint8_t _nDesc = 0;
+
+  // watch() store
+  Watch   _watch[ALLOY_MAX_WATCH]; uint8_t _nWatch = 0;
 
   // runtime
   AlloyUploader _up;
   Buf*          _pool = nullptr;
   QueueHandle_t _freeQ = nullptr, _pendingQ = nullptr;
   SemaphoreHandle_t _mtx = nullptr;
-  Buf*          _active = nullptr;
-  uint32_t      _activeSince = 0;
+  Slot          _slots[ALLOY_MAX_CHANNELS]; uint8_t _nSlots = 0;
+  uint64_t      _bootOffsetNs = 0;   // wall-clock minus boot-clock ns, captured once SNTP lands
   uint32_t      _session = 0, _seq = 0;
   char          _devId[24] = {0};
   volatile uint32_t _uploaded = 0, _failed = 0, _droppedBufs = 0;

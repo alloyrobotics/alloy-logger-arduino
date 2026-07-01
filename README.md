@@ -2,14 +2,14 @@
 
 Stream Arduino sensor & telemetry data **straight to [Alloy](https://usealloy.ai)** from an ESP32 —
 in about ten lines. You log `name → value` pairs at the call site; the library RAM-buffers them and
-uploads JSONL to Alloy in the background. **No SD card, no flash wear, never blocks your loop.**
+uploads CSV to Alloy in the background. **No SD card, no flash wear, never blocks your loop.**
 
 You usually don't declare anything: Alloy's AI reasons over your tag + field names + values (a
 `heading` ranging 0–360 under a `bno055` tag → it's a magnetic heading). Optionally `describe()` a
 field to hand Alloy units/ranges for even sharper context.
 
 > Verified end-to-end on real hardware: an ESP32 streaming `env`/`battery` telemetry → a `meta.json`
-> semantics sidecar + JSONL chunks land in Alloy Mesh Storage, `uploaded` climbing, `dropped=0`.
+> semantics sidecar + CSV chunks land in Alloy Mesh Storage, `uploaded` climbing, `dropped=0`.
 
 ```cpp
 #include <AlloyLogger.h>
@@ -40,7 +40,7 @@ void loop() {
 - **Reliable by default.** RAM-buffered with **store-and-forward** — if WiFi drops, buffers queue and
   flush on reconnect; if the uplink can't keep up, the oldest buffer is shed (counted), never a crash.
 - **Zero flash wear.** Nothing touches the filesystem, so it coexists with OTA / `min_spiffs` layouts.
-- **Alloy-native.** Streams JSONL (ingested into queryable tables) plus a one-time semantics sidecar.
+- **Alloy-native.** Streams compact per-channel CSV (ingested into queryable tables) plus a one-time semantics sidecar.
 
 ---
 
@@ -75,6 +75,7 @@ AlloyLogger alloy;
 | `alloy.buffers(count, bytes)` | RAM buffer pool. | `4 × 24 KB` |
 | `alloy.flushEvery(ms)` | Max time before a partial buffer is sent. | `4000` |
 | `alloy.describe(channel, field, unit, min, max, about)` | Richer semantics for Alloy AI. | — |
+| `alloy.insecure()` | Skip TLS verification (TLS-intercepting proxies etc.). | verify via Mozilla roots |
 
 **Start:**
 ```cpp
@@ -88,6 +89,29 @@ alloy.log("channel", value);                     // single value (field name "va
 ```
 `set()` takes `float` / `int` / `double` / `bool`. Values are stored as numbers.
 
+**Auto-capture (set-and-forget)** — register a signal *once* and the library samples it for you on
+a background timer, with **no code in `loop()`**. When something unexpected happens, the data is
+already there — no reflash to add a probe, no serial monitor:
+| Call | Streams | Channel |
+|---|---|---|
+| `alloy.watch(pin, "name")` | a digital pin (`digitalRead`) | `io` |
+| `alloy.watchAnalog(pin, "name")` | an analog pin (`analogRead`) | `adc` |
+| `alloy.watch("chan", "field", fn)` | any variable/expr via a captureless `float(*)()` | `chan` |
+| `alloy.watchSystem()` | free heap, WiFi RSSI, uptime (`heap` / `rssi` / `uptime_s`) | `sys` |
+| `alloy.sampleEvery(ms)` | sampler period (default `100` = 10 Hz) | — |
+
+```cpp
+float g_pitch;  float readPitch() { return g_pitch; }   // expose a variable
+
+alloy.watch(0, "boot_btn");                 // GPIO0 state
+alloy.watchAnalog(34, "batt_raw");          // ADC
+alloy.watch("imu", "pitch", readPitch);     // your own variable
+alloy.watchSystem();                        // heap/rssi/uptime
+alloy.begin(ALLOY_KEY, "demos/auto");       // register before begin(); sampler runs on your core()
+```
+Watched fields sharing a channel are written as one aligned row per tick — same CSV tables, same
+`describe()` semantics. Mix freely with explicit `log()` calls.
+
 **Stats:** `alloy.uploaded()`, `alloy.failed()`, `alloy.dropped()` (buffers shed under backpressure).
 
 ---
@@ -99,18 +123,26 @@ A one-time **`meta.json`** (from your `describe()` calls + device info):
 { "device":"sbr-01", "firmware":"fw16", "session":"2026-06-29T06:48:14Z",
   "fields":[ {"channel":"env","name":"temp_c","unit":"degC","min":-40,"max":125,"about":"ambient temperature"} ] }
 ```
-Then compact **JSONL** data, wall-clock-timestamped so channels align with no extra math:
-```json
-{"ch":"env","t_ns":1782715694000000000,"temp_c":22.4,"humidity":51.2}
+Then compact **CSV** data, one file per channel: a one-line header (`t_ns` + your field names),
+then bare value rows, wall-clock-timestamped so channels align with no extra math:
+```csv
+t_ns,temp_c,humidity
+1782715694000000000,22.4,51.2
+1782715695000000000,22.5,51.1
 ```
-Each power-on uploads into its **own subfolder** `<meshPath>/<session>/`, so every run is a distinct
-mission in Alloy. `.jsonl` ingests natively into queryable tables — replay it, or query with SQL / DuckDB.
+One channel = one consistent schema = one table. Dropping the per-row JSON keys roughly halves the
+bytes on the wire and storage, and takes the per-field text formatting off your hot loop.
+
+Each power-on uploads into its **own subfolder** `<meshPath>/<session>/` (files named
+`<device>_<channel>_<seq>.csv`), so every run is a distinct mission in Alloy. `.csv` ingests
+natively into queryable tables — replay it, or query with SQL / DuckDB.
 
 ---
 
 ## Examples
 
 - **[BasicSensor](examples/BasicSensor)** — stream a sensor in ~10 lines.
+- **[AutoCapture](examples/AutoCapture)** — set-and-forget: `watch()` pins/variables/system, nothing in `loop()`.
 - **[SelfBalancingRobot](examples/SelfBalancingRobot)** — add streaming to a 100 Hz control loop
   without disturbing real-time stepping (the pattern for a robot that already manages WiFi).
 
@@ -121,8 +153,11 @@ mission in Alloy. `.jsonl` ingests natively into queryable tables — replay it,
 - **Sustained rate is bounded by upload throughput** (~one R2 PUT per buffer over WiFi). A few hundred
   records/sec is comfortable; far higher sheds oldest buffers (counted in `dropped()`). Tune with
   `buffers()` / `flushEvery()`, or use an ESP32-S3 / better WiFi.
-- **A real UTC clock is required** (SigV4) — the library runs SNTP automatically and self-heals; the
-  first second or two before sync may be skipped.
+- **A real UTC clock is required** (SigV4) — the library runs SNTP automatically. Records logged
+  before the first sync are stamped with a boot-relative clock and rebased to wall-clock time
+  in-buffer once SNTP lands, so nothing is lost or mis-timed.
+- **TLS is verified by default** against the ESP32 core's embedded Mozilla root CA bundle (no extra
+  flash shipped by this library). `alloy.insecure()` opts out for networks that intercept TLS.
 - **One API key on-device** is fine for a single rig; for a fleet, use per-device keys.
 - ESP32 / ESP32-S3 only (uses WiFi + mbedTLS).
 
