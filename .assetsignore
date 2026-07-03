@@ -4,6 +4,8 @@ cloud/
 .vercel/
 .vercelignore
 .wrangler/
+.playwright-mcp/
+.DS_Store
 .gitignore
 .assetsignore
 wrangler.jsonc
