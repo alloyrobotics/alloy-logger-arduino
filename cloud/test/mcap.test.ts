@@ -142,7 +142,7 @@ describe("assembleMcap edge cases", () => {
     expect(payloads).toEqual([{ btn: 1 }, { btn: 0, led: 1 }]);
   });
 
-  it("maps empty cells (device NaN encoding) to null", async () => {
+  it("omits empty cells (device NaN encoding) from the payload", async () => {
     const src = sourceFromBuffers("adc", [
       csv("t_ns,v\n0000000000000000100,\n0000000000000000200,3.5\n"),
     ]);
@@ -158,7 +158,7 @@ describe("assembleMcap edge cases", () => {
     for await (const msg of reader.readMessages()) {
       payloads.push(JSON.parse(new TextDecoder().decode(msg.data)));
     }
-    expect(payloads).toEqual([{ v: null }, { v: 3.5 }]);
+    expect(payloads).toEqual([{}, { v: 3.5 }]);
   });
 });
 
