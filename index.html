@@ -360,7 +360,7 @@
   <div class="navlinks">
     <a class="hide-sm" href="#stack">How it works</a>
     <a class="hide-sm" href="#setup">Setup</a>
-    <a class="hide-sm" href="https://github.com/hughminhphan/alloy-logger-arduino">GitHub</a>
+    <a class="hide-sm" href="https://github.com/alloyrobotics/alloy-logger-arduino">GitHub</a>
     <a class="btn" href="https://aus.usealloy.ai/setup-org">Start free</a>
   </div>
 </nav>
@@ -372,7 +372,7 @@
     <p class="sub">AlloyLogger is the Arduino library that stores all your MCU data into Alloy Mesh Storage, automatically, with no extra parts.</p>
     <div class="cta-row">
       <a class="btn lg" href="https://aus.usealloy.ai/setup-org">Start streaming free →</a>
-      <a class="btn lg ghost" href="https://github.com/hughminhphan/alloy-logger-arduino">★ View on GitHub</a>
+      <a class="btn lg ghost" href="https://github.com/alloyrobotics/alloy-logger-arduino">★ View on GitHub</a>
     </div>
     <p class="freenote">First <strong>100&nbsp;GB free</strong> for the first 10,000 users <span>— 100&nbsp;GB lasts decades if you're logging microcontroller values.</span></p>
 
@@ -492,7 +492,7 @@ pitch → <span class="pv">8.2°</span></pre>
             <div class="icon"><svg fill="#00878F"><use href="#i-arduino"/></svg></div>
             <div><span class="tag">AlloyLogger</span><h3>The number gets a name</h3></div>
           </div>
-          <p><span class="mono">log()</span> names the value and memcpys it into a RAM buffer in microseconds; your loop never blocks. A background task on core 0 batches rows into per-channel chunks and uploads over TLS every 4 s, store-and-forward across WiFi drops. No SD card, no flash wear.</p>
+          <p><span class="mono">log()</span> names the value, formats one compact CSV row, and buffers it in RAM in microseconds; your loop never blocks. A background task on core 0 batches rows into per-channel chunks and uploads over TLS every 4 s, store-and-forward across WiFi drops. No SD card, no flash wear.</p>
           <div class="aide">
             <div class="tbar"><div class="tl"><i class="r"></i><i class="y"></i><i class="g"></i></div><span class="tt">sketch_run47 | Arduino IDE</span></div>
             <div class="aedit">
@@ -580,7 +580,7 @@ pitch → <span class="pv">8.2°</span></pre>
           <h3>Install the library</h3>
           <p>Arduino IDE: Sketch → Include Library → Add .ZIP Library. Or via CLI. Depends on <span class="mono">ArduinoJson</span>.</p>
           <pre><span class="prompt">$ </span>arduino-cli lib install ArduinoJson
-<span class="prompt">$ </span>git clone https://github.com/hughminhphan/alloy-logger-arduino \
+<span class="prompt">$ </span>git clone https://github.com/alloyrobotics/alloy-logger-arduino \
     ~/Arduino/libraries/AlloyLogger</pre>
         </div>
       </div>
