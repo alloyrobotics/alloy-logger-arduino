@@ -21,8 +21,7 @@ void setup() {
   alloy.describe("env", "humidity", "%",      0, 100);
 
   alloy.wifi(WIFI_SSID, WIFI_PASS);          // omit if your sketch already connected WiFi
-  alloy.device("bench-01", "v1");            // optional device id + firmware tag
-  if (!alloy.begin(ALLOY_KEY, "demos/basic")) {
+  if (!alloy.begin(ALLOY_KEY, "demos/basic")) {   // device id defaults to the sketch name
     Serial.println("Alloy begin failed (WiFi?)");
   }
 }

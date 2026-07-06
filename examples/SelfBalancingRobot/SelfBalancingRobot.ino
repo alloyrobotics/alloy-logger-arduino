@@ -23,8 +23,7 @@ void setup() {
   alloy.describe("balance", "rate",   "deg/s", -500, 500, "gyro angular rate");
 
   alloy.wifi(WIFI_SSID, WIFI_PASS);          // omit on the real robot if comms already connected
-  alloy.device("sbr-01", "fw16");
-  alloy.core(0);                             // keep uploads off the control core (core 1)
+  alloy.scope();                             // stepper/I2C/SPI pins appear automatically in "io"
   alloy.begin(ALLOY_KEY, "robots/sbr");
 
   xTaskCreatePinnedToCore(controlLoop, "control", 8192, nullptr, configMAX_PRIORITIES - 2, nullptr, 1);

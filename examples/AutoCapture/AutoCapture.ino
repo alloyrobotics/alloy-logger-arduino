@@ -1,9 +1,9 @@
 // AutoCapture — set-and-forget streaming with NO code in loop().
 //
-// This is the v2 idea: register the signals you care about ONCE, and AlloyLogger samples them for
-// you on a timer in the background. Digital pins, analog pins, system health, or any variable —
-// all streamed to Alloy automatically. So when something unexpected happens, the data is already
-// there: no reflash to add a probe, no serial monitor, no SD card.
+// scope() is the software oscilloscope: one line, and every GPIO your sketch configures streams
+// change-driven to Alloy (level + toggle frequency per pin), plus heap/rssi/uptime. Add
+// watchAnalog()/watch() for ADC pins and variables. So when something unexpected happens, the
+// data is already there: no reflash to add a probe, no serial monitor, no SD card.
 
 #include <AlloyLogger.h>
 #include <math.h>
@@ -22,13 +22,13 @@ void setup() {
   Serial.begin(115200);
 
   alloy.wifi(WIFI_SSID, WIFI_PASS);          // omit if your sketch already connected WiFi
-  alloy.device("bench-01", "v2");
 
-  // ---- register once; sampled for you forever ----
-  alloy.watch(0, "boot_btn");                // GPIO0 digital state  -> channel "io"
+  pinMode(2, OUTPUT);                        // the blinker below — scope() will find it on its own
+
+  // ---- register once; captured for you forever ----
+  alloy.scope();                             // every configured GPIO -> "io", + heap/rssi/uptime -> "sys"
   alloy.watchAnalog(34, "batt_raw");         // ADC on GPIO34        -> channel "adc"
   alloy.watch("imu", "pitch", readPitch);    // any variable/expr    -> channel "imu"
-  alloy.watchSystem();                        // heap / rssi / uptime -> channel "sys"
   alloy.sampleEvery(100);                    // 10 Hz (default)
 
   alloy.begin(ALLOY_KEY, "demos/auto");
@@ -37,5 +37,6 @@ void setup() {
 void loop() {
   // Nothing to log here. Your firmware just runs; the watched signals stream on their own.
   g_pitch = 6.0 * sin(millis() / 600.0);     // pretend an IMU updates this somewhere
+  digitalWrite(2, (millis() / 500) & 1);     // 1 Hz blink — shows up as gpio2 rows in "io"
   delay(5);
 }
