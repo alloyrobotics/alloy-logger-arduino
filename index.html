@@ -322,7 +322,7 @@
   .scard pre .pv { color: var(--sage); font-weight: 500; }
   .scard pre .dim { color: var(--tx-mute); }
   @media (max-width: 760px) {
-    .stack::before, .stack .pulse, .stack .prog { left: 7px; }
+    .stack::before, .stack .pulse { left: 7px; }
     .srow { grid-template-columns: 30px 1fr; }
     .srow.l .scard, .srow.r .scard { grid-column: 2; }
     .srow .hop { display: none; }
@@ -419,6 +419,15 @@
     [data-reveal], .stack .scard, .stack .hop, .stack .xls tr, .stack .ccbody .ln,
     .stack .aide .aedit, .wreveal span { opacity: 1 !important; transform: none !important; transition: none !important; }
     .stack .prog { height: calc(100% - 20px); }
+  }
+
+  /* narrow windows (split screen): stack the hero windows vertically */
+  @media (max-width: 1020px) {
+    .split { grid-template-columns: 1fr; }
+    .flowmid { display: none; }
+  }
+  @media (max-width: 760px) {
+    .stack .prog { left: 7px; }
   }
 
   @media (max-width: 760px) {
