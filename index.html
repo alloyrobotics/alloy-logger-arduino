@@ -767,5 +767,19 @@ alloy.<span class="accent">log</span>("env").<span class="accent">set</span>("te
 })();
 </script>
 
+<script>
+(() => {
+  const addSource = () => {
+    const src = new URLSearchParams(location.search).get('src');
+    if (!src || !/^[a-z0-9_-]{1,24}$/i.test(src)) return;
+    document.querySelectorAll('a[href^="https://aus.usealloy.ai/setup-org"]').forEach(a => {
+      if (!/[?&]utm_content=/.test(a.href)) a.href += '&utm_content=' + encodeURIComponent(src);
+    });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addSource);
+  else addSource();
+})();
+</script>
+
 </body>
 </html>
