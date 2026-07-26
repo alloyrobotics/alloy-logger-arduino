@@ -33,7 +33,7 @@ const DIST_SCALE = 0.9; // fallback distance, relative to the robot's own camera
 const ENV_CULL = 1.5; // hide scenery bigger than this many cameraHome distances
 const ENV_RADIUS = 0.28; // and scenery whose centre sits further than this from the machine
 const SUBJECT_FILL = 0.78; // share of the card's height the machine should occupy
-const ASPECT_REF = 2.2; // narrowest card the framing has to stay inside
+const ASPECT_REF = 1.0; // the art panels are squares now: fit must hold at 1:1
 const FOV = 34; // tighter than the viewer's 42: the card art panel is wide and short
 const MIN_FRAME_MS = 1000 / 30 - 2;
 const MAX_DPR = 2; // same ceiling as viewer.js and chart.js: the previews crossfade over vector art
@@ -331,7 +331,7 @@ export function createPickerPreviews(entries) {
     // on, and slices the machine off along the card's bottom border at the rest.
     const halfFov = Math.tan(((FOV * Math.PI) / 180) / 2);
     const kY = SUBJECT_FILL * halfFov;
-    const kX = kY * ASPECT_REF; // a card is always far wider than it is tall
+    const kX = kY * ASPECT_REF; // square tile: horizontal allowance equals vertical
     const u = new THREE.Vector3();
     const right = new THREE.Vector3();
     const up = new THREE.Vector3();
