@@ -86,7 +86,7 @@ function buildPicker() {
  */
 function mountPickerPreviews() {
   if (pickerPreviews || !pickerEntries.length) return;
-  pickerPreviews = createPickerPreviews(pickerEntries);
+  pickerPreviews = createPickerPreviews(pickerEntries, screens.picker.querySelector('#robot-grid'));
   // exposed for QA/integration assertions (page state, not pixels)
   window.__picker = { previews: pickerPreviews, entries: pickerEntries };
 }

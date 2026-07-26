@@ -1,10 +1,12 @@
 // preview.js - live 3D previews inside the picker cards.
 //
 // ONE WebGL context for the whole picker, never one per card. A single transparent canvas is
-// pinned over the viewport (position: fixed, pointer-events: none) and every rendered frame each
-// card's .rcard-art rect is turned into a scissor + viewport pair, so the previews stay glued to
-// their cards while the page scrolls, resizes or a card lifts on hover. This is the three.js
-// "multiple elements, one renderer" pattern.
+// absolutely positioned over the card GRID (not the viewport): it lives in the same scrolling
+// content as the cards, so scrolling moves canvas and cards together natively and the previews
+// cannot lag the page - a viewport-fixed canvas re-synced per frame is always one frame behind
+// a scroll. Each rendered frame every card's .rcard-art rect, taken RELATIVE to the grid (both
+// rects sampled in the same frame, so the difference is scroll-invariant), becomes a scissor +
+// viewport pair. This is the three.js "multiple elements, one renderer" pattern, re-anchored.
 //
 // Perceived performance is the constraint that shapes everything here:
 //   - the inline SVG line art stays in the DOM as the instant placeholder AND the no-WebGL
@@ -64,9 +66,11 @@ function webglAvailable() {
  * Live orbiting previews for the picker cards.
  *
  * @param {Array<{el:HTMLElement, def:object}>} entries one per card; `el` is the .rcard-art panel
+ * @param {HTMLElement} [host] the element the shared canvas overlays; defaults to the entries'
+ *   grid. Must contain every entry's el so the canvas scrolls with the cards.
  * @returns {{dispose:()=>void}}
  */
-export function createPickerPreviews(entries) {
+export function createPickerPreviews(entries, host) {
   const recs = (entries || [])
     .filter((e) => e && e.el && e.def && typeof e.def.buildScene === 'function')
     .map((e) => ({
@@ -85,6 +89,10 @@ export function createPickerPreviews(entries) {
     }));
 
   if (!recs.length) return { dispose() {} };
+
+  host = host || recs[0].el.closest('#robot-grid') || recs[0].el.parentElement;
+  const hostPosition = getComputedStyle(host).position;
+  if (hostPosition === 'static') host.style.position = 'relative';
 
   let disposed = false;
   let renderer = null;
@@ -141,8 +149,10 @@ export function createPickerPreviews(entries) {
     canvas = renderer.domElement;
     canvas.className = 'picker-preview-canvas';
     canvas.setAttribute('aria-hidden', 'true');
+    // absolute inside the grid, NOT fixed to the viewport: it scrolls with the cards natively,
+    // which is what keeps the previews glued during scroll with zero per-frame chase
     canvas.style.cssText =
-      'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+      'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;';
     // A context can drop under us at any time (GPU-process crash, driver reset, Chrome evicting the
     // oldest context, Android backgrounding). three preventDefaults the event and re-initialises on
     // restore, but the 3D is gone in the meantime, so hand the cards back to the SVG line art -
@@ -157,7 +167,7 @@ export function createPickerPreviews(entries) {
       sizedH = 0;
       needsRender = true;
     });
-    document.body.appendChild(canvas);
+    host.appendChild(canvas);
     sizeCanvas();
     return renderer;
   }
@@ -169,13 +179,10 @@ export function createPickerPreviews(entries) {
   let sizedH = 0;
   function sizeCanvas() {
     if (!renderer) return;
-    // documentElement.clientWidth/Height, NOT innerWidth/Height: the canvas is laid out at 100% of
-    // the initial containing block, which excludes a classic (non-overlay) scrollbar, and
-    // getBoundingClientRect - which every scissor rect is computed from - is in the same space.
-    // Sizing off innerWidth squeezes the whole layer left of its cards on Windows/Linux Chrome.
-    const el = document.documentElement;
-    const w = Math.max(1, el.clientWidth || window.innerWidth || 1);
-    const h = Math.max(1, el.clientHeight || window.innerHeight || 1);
+    // the canvas covers the grid, so the drawing buffer is sized to the grid's own box
+    const r = host.getBoundingClientRect();
+    const w = Math.max(1, Math.round(r.width));
+    const h = Math.max(1, Math.round(r.height));
     if (w === sizedW && h === sizedH) return;
     sizedW = w;
     sizedH = h;
@@ -424,13 +431,17 @@ export function createPickerPreviews(entries) {
   }
 
   // ------------------------------------------------------------------ render loop
-  function rectFor(rec, cw, ch) {
+  // Card rect RELATIVE to the grid. Both rects are read in the same frame, so their difference is
+  // unaffected by scroll position; scroll cannot detach a preview from its card.
+  function rectFor(rec, cw, ch, hostRect) {
     const r = rec.el.getBoundingClientRect();
     const w = Math.round(r.width);
     const h = Math.round(r.height);
     if (w < 8 || h < 8) return null;
-    if (r.bottom <= 0 || r.top >= ch || r.right <= 0 || r.left >= cw) return null;
-    return { x: Math.round(r.left), y: Math.round(ch - r.bottom), w, h };
+    const x = Math.round(r.left - hostRect.left);
+    const top = Math.round(r.top - hostRect.top);
+    if (top + h <= 0 || top >= ch || x + w <= 0 || x >= cw) return null;
+    return { x, y: ch - (top + h), w, h };
   }
 
   function placeCamera(rec, elapsed) {
@@ -470,9 +481,10 @@ export function createPickerPreviews(entries) {
     renderer.clear(true, true, true);
     renderer.setScissorTest(true);
 
+    const hostRect = host.getBoundingClientRect();
     for (const rec of recs) {
       if (!rec.ready || !rec.visible) continue;
-      const box = rectFor(rec, cw, ch);
+      const box = rectFor(rec, cw, ch, hostRect);
       if (!box) continue;
       renderer.setViewport(box.x, box.y, box.w, box.h);
       renderer.setScissor(box.x, box.y, box.w, box.h);
