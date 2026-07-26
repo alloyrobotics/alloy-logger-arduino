@@ -1,0 +1,331 @@
+// chat.js - the analyst panel. Renders history, streams answers with a typewriter, parses the
+// markdown subset, hydrates evidence chips, and hands the first evidence item of a finished
+// answer to onEvidence(). Chips re-fire on click.
+
+import { renderMarkdown } from './markdown.js';
+
+const CHARS_PER_FRAME = 3;
+
+/**
+ * @param {HTMLElement} mount
+ * @param {object} robotDef
+ * @param {{ onEvidence?: (finding:object)=>void, onAsk?: (q:string)=>void }} hooks
+ * @returns {{
+ *   el:HTMLElement,
+ *   ask:(text:string)=>void, askFirstQuestion:()=>void,
+ *   matchEntry:(text:string)=>object|null,
+ *   finishStreaming:()=>void, get streaming():boolean,
+ *   focusInput:()=>void, dispose:()=>void
+ * }}
+ */
+export function createChat(mount, robotDef, hooks = {}) {
+  const onEvidence = hooks.onEvidence || (() => {});
+  const onAsk = hooks.onAsk || (() => {});
+  const findingById = new Map((robotDef.findings || []).map((f) => [f.id, f]));
+
+  const el = document.createElement('div');
+  el.className = 'chat';
+  el.innerHTML = `
+    <div class="chat-log" role="log" aria-live="polite" aria-label="Analyst conversation"></div>
+    <div class="chat-foot">
+      <div class="sugg" aria-label="Suggested questions"></div>
+      <form class="chat-form" autocomplete="off">
+        <input class="chat-input" type="text" placeholder="Ask about this mission" aria-label="Ask about this mission" />
+        <button class="chat-send" type="submit" aria-label="Send">
+          <svg width="15" height="15" viewBox="0 0 15 15" aria-hidden="true"><path d="M1.5 7.5h11M8 3l4.5 4.5L8 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </div>`;
+  mount.appendChild(el);
+
+  const log = el.querySelector('.chat-log');
+  const sugg = el.querySelector('.sugg');
+  const form = el.querySelector('.chat-form');
+  const input = el.querySelector('.chat-input');
+
+  let streaming = false;
+  let streamRaf = 0;
+  let finishNow = null;
+  let pendingTimer = 0;
+  let disposed = false;
+
+  // ---------- suggested chips ----------
+  (robotDef.suggested || []).forEach((q) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sugg-chip';
+    b.textContent = q;
+    b.addEventListener('click', () => ask(q));
+    sugg.appendChild(b);
+  });
+
+  // ---------- matching ----------
+  /**
+   * A matcher hits when it appears at the START of a word in the question. Plain `includes` let
+   * short matchers fire inside unrelated words ("esc" inside "telescope", "bat" inside "combat"),
+   * which sent nonsense questions to a real answer instead of the fallback. Anchoring to a word
+   * start keeps the intended prefix behaviour ("temp" -> "temperature", "fall" -> "falling") and
+   * keeps multi-word matchers ("root cause", "own robot") working.
+   */
+  function hasMatcher(q, matcher) {
+    const needle = String(matcher).toLowerCase();
+    if (!needle) return false;
+    for (let from = 0; ; ) {
+      const i = q.indexOf(needle, from);
+      if (i < 0) return false;
+      if (i === 0 || !/[a-z0-9]/.test(q[i - 1])) return true;
+      from = i + 1;
+    }
+  }
+
+  function matchEntry(text) {
+    const q = String(text || '').toLowerCase();
+    let best = null;
+    let bestScore = 0;
+    for (const entry of robotDef.script || []) {
+      let score = 0;
+      for (const m of entry.matchers || []) {
+        if (hasMatcher(q, m)) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = entry;
+      }
+    }
+    return bestScore > 0 ? best : null;
+  }
+
+  // ---------- rendering ----------
+  /** True while the log is parked at (or within a line of) the bottom. */
+  function atBottom() {
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  }
+
+  // `force` is for events the reader caused (their own question, a finished answer). Mid-stream
+  // frames pass nothing, so scrolling up to re-read an earlier answer is not fought every frame.
+  function scrollDown(force) {
+    if (force || atBottom()) log.scrollTop = log.scrollHeight;
+  }
+
+  function addUser(text) {
+    const row = document.createElement('div');
+    row.className = 'msg user';
+    row.innerHTML = `<div class="bubble"></div>`;
+    row.querySelector('.bubble').textContent = text;
+    log.appendChild(row);
+    scrollDown(true);
+  }
+
+  function addAssistantShell() {
+    const row = document.createElement('div');
+    row.className = 'msg bot';
+    row.innerHTML = `
+      <div class="bot-head"><span class="bot-dot"></span><span class="bot-name mono">alloy analyst</span></div>
+      <div class="bot-body md"></div>
+      <div class="ev-row"></div>`;
+    log.appendChild(row);
+    scrollDown(true);
+    return row;
+  }
+
+  function chipLabel(f) {
+    const t = f.t != null ? f.t : f.window[0];
+    return `▸ ${t.toFixed(1)} s · ${f.chipLabel || shortTitle(f.title)}`;
+  }
+
+  function shortTitle(title) {
+    // "Fall at 51.7 s" -> "Fall"
+    return String(title).split(/\s+at\s+/i)[0].trim();
+  }
+
+  function makeChip(f) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ev-chip mono sev-' + (f.severity || 'warn');
+    b.dataset.ev = f.id;
+    b.textContent = chipLabel(f);
+    b.title = f.title;
+    b.addEventListener('click', () => onEvidence(f));
+    return b;
+  }
+
+  function hydrate(row, entry) {
+    // inline {{ev:id}} slots
+    const inlined = new Set();
+    row.querySelectorAll('.ev-slot').forEach((slot) => {
+      const f = findingById.get(slot.dataset.ev);
+      if (!f) {
+        slot.remove();
+        return;
+      }
+      const chip = makeChip(f);
+      chip.classList.add('inline');
+      slot.replaceWith(chip);
+      inlined.add(f.id);
+    });
+    // trailing chip row: only findings the answer did not already place inline
+    const evRow = row.querySelector('.ev-row');
+    evRow.innerHTML = '';
+    const ids = (entry && entry.evidence) || [];
+    ids.forEach((id) => {
+      if (inlined.has(id)) return;
+      const f = findingById.get(id);
+      if (f) evRow.appendChild(makeChip(f));
+    });
+    if (!evRow.children.length) evRow.remove();
+  }
+
+  // ---------- streaming ----------
+  /** Long answers get a proportionally faster typewriter so a 2 kB answer is not a 12 s wait. */
+  function charsPerFrame(len) {
+    return Math.max(CHARS_PER_FRAME, Math.ceil(len / 420));
+  }
+
+  /** A `copy` affordance on every code block. The Arduino snippet is the conversion answer. */
+  function addCopyButtons(row) {
+    row.querySelectorAll('.md-pre').forEach((pre) => {
+      if (pre.parentNode && pre.parentNode.classList.contains('md-prewrap')) return;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'md-copy mono';
+      b.textContent = 'copy';
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const code = pre.querySelector('code');
+        const text = code ? code.textContent : '';
+        const mark = () => {
+          b.textContent = 'copied';
+          window.setTimeout(() => {
+            b.textContent = 'copy';
+          }, 1400);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(mark, () => {});
+        }
+      });
+      // the button lives OUTSIDE the <pre> so it does not scroll away with a long snippet
+      const box = document.createElement('div');
+      box.className = 'md-prewrap';
+      pre.parentNode.insertBefore(box, pre);
+      box.appendChild(pre);
+      box.appendChild(b);
+    });
+  }
+
+  function stream(entry, answerText) {
+    const row = addAssistantShell();
+    const body = row.querySelector('.bot-body');
+    const src = answerText;
+    const per = charsPerFrame(src.length);
+    streaming = true;
+    el.classList.add('is-streaming');
+    let i = 0;
+
+    // `fireEvidence` is false when the reader interrupted with a new question: the abandoned
+    // answer must not seek/loop the timeline out from under the question they just asked.
+    const done = (fireEvidence) => {
+      streaming = false;
+      el.classList.remove('is-streaming');
+      finishNow = null;
+      if (streamRaf) cancelAnimationFrame(streamRaf);
+      streamRaf = 0;
+      body.innerHTML = renderMarkdown(src);
+      hydrate(row, entry);
+      addCopyButtons(row);
+      scrollDown(true);
+      if (fireEvidence === false) return;
+      const first = entry && entry.evidence && entry.evidence[0];
+      const f = first ? findingById.get(first) : null;
+      if (f) onEvidence(f);
+    };
+
+    finishNow = done;
+
+    const step = () => {
+      if (disposed) return;
+      i += per;
+      if (i >= src.length) {
+        done(true);
+        return;
+      }
+      // render a partial that never leaves a half-written token visible
+      let partial = src.slice(0, i);
+      partial = partial.replace(/\{\{ev:[a-z0-9_-]*$/i, '');
+      const fences = (partial.match(/```/g) || []).length;
+      if (fences % 2 === 1) partial += '\n```';
+      const stick = atBottom();
+      body.innerHTML = renderMarkdown(partial) + '<span class="caret"></span>';
+      scrollDown(stick);
+      streamRaf = requestAnimationFrame(step);
+    };
+    streamRaf = requestAnimationFrame(step);
+  }
+
+  function finishStreaming(fireEvidence) {
+    if (finishNow) finishNow(fireEvidence !== false);
+  }
+
+  log.addEventListener('click', (e) => {
+    if (streaming && !e.target.closest('.ev-chip')) finishStreaming();
+  });
+
+  // ---------- asking ----------
+  function fallbackText() {
+    const list = (robotDef.suggested || []).map((s) => `- ${s}`).join('\n');
+    return `I have this mission's data loaded. Try one of these:\n\n${list}`;
+  }
+
+  function ask(text) {
+    const q = String(text || '').trim();
+    if (!q) return;
+    // An answer queued by the think beat is still "in flight": without this a second question
+    // inside the 220 ms window starts a second, independent typewriter over the same slots.
+    if (pendingTimer) {
+      window.clearTimeout(pendingTimer);
+      pendingTimer = 0;
+    }
+    // finish silently: the abandoned answer's evidence must not drive the timeline
+    if (streaming) finishStreaming(false);
+    onAsk(q);
+    addUser(q);
+    const entry = matchEntry(q);
+    const body = entry ? entry.answer : fallbackText();
+    // small think beat so it reads as an analyst, not an echo
+    pendingTimer = window.setTimeout(() => {
+      pendingTimer = 0;
+      if (!disposed) stream(entry, body);
+    }, 220);
+  }
+
+  function askFirstQuestion() {
+    if (robotDef.firstQuestion) ask(robotDef.firstQuestion);
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = input.value;
+    input.value = '';
+    ask(v);
+  });
+
+  return {
+    el,
+    ask,
+    askFirstQuestion,
+    matchEntry,
+    finishStreaming,
+    get streaming() {
+      return streaming;
+    },
+    focusInput() {
+      input.focus();
+    },
+    dispose() {
+      disposed = true;
+      if (streamRaf) cancelAnimationFrame(streamRaf);
+      if (pendingTimer) window.clearTimeout(pendingTimer);
+      pendingTimer = 0;
+      el.remove();
+    },
+  };
+}
