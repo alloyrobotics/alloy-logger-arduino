@@ -304,10 +304,10 @@ export function createViewer(mount, robotDef, timeline) {
   function bannerCopy(finding) {
     const win = `${finding.window[0].toFixed(1)}-${finding.window[1].toFixed(1)} s`;
     const what = isFullMission(finding) ? 'replaying the full mission' : `looping ${win}`;
-    // on a phone the full string wraps to two lines and eats the top third of the stage, which is
-    // exactly where the robot sits at most finding moments, so only the tail is dropped there
+    // on a phone the banner is a compact pill: the title alone (the loop range is already
+    // visible as the highlighted span on the scrubber, and the whole pill is tappable)
     return el.clientWidth < 560
-      ? `${finding.title} · ${what}`
+      ? finding.title
       : `${finding.title} · ${what} · tap to exit`;
   }
 

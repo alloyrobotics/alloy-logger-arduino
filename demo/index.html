@@ -65,13 +65,6 @@ input { font: inherit; color: inherit; }
 .wordmark span { color: var(--tx); }
 .wordmark em { font-style: normal; color: var(--tx-mute); font-weight: 400; }
 
-.pill {
-  display: inline-flex; align-items: center; gap: 8px;
-  font-family: 'Geist Mono', monospace; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--tx-body); border: 1px solid var(--line); border-radius: 60px; padding: 5px 12px;
-}
-.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sage); box-shadow: 0 0 9px var(--sage); }
-
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   background: var(--blue); color: #fff; font-weight: 500;
@@ -154,8 +147,6 @@ input { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px; padding: 9px 12px;
   background: var(--elev); border-bottom: 1px solid var(--line);
 }
-.ing-dots { display: flex; gap: 6px; }
-.ing-dots i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.14); }
 .ing-title { font-size: 11.5px; color: var(--tx-mute); flex: 1; }
 .ing-skip { font-size: 11.5px; color: var(--tx-mute); border: 1px solid var(--line); border-radius: 60px; padding: 3px 11px; }
 .ing-skip:hover { color: var(--tx); border-color: var(--line-hi); }
@@ -427,19 +418,43 @@ input { font: inherit; color: inherit; }
 
 /* ==================================================================== mobile demo */
 @media (max-width: 899px) {
-  :root { --head-h: 50px; }
+  :root { --head-h: 48px; }
   .topbar { padding: 0 14px; }
-  .demo-ctas .btn { padding: 7px 12px; }
+  .demo-ctas .btn { padding: 6px 12px; }
   .demo-ctas .lbl-lg { display: none; }
   .demo-ctas .lbl-sm { display: inline; }
-  .demo-id { flex-direction: column; gap: 0; align-items: stretch; }
+  /* one-line header: the device string and the secondary CTA are picker information,
+     not worth their pixels on a phone */
+  .demo-id .dev { display: none; }
+  .demo-ctas [data-cta="github"] { display: none; }
+  .demo-id { flex-direction: column; gap: 0; align-items: stretch; justify-content: center; }
+
+  /* picker: content text keeps its size, card chrome shrinks */
+  .pick-hero { padding: 34px 0 22px; }
+  .rcard { gap: 10px; padding: 14px 16px 12px; }
+  .rcard-art { height: 62px; }
+  .rcard-art svg { width: 96px; height: 62px; }
+  .rcard-tag { margin-top: 5px; }
+  .rcard-stats { padding-top: 10px; }
+  .pick-foot { padding: 20px 0 30px; }
+
+  /* compact pill instead of a full-width card: fit-content, title only, whole pill dismisses */
+  .v-banner {
+    left: 8px; right: auto; top: 8px; width: fit-content; max-width: calc(100% - 16px);
+    padding: 5px 11px; font-size: 11.5px; gap: 7px; border-radius: 60px;
+  }
+  .v-bx { font-size: 10px; padding: 1px 7px; }
 
   .demo-main { display: flex; flex-direction: column; }
   /* the flagship answer was being read four lines at a time through a letterbox: the chat column
      gets a floor, and the viewer/chart give the space back when the chart is open */
-  .chat-col { border-right: 0; order: 3; flex: 1; min-height: 190px; }
+  /* The 3D stage holds a CONSTANT share of the screen (it never grows when the chart
+     collapses); the chart trades space with the CHAT, so closing telemetry gives the
+     conversation the room back. min-height on the chat lets the stage give way a little
+     on short screens instead of crushing the answer into a letterbox. */
+  .chat-col { border-right: 0; order: 3; flex: 1 1 0; min-height: 200px; }
   .right-col { display: contents; }
-  .viewer-panel { order: 1; flex: 0 0 auto; height: 42dvh; position: sticky; top: 0; z-index: 4; background: var(--canvas); }
+  .viewer-panel { order: 1; flex: 0 1 46dvh; min-height: 34dvh; position: sticky; top: 0; z-index: 4; background: var(--canvas); }
   .chart-panel { order: 2; flex: 0 0 auto; }
 
   /* the HUD overlays the stage on a phone instead of taking layout height out of it, so the 3D
@@ -459,20 +474,21 @@ input { font: inherit; color: inherit; }
      otherwise the collapsed chart still contributes its content height and shoves the chat
      (and its input) off the bottom of the screen. */
   .chart-panel .chart-mount { flex: 0 0 0px; height: 0; overflow: hidden; }
-  .chart-panel.open .chart-mount { flex: 0 0 22dvh; height: 22dvh; border-top: 1px solid var(--line); }
-  /* give the chart its room back out of the viewer, not out of the chat */
-  #screen-demo.chart-open .viewer-panel { height: 30dvh; }
+  .chart-panel.open .chart-mount { flex: 0 0 19dvh; height: 19dvh; border-top: 1px solid var(--line); }
   /* one scrollable row of field chips instead of three stacked rows eating the plot */
-  .field-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 7px 0 5px; }
+  .field-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 5px 0 4px; }
   .field-chips::-webkit-scrollbar { display: none; }
-  .fchip { flex: 0 0 auto; }
-  .chart { padding: 8px 10px 6px; }
+  .fchip { flex: 0 0 auto; padding: 2px 8px; }
+  .chip { padding: 3px 9px; }
+  .chart { padding: 6px 10px 4px; }
 
-  .v-hud { padding: 8px 12px 10px; }
+  .v-hud { padding: 6px 12px 8px; }
   .v-time { display: none; }
   .v-home { display: none; }
-  .chat-log { padding: 14px 14px 4px; gap: 15px; }
-  .chat-foot { padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .v-speeds button { height: 26px; }
+  .sugg-chip { padding: 5px 12px; }
+  .chat-log { padding: 12px 14px 4px; gap: 13px; }
+  .chat-foot { padding: 7px 12px calc(9px + env(safe-area-inset-bottom)); }
   /* no vertical room on a phone: one scrollable row, faded at the right so it reads as scrollable */
   .sugg {
     flex-wrap: nowrap;
@@ -496,7 +512,6 @@ input { font: inherit; color: inherit; }
 <section id="screen-picker">
   <header class="topbar">
     <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
-    <span class="pill"><span class="dot"></span>Live demo</span>
   </header>
 
   <div class="pick-wrap">
@@ -513,7 +528,7 @@ input { font: inherit; color: inherit; }
         <a class="btn" data-cta="github" href="#" target="_blank" rel="noopener">Get the library</a>
         <a class="btn ghost" data-cta="setup" href="#" target="_blank" rel="noopener">Set up your org</a>
       </div>
-      <p class="note">Every number here came out of alloy.log() calls on a real board. Nothing leaves your browser.</p>
+      <p class="note">Runs entirely in your browser.</p>
     </div>
   </div>
 </section>
@@ -522,7 +537,6 @@ input { font: inherit; color: inherit; }
 <section id="screen-connect" hidden>
   <header class="topbar">
     <a class="wordmark" href="#/"><i></i><span>AlloyLogger</span></a>
-    <span class="pill"><span class="dot"></span>Ingesting</span>
   </header>
   <div class="conn-body">
     <div id="ingest-mount"></div>

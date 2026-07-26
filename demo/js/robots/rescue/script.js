@@ -27,18 +27,16 @@ export default {
     {
       id: 'why-stall',
       matchers: ['stall', 'rubble', 'pile', 'stuck', 'stop', 'wrong', 'fail', 'happen', 'why'],
-      answer: `It never lost drive. It lost grip, and the operator kept pushing anyway.
+      answer: `It never lost drive. It lost grip at **48.4 s**, and the operator kept pushing.
 
-| metric | at 48.4 s | budget |
-| --- | --- | --- |
-| cmd_l | 0.35 m/s | 0.35 m/s |
-| vel_l | 0.01 m/s | 0.30 m/s |
-| slip_l | 0.98 | < 0.25 |
-| i_l | 22.7 A | 8.7 A |
+| metric | value |
+| --- | --- |
+| commanded / actual | 0.35 / 0.01 m/s |
+| slip | 0.98 |
+| left current | 22.7 A (8.7 nominal) |
+| slid back | 0.56 m, 15 deg off line |
 
-The machine broke over onto a 28 deg rubble face at 44.0 s and climbed it cleanly for three seconds at 0.16 slip. At 47.4 s the left track let go: \`cmd_l\` stayed flat at 0.35 m/s while \`vel_l\` fell to 0.01 m/s inside a second, so this is traction, not a lost command. With nothing to push against, the left drive went to locked-rotor draw, 22.7 A against 8.7 A nominal on the same grade, and stayed above 18 A for 1.4 s.
-
-The right track kept biting for another second. That slewed the machine 15.1 deg off line and slid it 0.56 m back down the face by 52.0 s.
+Command flat while speed collapses is traction, not electronics: the left track spun in place at locked-rotor draw on the 28 deg face.
 
 {{ev:stall}}`,
       evidence: ['stall'],
@@ -46,9 +44,7 @@ The right track kept biting for another second. That slewed the machine 15.1 deg
     {
       id: 'show-me',
       matchers: ['show', 'where', 'see', 'replay', 'watch', 'look'],
-      answer: `Looping 46.0 to 54.0 s at 0.4x, chart on \`cmd_l\`, \`vel_l\` and \`i_l\`.
-
-Watch the left track keep turning while the chassis stops dead, then jam as the current peaks, then the whole machine slide back down the face with a forward command still on it.
+      answer: `Looping it at 0.4x, left track lit. Watch it keep spinning while the chassis stops dead, then the slide back down the face with a forward command still on.
 
 {{ev:stall}}`,
       evidence: ['stall'],
@@ -56,43 +52,28 @@ Watch the left track keep turning while the chassis stops dead, then jam as the 
     {
       id: 'root-cause',
       matchers: ['root', 'cause', 'fix', 'prevent', 'avoid', 'gain', 'tune', 'design', 'deeper'],
-      answer: `Geometry, not gains. The track could not hold enough contact patch on a 28 deg face, and nothing in the loop was watching for it.
+      answer: `Geometry, not gains. The proof is the retry: same face, same command, flippers down, and slip went **0.98 → 0.15** with current peaking 15.3 A instead of 22.7.
 
-Three channels have to agree before you can call that:
+Changes I would make:
 
-- \`/drive\` has \`cmd_l\` flat while \`vel_l\` collapses, which rules out a dropped command.
-- \`/drive\` has \`i_l\` at 22.7 A with the track going nowhere, which is locked-rotor draw, not a dead motor.
-- \`/imu\` has pitch pinned at 28.5 deg and roll dipping to -9.9 deg, so the left side sank into the rubble rather than hitting a wall.
+1. **Drop the flippers on grade**, not after the stall: pitch crossed 10 deg 3.2 s before the track let go.
+2. **Cap speed above 20 deg grade.**
+3. **16 A ceiling per track**: the good climb never passed 15.3.
 
-The proof is the retry. Same face, same 0.35 m/s command, front flippers at -35 deg: slip 0.15, \`i_l\` peaked at 15.3 A, crested at 64.6 s. The only variable that changed was contact geometry.
-
-{{ev:retry}}
-
-Three changes I would make:
-
-1. Drop the flippers on grade, not after the stall. \`/imu\` pitch crosses 10 deg at 44.2 s, a full 3.2 s before the left track lets go.
-2. Cap commanded speed above 20 deg of grade. The climb that worked only averaged 0.31 m/s anyway.
-3. Put a 16 A ceiling on each track drive. The successful climb peaked at 15.3 A, so the ceiling costs you nothing and takes 6.7 A off the stall.
-
-{{ev:stall}}`,
+{{ev:retry}}`,
       evidence: ['retry', 'stall'],
     },
     {
       id: 'thermal',
       matchers: ['temp', 'heat', 'hot', 'thermal', 'motor', 'overheat', 'batt', 'volt', 'health'],
-      answer: `The left drive ran hot and never came back down.
+      answer: `The left drive ran hot and never came back down: the stall put **13.8 C into it in 4.6 s** with no airflow to shed it.
 
-| channel | start | peak | at 85 s |
-| --- | --- | --- | --- |
-| temp_l | 41.0 C | 77.2 C | 71.9 C |
-| temp_r | 39.6 C | 66.3 C | 62.2 C |
-| batt_v | 25.2 V | 22.4 V min | 23.8 V |
+| channel | peak |
+| --- | --- |
+| temp_l | **77.2 C**, still 71.9 at end |
+| temp_r | 66.3 C |
 
-\`temp_l\` was already 41 C when the mission opened and only reached 44.9 C by the break-over, so the flat traverse was not the problem. The stall put 13.8 C into it in 4.6 s, and with the machine stationary there was no airflow to shed any of it. It peaks at 77.2 C at 66.1 s, right at the top of the successful climb, and is still 71.9 C when the log ends.
-
-The right motor tops out 10.9 C lower on the same climb. That gap is the whole story in one number: the left drive did all the suffering.
-
-Pack voltage sags to 22.4 V at 48.4 s under 33.6 A of combined draw, then recovers to 23.8 V. That is load, not a failing cell.
+That 11 C gap is the story: the left drive did all the suffering. Pack sag to 22.4 V was load, not a cell fault.
 
 {{ev:thermal}}`,
       evidence: ['thermal'],
@@ -100,11 +81,7 @@ Pack voltage sags to 22.4 V at 48.4 s under 33.6 A of combined draw, then recove
     {
       id: 'retry',
       matchers: ['flipper', 'second', 'attempt', 'again', 'retry', 'recover', 'crest', 'made it', 'worked'],
-      answer: `It got up on the second run, and the telemetry says exactly why.
-
-The operator put the front flippers from 0 to -35 deg between 56.9 and 58.4 s, brought the rear pair to -15 deg at 61.2 s, then counter-steered with \`cmd_l\` 0.37 against \`cmd_r\` 0.33 to unwind the 15 deg the stall had cost.
-
-Same face, same speed command, a completely different signature: slip_l averaged 0.15 instead of 0.98, \`i_l\` averaged 14.7 A and never passed 15.3 A, and it crested at 64.6 s with 2.1 m of plateau to spare.
+      answer: `Flippers down at 57 s, counter-steer to unwind the 15 deg, and the same face went from slip 0.98 to **0.15**. Crested at **64.6 s** with current never passing 15.3 A.
 
 {{ev:retry}}`,
       evidence: ['retry'],
@@ -112,41 +89,28 @@ Same face, same speed command, a completely different signature: slip_l averaged
     {
       id: 'how-log',
       matchers: ['log', 'arduino', 'sketch', 'code', 'library', 'esp32', 'own robot', 'my robot', 'firmware'],
-      answer: `Describe the fields once, then log a record per drive cycle. This is the sketch that produced the mission you are looking at.
+      answer: `One call per drive cycle. \`log()\` is a non-blocking memcpy; the uploader runs on the other core.
 
 \`\`\`cpp
 #include <AlloyLogger.h>
 AlloyLogger alloy;
 
 void setup() {
-  // optional semantics so Alloy AI labels the streams precisely
-  alloy.describe("drive",   "cmd_l",  "m/s", -1.2, 1.2, "commanded left track speed");
-  alloy.describe("drive",   "vel_l",  "m/s", -1.2, 1.2, "measured left track speed");
-  alloy.describe("drive",   "i_l",    "A",      0,  30, "left drive bus current");
-  alloy.describe("imu",     "pitch",  "deg",  -90,  90, "fused chassis pitch");
-  alloy.describe("flipper", "front",  "deg",  -90,  90, "front flipper angle");
-  alloy.describe("sys",     "temp_l", "C",      0, 120, "left motor case temp");
-
+  alloy.describe("drive", "i_l", "A", 0, 30, "left drive current");
   alloy.wifi(WIFI_SSID, WIFI_PASS);
   alloy.begin(ALLOY_KEY, "robots/rescue");
 }
 
-// 50 Hz drive cycle. log() is a non-blocking memcpy, the upload runs on the other core.
-void loop() {
+void loop() {   // your existing 50 Hz drive cycle
   alloy.log("drive")
-       .set("cmd_l", cmdL).set("cmd_r", cmdR)
-       .set("vel_l", encL.mps()).set("vel_r", encR.mps())
-       .set("i_l", inaL.getCurrent_mA() / 1000.0)
-       .set("i_r", inaR.getCurrent_mA() / 1000.0);
-
-  alloy.log("imu").set("roll", imu.roll()).set("pitch", imu.pitch());
-  alloy.log("flipper").set("front", frontDeg).set("rear", rearDeg);
-
-  delay(20);   // your existing loop rate, not a sleep the logger needs
+       .set("cmd_l", cmdL).set("vel_l", encL.mps())
+       .set("i_l", inaL.getCurrent_mA() / 1000.0);
+  alloy.log("imu").set("pitch", imu.pitch());
+  delay(20);
 }
 \`\`\`
 
-The free tier covers a robot like this. Every field on this page came out of \`alloy.log()\` calls exactly like those, and \`alloy.end()\` finalized the mission file when the run stopped.`,
+Every number on this page came from calls like those. Free tier covers a robot this size.`,
       evidence: [],
     },
   ],

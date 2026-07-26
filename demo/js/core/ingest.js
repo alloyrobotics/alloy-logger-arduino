@@ -55,7 +55,6 @@ export function ingestLines(robotDef) {
 
   lines.push({ text: `alloy.end() · ${robotDef.duration.toFixed(1)} s of telemetry`, cls: 'cmd' });
   lines.push({ text: `mission finalized -> ${robotDef.id}-01.mcap`, cls: 'ok' });
-  lines.push({ text: `analyst context ready`, cls: 'ok' });
 
   return lines;
 }
@@ -76,7 +75,6 @@ export function createIngest(mount, robotDef, opts = {}) {
   el.innerHTML = `
     <div class="ing-card">
       <div class="ing-top">
-        <span class="ing-dots"><i></i><i></i><i></i></span>
         <span class="ing-title mono">alloy stream · ${robotDef.id}-01</span>
         <button class="ing-skip mono" type="button">skip</button>
       </div>
