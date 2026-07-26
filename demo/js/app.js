@@ -11,6 +11,7 @@ import { createViewer } from './core/viewer.js';
 import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
+import { createPickerPreviews } from './core/preview.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
@@ -40,10 +41,14 @@ function ensureData(def) {
 
 // ---------------------------------------------------------------------------- picker
 let pickerBuilt = false;
+/** [{ el: .rcard-art, def }] handed to the preview module every time the picker is entered. */
+let pickerEntries = [];
+let pickerPreviews = null;
 
 function buildPicker() {
   if (pickerBuilt) return;
   pickerBuilt = true;
+  pickerEntries = [];
   const grid = screens.picker.querySelector('#robot-grid');
   grid.innerHTML = '';
 
@@ -56,8 +61,6 @@ function buildPicker() {
     a.href = `#/connect/${def.id}`;
     a.style.setProperty('--acc', def.accent || '#2f78ff');
     a.setAttribute('data-robot', def.id);
-    const chCount = def.channels.length;
-    const fieldCount = def.channels.reduce((n, c) => n + c.fields.length, 0);
     a.innerHTML = `
       <div class="rcard-art">
         <svg viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -67,24 +70,32 @@ function buildPicker() {
       </div>
       <div class="rcard-body">
         <h3 class="rcard-name"></h3>
-        <div class="rcard-dev mono"></div>
         <p class="rcard-tag"></p>
-      </div>
-      <div class="rcard-stats mono">
-        <span><b>${def.duration.toFixed(0)}</b> s</span>
-        <i></i>
-        <span><b>${chCount}</b> channel${chCount === 1 ? '' : 's'}</span>
-        <i></i>
-        <span><b>${fieldCount}</b> fields</span>
-        <i></i>
-        <span><b>${def.rate}</b> Hz max</span>
       </div>
       <span class="rcard-go mono">replay mission &rsaquo;</span>`;
     a.querySelector('.rcard-name').textContent = def.name;
-    a.querySelector('.rcard-dev').textContent = def.device;
     a.querySelector('.rcard-tag').textContent = def.tagline;
     grid.appendChild(a);
+    pickerEntries.push({ el: a.querySelector('.rcard-art'), def });
   });
+}
+
+/**
+ * The live 3D card previews. Mounted on entering the picker, disposed on leaving it, so the demo
+ * viewer never shares the page with a second WebGL context.
+ */
+function mountPickerPreviews() {
+  if (pickerPreviews || !pickerEntries.length) return;
+  pickerPreviews = createPickerPreviews(pickerEntries);
+  // exposed for QA/integration assertions (page state, not pixels)
+  window.__picker = { previews: pickerPreviews, entries: pickerEntries };
+}
+
+function teardownPickerPreviews() {
+  if (!pickerPreviews) return;
+  pickerPreviews.dispose();
+  pickerPreviews = null;
+  delete window.__picker;
 }
 
 // ---------------------------------------------------------------------------- connect
@@ -262,6 +273,7 @@ function route() {
   }
 
   // leaving a screen
+  if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
   if (currentRoute.name === 'connect' && next.name !== 'connect' && ingestApi) {
     ingestApi.dispose();
@@ -274,6 +286,8 @@ function route() {
   if (next.name === 'picker') {
     buildPicker();
     show('picker');
+    // after show(): the art panels need a real layout rect before the previews read them
+    mountPickerPreviews();
     document.title = 'AlloyLogger live demo';
     return;
   }

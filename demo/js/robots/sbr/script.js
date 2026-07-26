@@ -10,7 +10,7 @@ export default {
   id: 'sbr',
   name: 'Self-balancing robot',
   device: 'ESP32 · BNO055 IMU · 2x stepper',
-  tagline: 'PID balancer, 73 s mission',
+  tagline: 'Balances for 51 s, then falls',
   accent: '#2f78ff',
   duration,
   rate,

@@ -8,7 +8,7 @@ export default {
   id: 'drone',
   name: 'Survey quadcopter',
   device: 'ESP32 · 4x ESC telemetry · GPS + baro',
-  tagline: 'Lawnmower survey, 90 s mission',
+  tagline: 'One motor dies mid-survey',
   accent: '#4dd0e1',
   duration,
   rate,

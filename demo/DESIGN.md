@@ -264,6 +264,44 @@ set, highlight part emissive > 0, chart domain ≈ finding window. WebGL runs he
 screenshots must show an actual rendered robot, not a black canvas — check pixel variance on the
 canvas. Save screenshots to the scratchpad dir given in your brief.
 
+## Picker previews
+
+`js/core/preview.js` replaces the picker cards' static line art with a live, slowly orbiting 3D
+preview of each robot's real `buildScene()` model.
+
+`createPickerPreviews(entries)` takes `[{ el: <.rcard-art>, def: robotDef }]` and returns
+`{ dispose() }`. `app.js` collects the entries in `buildPicker()`, mounts on entering `#/` and calls
+`dispose()` on leaving it, so the picker's context is released before the demo viewer opens its own.
+
+**The one-context rule.** There is exactly ONE `WebGLRenderer` for all four cards, never one per
+card. Its canvas is a transparent `position: fixed; inset: 0; pointer-events: none` overlay, and
+every rendered frame each card's `getBoundingClientRect()` becomes a `setViewport` + `setScissor`
+pair (`setScissorTest(true)`, `devicePixelRatio` capped at 1.5). That is the three.js
+multiple-elements pattern: previews stay glued to their cards through scrolling, resizing and the
+card's hover lift, with no per-card context and no layout coupling. The whole canvas is cleared
+before the per-card passes so a card that scrolls away leaves nothing smeared behind it.
+
+**Perceived performance.** The inline SVG is the instant placeholder AND the no-WebGL fallback, and
+it is only faded out (400 ms opacity, `.rcard-art.preview-live`) once its robot has rendered a real
+frame. `buildPicker()` still never calls `ensureData`; telemetry generation and scene construction
+happen after first paint, one robot at a time on `requestIdleCallback` (`setTimeout` fallback), and
+the renderer itself is created lazily inside that first idle slice. Measured cold boot: FCP 36 ms
+with all four SVG placeholders visible, first `buildData` at 59 ms, all four previews live at 109 ms.
+
+**Framing.** Each preview scene gets its own hemisphere plus key and fill lights (brighter than the
+viewer's, since there is no lit ground plane behind a 92 px card), a transparent background and no
+ground grid. The model is posed ONCE at a healthy hero moment, never the failure:
+`{ sbr: 20, arm6: 30, drone: 30, rescue: 60 }` seconds, falling back to `duration * 0.3`. Scenery
+markedly bigger than the shot or far from the machine (drone's survey field and flown track,
+rescue's rubble ramp and scattered debris) is hidden, then the camera orbits the remaining
+subject's centre at its `cameraHome` azimuth and elevation, 14 s per revolution, at a
+bounding-box fit distance capped at `0.9 x` the robot's own `cameraHome` distance.
+
+**Budget.** One rAF for all four previews, throttled to ~30 fps, cards outside the viewport skipped
+via `IntersectionObserver`, and rendering stops entirely while `document.hidden`. Under
+`prefers-reduced-motion` each card renders a single static frame and only re-renders when a rect
+actually moves, so the 3D is still there but nothing orbits.
+
 ## Out of scope
 
 Real auth, real backend, real LLM calls, PostHog wiring (add a `data-analytics-todo` comment where

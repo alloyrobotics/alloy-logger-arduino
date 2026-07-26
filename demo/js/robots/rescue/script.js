@@ -9,7 +9,7 @@ export default {
   id: 'rescue',
   name: 'Tracked rescue robot',
   device: 'ESP32 · BNO055 · 2x track drive · 2x INA219',
-  tagline: 'Rubble climb, 85 s mission',
+  tagline: 'Stalls on the rubble, flippers save it',
   accent: '#f5a623',
   duration,
   rate,
