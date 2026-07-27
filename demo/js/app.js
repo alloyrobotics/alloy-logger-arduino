@@ -307,12 +307,18 @@ function route() {
 
 // ---------------------------------------------------------------------------- boot
 function boot() {
-  // static CTA hrefs
+  // CTA hrefs. A ?src=<channel> tag on the demo URL (dm, dm_fu, bio) is forwarded into the
+  // setup-org CTAs as utm_content "<channel>-demo", same idea as the landing page's passthrough,
+  // so PostHog keeps channel attribution when the DM or bio points here instead of the landing.
+  const srcTag = (new URLSearchParams(location.search).get('src') || '').replace(/[^a-z0-9_-]/gi, '');
+  const setupHref = srcTag
+    ? SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${srcTag}-demo`)
+    : SETUP_URL;
   document.querySelectorAll('[data-cta="github"]').forEach((a) => {
     a.href = GITHUB_URL;
   });
   document.querySelectorAll('[data-cta="setup"]').forEach((a) => {
-    a.href = SETUP_URL;
+    a.href = setupHref;
   });
 
   // ?robot=<id> deep link
