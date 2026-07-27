@@ -9,6 +9,15 @@ You usually don't declare anything: Alloy's AI reasons over your tag + field nam
 `heading` ranging 0–360 under a `bno055` tag → it's a magnetic heading). Optionally `describe()` a
 field to hand Alloy units/ranges for even sharper context.
 
+## See it before you flash anything
+
+[![AlloyLogger live demo: ask why the robot fell over and the 3D replay jumps to the fall](docs/demo-screenshot.png)](https://alloylogger.com/demo/?src=github)
+
+**[Open the live demo →](https://alloylogger.com/demo/?src=github)** Replay a robot mission in your
+browser: pick a robot (balancer, 6-axis arm, survey quad, tracked rescue), ask the analyst why it
+failed, and watch the 3D replay and telemetry jump to the exact moment it went wrong. Every number
+in it came through `alloy.log()`-style channels. No account, no hardware, nothing to install.
+
 > Verified end-to-end on real hardware: an ESP32 streaming `env`/`battery` telemetry → a `meta.json`
 > semantics sidecar + CSV chunks land in Alloy Mesh Storage, `uploaded` climbing, `dropped=0`.
 
@@ -60,8 +69,10 @@ arduino-cli lib install ArduinoJson
 arduino-cli compile --fqbn esp32:esp32:esp32 --library /path/to/AlloyLogger your_sketch
 ```
 
-You need an Alloy account + a data-API key (Dashboard → Mesh Storage → API key). Keep the key in
-a gitignored `secrets.h`, not in the sketch — see [Security](#security) for what it can do.
+You need an Alloy account + a data-API key
+([create an org free](https://www.usealloy.ai/setup-org?utm_source=github&utm_medium=referral&utm_campaign=alloylogger&utm_content=readme),
+then Dashboard → Mesh Storage → API key). Keep the key in a gitignored `secrets.h`, not in the
+sketch — see [Security](#security) for what it can do.
 
 ---
 
