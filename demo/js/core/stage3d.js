@@ -61,8 +61,11 @@ export function heroTime(def) {
     if (!f || !Array.isArray(f.window) || !Number.isFinite(f.window[0])) continue;
     if (f.window[0] < ws) ws = f.window[0];
   }
-  if (!Number.isFinite(ws)) return def.duration * T_HERO_FALLBACK;
-  return Math.min(def.duration * T_HERO_FALLBACK, Math.max(0, ws - 4));
+  // a def with no (or a bad) duration must still hand back a number: NaN seconds would poison every
+  // api.update() the pose feeds, and a stub robot is exactly the def most likely to be missing one
+  const d = Number.isFinite(def.duration) ? def.duration : 0;
+  if (!Number.isFinite(ws)) return d * T_HERO_FALLBACK;
+  return Math.min(d * T_HERO_FALLBACK, Math.max(0, ws - 4));
 }
 
 /**

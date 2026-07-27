@@ -11,6 +11,7 @@ export default {
   name: 'Self-balancing robot',
   device: 'ESP32 · BNO055 IMU · 2x stepper',
   tagline: 'Balances for 51 s, then falls',
+  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall' },
   accent: '#2f78ff',
   duration,
   rate,

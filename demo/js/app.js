@@ -12,6 +12,7 @@ import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
+import { createContext } from './core/context.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
@@ -99,13 +100,64 @@ function buildConnect(def) {
   if (ingestApi) ingestApi.dispose();
   mount.innerHTML = '';
   ensureData(def);
-  ingestApi = createIngest(mount, def, {
+  ingestApi = createContext(mount, def, {
+    handoff: takeHeroHandoff(def.id),
     onDone: () => {
       if (currentRoute.name === 'connect' && currentRoute.id === def.id) {
         location.hash = `#/demo/${def.id}`;
       }
     },
   });
+  // exposed for QA/integration assertions (page state, not pixels). A QA handle only: it is not
+  // cleared on teardown, so a stale reference after leaving the screen is expected.
+  window.__ctx = ingestApi;
+}
+
+// ------------------------------------------------------------------ picker -> hero hand-off
+// Where the clicked card was, and where its live preview's camera had orbited to, sampled in the
+// SAME frame as the click. The connect screen's hero opens from this so the machine appears to be
+// picked up off the card rather than replaced by a new one.
+//
+// Rects are VIEWPORT coordinates on purpose: the picker is gone by the time the hero measures
+// itself, and both rects are read against the viewport, so the picker's scroll offset is already
+// baked into the one the user last actually saw.
+let heroHandoff = null;
+
+// capture phase, so the record exists before the anchor's default navigation kicks off the route
+screens.picker.addEventListener(
+  'click',
+  (e) => {
+    const card = e.target && e.target.closest ? e.target.closest('a.rcard') : null;
+    if (!card) return;
+    const id = card.dataset.robot || (card.getAttribute('href') || '').split('/').filter(Boolean).pop();
+    const art = card.querySelector('.rcard-art');
+    if (!id || !art) return;
+    const r = art.getBoundingClientRect();
+    const svg = art.querySelector('svg');
+    const g = svg ? svg.getBoundingClientRect() : null;
+    heroHandoff = {
+      id,
+      at: performance.now(),
+      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+      ghost: g && g.height ? { w: g.width, h: g.height } : null,
+      live: art.classList.contains('preview-live'),
+      phase: (pickerPreviews && pickerPreviews.phaseFor ? pickerPreviews.phaseFor(id) : null) || null,
+    };
+  },
+  true
+);
+
+/**
+ * Consume the hand-off, once. A stale record (a back-button return, a hash typed by hand, a click
+ * on one card followed by a navigation to another) must never drive the entrance, so it is cleared
+ * on read and only returned for the matching robot within a few seconds of the click.
+ */
+function takeHeroHandoff(id) {
+  const h = heroHandoff;
+  heroHandoff = null;
+  if (!h || h.id !== id) return null;
+  if (performance.now() - h.at > 4000) return null;
+  return h;
 }
 
 // ---------------------------------------------------------------------------- demo

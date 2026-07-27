@@ -166,6 +166,160 @@ input { font: inherit; color: inherit; }
 .ing-bar span { display: block; height: 100%; width: 0; background: var(--blue); transition: width .22s linear; }
 .ing-cap { margin-top: 16px; text-align: center; font-size: 12.5px; color: var(--tx-mute); }
 
+/* ============================================== 2b. contextualization screen (#/connect/:id)
+   The mission brief that replaced the ingest terminal: product-shot hero of the machine on the
+   left, a staged brief on the right that ends on "hand it the logs". js/core/context.js builds it.
+   HARD RULE: .ctx-stage must never clip. The next phase flies .ctx-fly (hero ghost + 3D canvas)
+   out of this panel and across the page on hand-off, so `overflow: hidden` is forbidden here. */
+#screen-connect.ctx-mode .conn-body {
+  align-items: stretch; padding: 20px 22px 34px;
+}
+/* the mount is the flex item, not .ctx: stretch it across the body and let it hold the brief in
+   the middle, so a tall desktop viewport does not leave the whole thing pinned to the header */
+#screen-connect.ctx-mode #ingest-mount {
+  flex: 1; min-width: 0; display: flex; align-items: center;
+}
+.ctx {
+  width: 100%; max-width: 1140px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(330px, .95fr);
+  gap: 44px; align-items: center; align-content: center;
+}
+
+/* ---- hero panel ---- */
+.ctx-stage {
+  position: relative; height: min(62dvh, 560px);
+  border: 1px solid var(--line); border-radius: 16px;
+}
+/* product-shot backdrop, same recipe as .rcard-art: grid texture, an accent glow behind the
+   machine, and a lifted vignetted base so dark-metal models separate from the panel. */
+.ctx-stage::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background:
+    linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 22px 22px,
+    radial-gradient(ellipse 62% 56% at 50% 50%, color-mix(in srgb, var(--acc) 17%, transparent), transparent 74%),
+    radial-gradient(ellipse 120% 105% at 50% 42%, #2a303a 0%, #20242b 55%, #171a1f 100%);
+}
+/* the ONLY thing the card-to-hero entrance moves: ghost + 3D canvas fly as one wrapper, and the
+   canvas is sized once to the final panel so the entrance is a pure transform, never a resize */
+.ctx-fly { position: absolute; inset: 0; }
+.ctx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.ctx-ghost {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 46%; height: auto; opacity: .85; overflow: visible; color: var(--tx-mute);
+  transition: opacity .4s ease;
+}
+.ctx-ghost .acc { stroke: var(--acc); }
+/* with no 3D behind it the line art IS the hero, and a picker card's proportions do not carry a
+   62dvh panel: scale it up whenever the stage is not live */
+.ctx-stage:not(.live) .ctx-ghost { width: 64%; }
+/* the ghost is the instant placeholder, the no-WebGL fallback AND the context-loss fallback: it is
+   only faded out once the hero has actually rendered a frame, and it comes back if the context dies */
+.ctx-stage.live .ctx-ghost { opacity: 0; transition: opacity .4s ease; }
+/* the panel's dressing belongs to the panel, not to the machine flying into it: transparent while
+   the hero is in flight, faded in over the last ~320 ms of it */
+.ctx-stage { transition: border-color .32s ease; }
+.ctx-stage::before { transition: opacity .32s ease; }
+.ctx-stage.entering { border-color: transparent; }
+.ctx-stage.entering::before { opacity: 0; }
+/* the skip pill belongs to the panel too: it materialises with the backdrop, on the same curve,
+   instead of hanging in mid-air over a machine that has not landed yet */
+.ctx-stage.entering .ctx-skip { opacity: 0; }
+/* no card to fly from (direct URL): a short settle instead */
+@keyframes ctxSettle { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.ctx-fly.ctx-settle { animation: ctxSettle .5s cubic-bezier(.16,1,.3,1) both; }
+/* the fly deliberately leaves the panel, and its transform creates scrollable overflow while it
+   does: no scrollbar may flicker in or out mid-entrance */
+#screen-connect.ctx-flying, body.ctx-flying { overflow: hidden; }
+.ctx-skip {
+  position: absolute; top: 12px; right: 12px; z-index: 2;
+  font-size: 11.5px; color: var(--tx-mute); background: rgba(17,17,17,0.62);
+  border: 1px solid var(--line); border-radius: 60px; padding: 3px 11px;
+  transition: opacity .32s ease;
+}
+.ctx-skip:hover { color: var(--tx); border-color: var(--line-hi); }
+
+/* ---- brief copy ---- */
+.ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.ctx-eyebrow { font-size: 12px; color: var(--tx-mute); letter-spacing: .04em; }
+.ctx-name { font-size: 28px; font-weight: 500; line-height: 1.1; letter-spacing: -0.03em; margin-top: 9px; }
+.ctx-system, .ctx-mission, .ctx-fault-x, .ctx-volume { font-size: 14.5px; color: var(--tx-body); }
+.ctx-fault-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acc); flex: 0 0 auto; }
+.ctx-fault-t {
+  font-size: 12px; color: var(--tx); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-fault-row + .ctx-fault-x { margin-top: 9px; }
+/* a wrapping row of dt/dd pairs. Each pair is its own flex box so the row only ever breaks
+   BETWEEN pairs, never between a label and its number. */
+.ctx-stats {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 7px;
+  font-size: 12px; padding: 11px 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.ctx-stats > div { display: flex; align-items: baseline; gap: 6px; }
+.ctx-stats dt { color: var(--tx-mute); }
+.ctx-stats dd { color: var(--tx); white-space: nowrap; }
+/* the separator rides with the pair BEFORE it, so a wrapped row can never open with a dangling
+   interpunct (a trailing one at the end of a line reads as "continues below", which it does) */
+.ctx-stats > div:not(:last-child)::after { content: "·"; color: var(--line-hi); }
+.ctx-volume { margin-top: 12px; }
+.ctx-charge { font-size: 14.5px; color: rgba(255,255,255,0.82); }
+.ctx-q {
+  margin-top: 13px; padding: 2px 0 2px 14px; border-left: 2px solid var(--acc);
+  font-size: 15px; color: var(--tx);
+}
+.ctx-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ctx-go { letter-spacing: -0.005em; }
+.ctx-foot { font-size: 12px; color: var(--tx-mute); margin-top: 13px; }
+
+/* ---- staged reveal ---- */
+@keyframes ctxIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.ctx [data-stage] {
+  animation: ctxIn .42s cubic-bezier(.16,1,.3,1) both;
+  animation-delay: var(--d, 0ms);
+}
+/* click the copy and everything lands at once. Pointer only: the panel is not a focus stop, and the
+   CTA button is the keyboard path off this screen */
+.ctx.revealed [data-stage] { animation: none; opacity: 1; transform: none; }
+
+@media (max-width: 899px) {
+  #screen-connect.ctx-mode .conn-body { padding: 16px 18px 30px; }
+  .ctx { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .ctx-stage { height: 34dvh; }
+  .ctx-ghost { width: 50%; }
+  /* a 34dvh panel is already close to the line art's own proportions, so hold 50% here: this only
+     exists to match the desktop :not(.live) rule's specificity, which would otherwise win */
+  .ctx-stage:not(.live) .ctx-ghost { width: 50%; }
+  .ctx-copy { gap: 15px; }
+  .ctx-name { font-size: 22px; margin-top: 7px; }
+  .ctx-system, .ctx-mission, .ctx-fault-x, .ctx-volume, .ctx-charge { font-size: 13.5px; }
+  .ctx-q { font-size: 14px; }
+  /* the brief is taller than a phone viewport, and the whole screen exists to get to one button:
+     pin the CTA to the bottom of the viewport and fade the copy out underneath it.
+     The sticky box has to be .ctx-cta, not .ctx-actions: a sticky box can only be shifted WITHIN
+     its containing block, and .ctx-actions' containing block is .ctx-cta, which is exactly as tall
+     as the actions plus the footnote, so it has nowhere to travel. .ctx-cta's containing block is
+     the full-height .ctx-copy, so it can ride up the whole brief. It wraps the actions and the
+     footnote and nothing else, so the result is what styling .ctx-actions would have looked like. */
+  .ctx-cta {
+    position: sticky; bottom: 0; padding-block: 10px 6px;
+    background: linear-gradient(transparent, var(--bg, var(--canvas)) 38%);
+  }
+  .ctx-foot { margin-top: 6px; opacity: .72; }
+}
+
+/* The global reduced-motion rule zeroes animation DURATIONS but not DELAYS, so without this the
+   whole brief would sit invisible for up to 1.6 s and then snap in. Mandatory. */
+@media (prefers-reduced-motion: reduce) {
+  .ctx [data-stage] { animation: none; opacity: 1; transform: none; }
+  .ctx-stage::before { opacity: 1; }
+  /* no entrance at all under reduced motion: the hero is at rest, dressed, on the first frame */
+  .ctx-fly.ctx-settle { animation: none; }
+  .ctx-fly { transform: none !important; }
+}
+
 /* ==================================================================== 3. demo */
 #screen-demo { height: 100dvh; display: flex; flex-direction: column; }
 .demo-head { flex: 0 0 auto; }

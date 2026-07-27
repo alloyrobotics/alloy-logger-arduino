@@ -48,7 +48,10 @@ demo/
   js/core/chart.js      ← scaffold agent
   js/core/chat.js       ← scaffold agent
   js/core/viewer.js     ← scaffold agent
-  js/core/ingest.js     ← scaffold agent
+  js/core/ingest.js     ← scaffold agent (retained, no longer routed: see screen 2)
+  js/core/context.js    ← scaffold agent (the contextualization screen that replaced it)
+  js/core/stage3d.js    ← scaffold agent (WebGL probe, stage light rig, hero pose, orbit-safe fit)
+  js/core/preview.js    ← scaffold agent (the picker cards' one-canvas live previews)
   js/core/prng.js       ← scaffold agent (mulberry32 + gaussian + 1D value-noise helpers)
   js/core/markdown.js   ← scaffold agent (tiny renderer: bold, inline code, tables, lists, headings)
   js/robots/index.js    ← scaffold agent (registry; imports the four robot defs)
@@ -91,6 +94,16 @@ export default {
       highlight:'body',            // part id passed to scene.setHighlight
       slowmo:true }                // play the window at 0.4x
   ],
+  context: {                       // OPTIONAL. Authored copy for the contextualization screen.
+    system: 'One sentence on what the machine is and what it logs.',
+    mission: 'One sentence on what this mission was.',
+    fault: 'One or two sentences on what went wrong, in field-engineer voice.',
+    label: 'stall',                // short chip label beside the fault timestamp
+    faultT: 48.4                   // seconds; the moment the fault first shows
+  },
+  // Every field above has a fallback derived from the def itself (device + channel paths + rate for
+  // `system`, tagline + duration + row counts for `mission`, the first alert finding for `fault`,
+  // `label` and `faultT`), so a generated robot that ships no `context` still reads correctly.
   firstQuestion: 'Why does my robot keep falling over?',   // auto-asked after ingest
   suggested: ['...', '...', '...'],                        // chip row under input (3-4)
   script: [
@@ -157,7 +170,19 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
    name, device line, tagline, mono stats row (duration · channels · Hz). Hover lifts card.
    Footer CTA row: "Get the library" → https://github.com/alloyrobotics/alloy-logger-arduino ·
    "Set up your org" → https://www.usealloy.ai/setup-org?utm_source=alloylogger.com&utm_medium=referral&utm_campaign=alloylogger&utm_content=demo
-2. **Connect** `#/connect/:id`: the ingest terminal, centered card.
+2. **Contextualization** `#/connect/:id`: the mission brief, built by `js/core/context.js`. Two
+   columns: a product-shot hero of the machine on the left (a live 3D canvas inside `.ctx-fly` over
+   the SVG ghost placeholder), a staged brief on the right that says what the robot is, what the
+   mission was, what broke and when, how much raw data that is, and what the analyst is about to be
+   handed. It ends on one button ("Hand it the logs"), owns no timer and never auto-advances.
+   Clicking the copy lands every stage at once; "skip intro" advances.
+   The hero flies in from the clicked picker card: app.js captures the card's on-screen rect plus
+   its preview camera phase and passes it as `handoff`, and the hero opens at the card's size and
+   angle, then eases into the panel over 700 ms while its orbit ramps from the card's 14 s
+   revolution to the hero's 30 s one. No hand-off (direct URL) = a plain scale-and-fade settle.
+   `.ctx-stage` must never clip, since the entrance starts outside it.
+   `js/core/ingest.js` (the faux ingest terminal this replaced) is retained in the tree but is no
+   longer routed to by anything.
 3. **Demo** `#/demo/:id`: desktop = chat left (420 px), right column = viewer (~58 vh) over chart.
    Mobile (<900 px) = viewer top (~42 vh, sticky), chart collapsible beneath it, chat fills the rest,
    input pinned to bottom. Header: back arrow to picker, robot name + device, the two CTAs as
@@ -269,9 +294,14 @@ canvas. Save screenshots to the scratchpad dir given in your brief.
 `js/core/preview.js` replaces the picker cards' static line art with a live, slowly orbiting 3D
 preview of each robot's real `buildScene()` model.
 
-`createPickerPreviews(entries)` takes `[{ el: <.rcard-art>, def: robotDef }]` and returns
-`{ dispose() }`. `app.js` collects the entries in `buildPicker()`, mounts on entering `#/` and calls
-`dispose()` on leaving it, so the picker's context is released before the demo viewer opens its own.
+`createPickerPreviews(entries, host)` takes `[{ el: <.rcard-art>, def: robotDef }]` and returns
+`{ phaseFor(id), dispose() }`. `app.js` collects the entries in `buildPicker()`, mounts on entering
+`#/` and calls `dispose()` on leaving it, so the picker's context is released before the demo viewer
+opens its own.
+
+`phaseFor(id)` reports where that card's camera is RIGHT NOW as `{ az, elev, dist, fov, fill }`, or
+`null` before the card has been built and framed and while the context is down. The contextualization
+screen's hero uses it to open on the same shot the card was showing, so the hand-off does not jump.
 
 **The one-context rule.** There is exactly ONE `WebGLRenderer` for all four cards, never one per
 card. Its canvas is a transparent `position: fixed; inset: 0; pointer-events: none` overlay, and
@@ -291,7 +321,9 @@ with all four SVG placeholders visible, first `buildData` at 59 ms, all four pre
 **Framing.** Each preview scene gets its own hemisphere plus key and fill lights (brighter than the
 viewer's, since there is no lit ground plane behind a 92 px card), a transparent background and no
 ground grid. The model is posed ONCE at a healthy hero moment, never the failure:
-`{ sbr: 20, arm6: 30, drone: 30, rescue: 60 }` seconds, falling back to `duration * 0.3`. Scenery
+`{ sbr: 20, arm6: 30, drone: 30, rescue: 22 }` seconds, falling back to `duration * 0.3` (rescue is
+posed before its thermal build-up: its `update()` drives a heat glow, so a late pose reads as a red
+robot). Scenery
 markedly bigger than the shot or far from the machine (drone's survey field and flown track,
 rescue's rubble ramp and scattered debris) is hidden, then the camera orbits the remaining
 subject's centre at its `cameraHome` azimuth and elevation, 14 s per revolution, at a

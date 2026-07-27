@@ -10,6 +10,7 @@ export default {
   name: 'Tracked rescue robot',
   device: 'ESP32 · BNO055 · 2x track drive · 2x INA219',
   tagline: 'Stalls on the rubble, flippers save it',
+  context: { system: 'A tracked rescue platform: independent track drives with current sensing on both motors, IMU and flipper actuators, logged at 50 Hz.', mission: 'An 85-second traverse of a rubble pile: climb, cross, descend.', fault: 'The left track stops making ground on the steep face and the climb stalls. A second attempt crests it. Why the first try failed is in the drive channels.', faultT: 48.4, label: 'track stall' },
   accent: '#f5a623',
   duration,
   rate,

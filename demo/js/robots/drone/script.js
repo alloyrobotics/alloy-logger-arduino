@@ -9,6 +9,7 @@ export default {
   name: 'Survey quadcopter',
   device: 'ESP32 · 4x ESC telemetry · GPS + baro',
   tagline: 'One motor dies mid-survey',
+  context: { system: 'A survey quadcopter streaming per-motor ESC telemetry plus GPS, barometer and attitude at 50 Hz.', mission: 'A 90-second lawnmower pattern at 6 m altitude, fixed waypoints, no operator input.', fault: '2 m of altitude gone mid-leg and 16 degrees off heading. The controller never gets either back, and the mission ends in a failsafe descent. The flight plan never changed.', faultT: 61.2, label: 'altitude dip' },
   accent: '#4dd0e1',
   duration,
   rate,
