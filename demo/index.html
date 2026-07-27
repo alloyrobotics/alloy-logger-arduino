@@ -112,9 +112,13 @@ input { font: inherit; color: inherit; }
 .rcard-art {
   aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--line); border-radius: 10px; color: var(--tx-mute);
+  /* product-shot backdrop: lifted vignetted base + a faint accent glow behind the machine,
+     so the dark-metal models separate from the tile instead of sinking into it */
   background:
-    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px) 0 0 / 14px 14px,
-    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px) 0 0 / 14px 14px;
+    linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 14px 14px,
+    linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 14px 14px,
+    radial-gradient(ellipse 78% 66% at 50% 50%, color-mix(in srgb, var(--acc) 17%, transparent), transparent 74%),
+    radial-gradient(ellipse 120% 105% at 50% 42%, #2a303a 0%, #20242b 55%, #171a1f 100%);
 }
 .rcard-art svg { width: 132px; height: 88px; overflow: visible; transition: opacity .4s ease; }
 .rcard-art svg .acc { stroke: var(--acc); }
