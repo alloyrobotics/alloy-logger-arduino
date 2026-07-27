@@ -95,15 +95,17 @@ export default {
       slowmo:true }                // play the window at 0.4x
   ],
   context: {                       // OPTIONAL. Authored copy for the contextualization screen.
-    system: 'One sentence on what the machine is and what it logs.',
-    mission: 'One sentence on what this mission was.',
-    fault: 'One or two sentences on what went wrong, in field-engineer voice.',
-    label: 'stall',                // short chip label beside the fault timestamp
-    faultT: 48.4                   // seconds; the moment the fault first shows
+    system: 'One sentence on what the machine is and what it logs.',  // the only field RENDERED today
+    mission: 'One sentence on what this mission was.',                // authored + derived, currently unrendered
+    fault: 'One or two sentences on what went wrong, in field-engineer voice.',  // ditto
+    label: 'stall',                // ditto
+    faultT: 48.4                   // ditto
   },
   // Every field above has a fallback derived from the def itself (device + channel paths + rate for
   // `system`, tagline + duration + row counts for `mission`, the first alert finding for `fault`,
   // `label` and `faultT`), so a generated robot that ships no `context` still reads correctly.
+  // The 2026-07-28 simplification renders only `system`, the datapoint-volume line and the analyst
+  // charge; the other fields stay authored/derived so a richer layout can return without new data.
   firstQuestion: 'Why does my robot keep falling over?',   // auto-asked after ingest
   suggested: ['...', '...', '...'],                        // chip row under input (3-4)
   script: [
@@ -172,10 +174,12 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
    "Set up your org" → https://www.usealloy.ai/setup-org?utm_source=alloylogger.com&utm_medium=referral&utm_campaign=alloylogger&utm_content=demo
 2. **Contextualization** `#/connect/:id`: the mission brief, built by `js/core/context.js`. Two
    columns: a product-shot hero of the machine on the left (a live 3D canvas inside `.ctx-fly` over
-   the SVG ghost placeholder), a staged brief on the right that says what the robot is, what the
-   mission was, what broke and when, how much raw data that is, and what the analyst is about to be
-   handed. It ends on one button ("Hand it the logs"), owns no timer and never auto-advances.
-   Clicking the copy lands every stage at once; "skip intro" advances.
+   the SVG ghost placeholder), and three staged lines on the right: what the machine is
+   (`context.system`), how much raw data the mission shipped (datapoint volume), and what the
+   analyst is about to be handed. The CTA is the robot's own `firstQuestion` rendered as a
+   card-shaped button (`.ctx-ask`, quoted question + "ask the analyst" hint) — clicking it advances
+   to the demo, which opens by auto-asking that exact question. Owns no timer and never
+   auto-advances. Clicking the copy lands every stage at once; "skip to the demo" also advances.
    The hero flies in from the clicked picker card: app.js captures the card's on-screen rect plus
    its preview camera phase and passes it as `handoff`, and the hero opens at the card's size and
    angle, then eases into the panel over 700 ms while its orbit ramps from the card's 14 s

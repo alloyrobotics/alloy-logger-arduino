@@ -48,7 +48,7 @@ const ELEV_EPS = 0.02; // rad: below this the hand-off elevation is the hero's, 
 const GENERIC_ICON = `<rect x="22" y="34" width="52" height="18" rx="3"/><circle cx="34" cy="52" r="5"/><circle cx="62" cy="52" r="5"/><path d="M27 52h42" class="acc"/><path d="M48 34V18"/><rect x="40" y="8" width="16" height="10" rx="2" class="acc"/><path d="M56 13h6" class="acc"/><path d="M8 59h80"/>`;
 
 /** Per-stage reveal delay, ms. Read into `--d` on each staged child. */
-const STAGE_DELAY = { 1: 260, 2: 420, 3: 640, 4: 900, 5: 1150, 6: 1400, 7: 1620 };
+const STAGE_DELAY = { 1: 260, 2: 520, 3: 780, 4: 1020 };
 /** Added to every stage delay when a fly runs, so the copy lands as the machine settles. */
 const FLY_STAGE_DELAY = 450;
 
@@ -201,17 +201,9 @@ export function createContext(mount, robotDef, opts = {}) {
   el.className = 'ctx';
   el.style.setProperty('--acc', def.accent || '#2f78ff');
 
-  // Nothing is ever rendered as a zero: a robot that shipped no rows gets no stats strip and no
-  // volume line at all, because "0 datapoints" undersells the product instead of selling it.
+  // Nothing is ever rendered as a zero: a robot that shipped no rows gets no volume line at all,
+  // because "0 datapoints" undersells the product instead of selling it.
   const hasVolume = b.samples > 0;
-  // No `rate` pair: the system sentence already states the logging rate, so a Hz chip here only
-  // repeats it. The derived-fallback prose still carries its own rate clause (see briefOf).
-  const stats = [
-    ['duration', `${b.duration.toFixed(1)} s`],
-    ['channels', loc(b.count)],
-    ['samples', loc(b.samples)],
-    ['datapoints', loc(b.values)],
-  ];
 
   el.innerHTML = `
     <div class="ctx-stage${mayEnter ? ' entering' : ''}">
@@ -224,64 +216,27 @@ export function createContext(mount, robotDef, opts = {}) {
       <button class="ctx-skip mono" type="button">skip to the demo &rsaquo;</button>
     </div>
     <div class="ctx-copy">
-      <div class="ctx-head" data-stage="1">
-        <p class="ctx-eyebrow mono"></p>
-        <h1 class="ctx-name"></h1>
-      </div>
-      <p class="ctx-system" data-stage="2"></p>
-      <p class="ctx-mission" data-stage="3"></p>
-      <div class="ctx-fault" data-stage="4">
-        ${b.faultT != null ? '<div class="ctx-fault-row"><span class="ctx-dot" aria-hidden="true"></span><p class="ctx-fault-t mono"></p></div>' : ''}
-        <p class="ctx-fault-x"></p>
-      </div>
+      <p class="ctx-system" data-stage="1"></p>
+      ${hasVolume ? '<p class="ctx-volume" data-stage="2"></p>' : ''}
+      <p class="ctx-charge" data-stage="3">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
       ${
-        hasVolume
-          ? `<div class="ctx-vol" data-stage="5">
-        <dl class="ctx-stats mono"></dl>
-        <p class="ctx-volume"></p>
-      </div>`
-          : ''
+        b.question
+          ? `<button class="ctx-ask" type="button" data-stage="4">
+        <span class="ctx-ask-q"></span>
+        <span class="ctx-ask-go mono">ask the analyst <span aria-hidden="true">&rarr;</span></span>
+      </button>`
+          : `<button class="btn ctx-go" type="button" data-stage="4">Hand it the logs <span aria-hidden="true">&rarr;</span></button>`
       }
-      <div class="ctx-said" data-stage="6">
-        <p class="ctx-charge">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
-        ${b.question ? '<blockquote class="ctx-q"></blockquote>' : ''}
-      </div>
-      <div class="ctx-cta" data-stage="7">
-        <div class="ctx-actions">
-          <button class="btn ctx-go" type="button">Hand it the logs <span aria-hidden="true">&rarr;</span></button>
-        </div>
-        <p class="ctx-foot">The mission data stays in your browser. Questions go to the live analyst.</p>
-      </div>
     </div>`;
 
   const q = (sel) => el.querySelector(sel);
-  q('.ctx-eyebrow').textContent = `mission brief · ${b.dev}-01`;
-  q('.ctx-name').textContent = b.name;
   q('.ctx-system').textContent = b.system;
-  q('.ctx-mission').textContent = b.mission;
-  q('.ctx-fault-x').textContent = b.fault;
-  // label first: the failure reads before its timestamp, and the chip is what the eye lands on
-  if (b.faultT != null) q('.ctx-fault-t').textContent = `${b.label} · T+${b.faultT.toFixed(1)} s`;
-  if (b.question) q('.ctx-q').textContent = `“${b.question}”`;
   if (hasVolume) {
     q('.ctx-volume').textContent =
       `${loc(b.values)} raw datapoints across ${loc(b.count)} channels. The answer is in there, ` +
       'but it only shows up when you read the channels against each other.';
-
-    // Each dt/dd pair is wrapped so the row wraps BETWEEN pairs, never between a label and its
-    // number ("samples" on one line and its count on the next).
-    const dl = q('.ctx-stats');
-    stats.forEach(([k, v]) => {
-      const pair = document.createElement('div');
-      const dt = document.createElement('dt');
-      dt.textContent = k;
-      const dd = document.createElement('dd');
-      dd.textContent = v;
-      pair.appendChild(dt);
-      pair.appendChild(dd);
-      dl.appendChild(pair);
-    });
   }
+  if (b.question) q('.ctx-ask-q').textContent = `“${b.question}”`;
 
   mount.appendChild(el);
 
@@ -299,7 +254,8 @@ export function createContext(mount, robotDef, opts = {}) {
   if (section) section.classList.add('ctx-mode');
 
   const copy = q('.ctx-copy');
-  const goBtn = q('.ctx-go');
+  // the question card is the CTA when the def ships a first question; a plain button otherwise
+  const goBtn = q('.ctx-ask') || q('.ctx-go');
   const skipBtn = q('.ctx-skip');
 
   let done = false;
@@ -329,7 +285,7 @@ export function createContext(mount, robotDef, opts = {}) {
 
   function onCopyClick(e) {
     // the CTA is inside .ctx-copy: let it advance instead of only revealing
-    if (e.target && e.target.closest && e.target.closest('.ctx-go')) return;
+    if (e.target && e.target.closest && e.target.closest('.ctx-ask, .ctx-go')) return;
     revealAll();
   }
 
