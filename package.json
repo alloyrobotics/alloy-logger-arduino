@@ -1,0 +1,16 @@
+{
+  "name": "alloylogger-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "facts": "node worker/build-facts.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.114.0"
+  }
+}

@@ -2,6 +2,18 @@
 // Every generator in this demo draws from mulberry32 so two page loads produce identical data.
 
 /**
+ * Stable per-robot seed so two page loads produce identical data. Lives here (not app.js)
+ * because worker/build-facts.mjs must use the exact same seed to describe the same noise the
+ * page draws, and app.js is DOM-heavy and cannot be imported by Node.
+ * @param {string} id robot id
+ */
+export function seedFor(id) {
+  let h = 0x9e3779b9;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(h ^ id.charCodeAt(i), 0x85ebca6b) >>> 0) + 1;
+  return h >>> 0;
+}
+
+/**
  * mulberry32 - fast, seeded 32-bit PRNG.
  * @param {number} seed integer seed
  * @returns {() => number} function returning a float in [0,1)

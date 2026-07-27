@@ -15,3 +15,7 @@ Landing page structure.md
 .vercel
 .wrangler/
 .playwright-mcp/
+
+# Site Worker deps (worker/facts.generated.js IS committed)
+node_modules/
+.dev.vars

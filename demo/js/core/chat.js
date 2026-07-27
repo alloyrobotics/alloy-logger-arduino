@@ -6,6 +6,13 @@ import { renderMarkdown } from './markdown.js';
 
 const CHARS_PER_FRAME = 3;
 
+/** Same-origin analyst endpoint (worker/chat.js). */
+const CHAT_ENDPOINT = '/demo/api/chat';
+/** Turns of transcript sent back for context — 5 exchanges. */
+const MAX_HISTORY = 10;
+/** Consecutive transport failures before this session gives up and stays scripted. */
+const MAX_LIVE_FAILURES = 2;
+
 /**
  * @param {HTMLElement} mount
  * @param {object} robotDef
@@ -30,7 +37,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     <div class="chat-foot">
       <div class="sugg" aria-label="Suggested questions"></div>
       <form class="chat-form" autocomplete="off">
-        <input class="chat-input" type="text" placeholder="Ask about this mission" aria-label="Ask about this mission" />
+        <input class="chat-input" type="text" maxlength="500" placeholder="Ask about this mission" aria-label="Ask about this mission" />
         <button class="chat-send" type="submit" aria-label="Send">
           <svg width="15" height="15" viewBox="0 0 15 15" aria-hidden="true"><path d="M1.5 7.5h11M8 3l4.5 4.5L8 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
@@ -48,6 +55,11 @@ export function createChat(mount, robotDef, hooks = {}) {
   let finishNow = null;
   let pendingTimer = 0;
   let disposed = false;
+  /** Rolling transcript sent to the analyst endpoint: [{role, content}, ...]. */
+  const history = [];
+  /** AbortController for the in-flight answer, so a new question cancels the old one. */
+  let inflight = null;
+  let liveFailures = 0;
 
   // ---------- suggested chips ----------
   (robotDef.suggested || []).forEach((q) => {
@@ -212,14 +224,23 @@ export function createChat(mount, robotDef, hooks = {}) {
     });
   }
 
-  function stream(entry, answerText) {
+  /**
+   * The typewriter. `src` may still be growing while it runs (a live answer arrives over SSE),
+   * so the walker parks on the caret when it catches up instead of finishing, and only finishes
+   * once close() says no more text is coming.
+   *
+   * @returns {{push:(t:string)=>void, close:(entry?:object)=>void, get length():number}}
+   */
+  function startStream() {
     const row = addAssistantShell();
     const body = row.querySelector('.bot-body');
-    const src = answerText;
-    const per = charsPerFrame(src.length);
+    let src = '';
+    let i = 0;
+    let closed = false;
+    let entry = null;
+    let skip = false; // reader clicked to skip the animation
     streaming = true;
     el.classList.add('is-streaming');
-    let i = 0;
 
     // `fireEvidence` is false when the reader interrupted with a new question: the abandoned
     // answer must not seek/loop the timeline out from under the question they just asked.
@@ -239,12 +260,31 @@ export function createChat(mount, robotDef, hooks = {}) {
       if (f) onEvidence(f);
     };
 
-    finishNow = done;
+    // A skip while the network is still delivering can only skip what has arrived; the walker
+    // stays alive and keeps pace with the remaining deltas.
+    finishNow = (fireEvidence) => {
+      skip = true;
+      i = src.length;
+      if (closed) done(fireEvidence !== false);
+      else if (fireEvidence === false) {
+        closed = true;
+        done(false);
+      }
+    };
 
     const step = () => {
       if (disposed) return;
-      i += per;
       if (i >= src.length) {
+        if (closed) {
+          done(true);
+          return;
+        }
+        // caught up to the network: hold the caret, do not finish
+        streamRaf = requestAnimationFrame(step);
+        return;
+      }
+      i = skip ? src.length : i + charsPerFrame(src.length);
+      if (i >= src.length && closed) {
         done(true);
         return;
       }
@@ -259,6 +299,28 @@ export function createChat(mount, robotDef, hooks = {}) {
       streamRaf = requestAnimationFrame(step);
     };
     streamRaf = requestAnimationFrame(step);
+
+    return {
+      push(text) {
+        src += text;
+      },
+      close(e) {
+        entry = e || null;
+        closed = true;
+      },
+      /** Tear the shell back down — used when a live answer dies before producing any text. */
+      discard() {
+        streaming = false;
+        el.classList.remove('is-streaming');
+        finishNow = null;
+        if (streamRaf) cancelAnimationFrame(streamRaf);
+        streamRaf = 0;
+        row.remove();
+      },
+      get length() {
+        return src.length;
+      },
+    };
   }
 
   function finishStreaming(fireEvidence) {
@@ -275,7 +337,133 @@ export function createChat(mount, robotDef, hooks = {}) {
     return `I have this mission's data loaded. Try one of these:\n\n${list}`;
   }
 
-  function ask(text) {
+  /**
+   * Scripted answer: instant, hand-verified, no network.
+   * `store:false` keeps the exchange out of the transcript — used when the server rejected the
+   * question (a 400 stored here would ride along on every later request and 400 those too).
+   */
+  function answerScripted(q, opts) {
+    const store = !opts || opts.store !== false;
+    const entry = matchEntry(q);
+    const body = entry ? entry.answer : fallbackText();
+    // small think beat so it reads as an analyst, not an echo
+    pendingTimer = window.setTimeout(() => {
+      pendingTimer = 0;
+      if (disposed) return;
+      const s = startStream();
+      s.push(body);
+      s.close(entry);
+      if (store) remember(q, body);
+    }, 220);
+  }
+
+  /**
+   * Live answer from /demo/api/chat. The shell goes up immediately so the caret stands in for a
+   * spinner while the model warms up. Any failure before the first token falls back to the
+   * scripted answer, so the panel is never dead — the demo still works with the endpoint down.
+   */
+  async function answerLive(q) {
+    const ctrl = new AbortController();
+    inflight = ctrl;
+    const s = startStream();
+    let answer = '';
+    let entry = null;
+    let failure = null;
+    let truncated = false;
+    let httpStatus = 0;
+    let sawFrame = false;
+
+    try {
+      const res = await fetch(CHAT_ENDPOINT, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          robot: robotDef.id,
+          messages: history.concat([{ role: 'user', content: q }]),
+        }),
+        signal: ctrl.signal,
+      });
+      httpStatus = res.status;
+      if (!res.ok || !res.body) throw new Error(`http ${res.status}`);
+
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        // SSE frames are separated by a blank line; a frame can straddle two reads.
+        let cut;
+        while ((cut = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, cut).trim();
+          buf = buf.slice(cut + 2);
+          if (!frame.startsWith('data:')) continue;
+          let msg;
+          try {
+            msg = JSON.parse(frame.slice(5));
+          } catch {
+            continue;
+          }
+          sawFrame = true;
+          if (msg.type === 'delta') {
+            answer += msg.text;
+            s.push(msg.text);
+          } else if (msg.type === 'done') {
+            entry = { evidence: Array.isArray(msg.evidence) ? msg.evidence : [] };
+            truncated = !!msg.truncated;
+          } else if (msg.type === 'error') {
+            failure = msg.message;
+          }
+        }
+      }
+
+      // Only a `done` frame makes an answer real. A stream that died mid-sentence must not
+      // become authoritative history the next question builds on.
+      if (!entry || !answer) throw new Error(failure || 'stream ended early');
+      if (truncated) {
+        const note = '\n\n(cut short)';
+        answer += note;
+        s.push(note);
+      }
+      s.close(entry);
+      liveFailures = 0; // the endpoint answered; earlier blips are forgiven
+      remember(q, answer);
+    } catch (err) {
+      if (ctrl.signal.aborted) return; // a newer question superseded this one
+
+      // The breaker counts only transport-level failures (endpoint unreachable for this
+      // visitor). A well-formed error frame or a 4xx means the server is up: a couple of model
+      // refusals must not disable live chat for the whole session.
+      const badRequest = httpStatus >= 400 && httpStatus < 500;
+      if (!sawFrame && !badRequest) liveFailures++;
+
+      if (answer) {
+        // Partial answer, then the stream died: keep what arrived visible with the note, but do
+        // not store it and do not fire evidence.
+        const note = `\n\n${failure || 'The analyst dropped out. Try that again.'}`;
+        s.push(note);
+        s.close(null);
+      } else {
+        s.discard();
+        answerScripted(q, { store: !badRequest });
+      }
+    } finally {
+      if (inflight === ctrl) inflight = null;
+    }
+  }
+
+  /** Keep a short rolling transcript so follow-ups ("why?", "and the heap?") have context. */
+  function remember(q, answer) {
+    history.push({ role: 'user', content: q }, { role: 'assistant', content: answer });
+    if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  }
+
+  /**
+   * @param {string} text
+   * @param {{live?:boolean}} [opts] `live:false` forces the scripted answer (used for the
+   *   auto-fired opener, which should be instant and costs nothing to serve).
+   */
+  function ask(text, opts) {
     const q = String(text || '').trim();
     if (!q) return;
     // An answer queued by the think beat is still "in flight": without this a second question
@@ -284,21 +472,28 @@ export function createChat(mount, robotDef, hooks = {}) {
       window.clearTimeout(pendingTimer);
       pendingTimer = 0;
     }
+    if (inflight) {
+      inflight.abort();
+      inflight = null;
+    }
     // finish silently: the abandoned answer's evidence must not drive the timeline
     if (streaming) finishStreaming(false);
     onAsk(q);
     addUser(q);
-    const entry = matchEntry(q);
-    const body = entry ? entry.answer : fallbackText();
-    // small think beat so it reads as an analyst, not an echo
-    pendingTimer = window.setTimeout(() => {
-      pendingTimer = 0;
-      if (!disposed) stream(entry, body);
-    }, 220);
+
+    const live = (!opts || opts.live !== false) && liveFailures < MAX_LIVE_FAILURES;
+    if (live) answerLive(q);
+    else answerScripted(q);
   }
 
   function askFirstQuestion() {
-    if (robotDef.firstQuestion) ask(robotDef.firstQuestion);
+    // The opener fires on a 420 ms timer from app.js; a quick visitor can beat it by clicking a
+    // suggestion. Their question wins: firing the opener anyway would abort their live call and
+    // strand their bubble.
+    if (log.querySelector('.msg.user')) return;
+    // The opener is scripted on purpose: it lands instantly, it is the answer that was written
+    // and reviewed for this mission, and it does not spend a model call on every page load.
+    if (robotDef.firstQuestion) ask(robotDef.firstQuestion, { live: false });
   }
 
   form.addEventListener('submit', (e) => {
@@ -324,6 +519,8 @@ export function createChat(mount, robotDef, hooks = {}) {
       disposed = true;
       if (streamRaf) cancelAnimationFrame(streamRaf);
       if (pendingTimer) window.clearTimeout(pendingTimer);
+      if (inflight) inflight.abort();
+      inflight = null;
       pendingTimer = 0;
       el.remove();
     },

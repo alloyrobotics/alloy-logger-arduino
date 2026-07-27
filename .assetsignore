@@ -23,3 +23,8 @@ LICENSE
 README.md
 demo/DESIGN.md
 docs/
+worker/
+node_modules/
+package.json
+package-lock.json
+.dev.vars

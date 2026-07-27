@@ -5,7 +5,7 @@
 // ?robot=<id> on any load deep-links straight to #/demo/<id>.
 
 import { ROBOTS, getRobot, ROBOT_ICONS } from './robots/index.js';
-import { mulberry32 } from './core/prng.js';
+import { mulberry32, seedFor } from './core/prng.js';
 import { createTimeline } from './core/timeline.js';
 import { createViewer } from './core/viewer.js';
 import { createChart } from './core/chart.js';
@@ -22,13 +22,6 @@ const screens = {
   connect: document.getElementById('screen-connect'),
   demo: document.getElementById('screen-demo'),
 };
-
-/** Stable per-robot seed so two page loads produce identical data. */
-function seedFor(id) {
-  let h = 0x9e3779b9;
-  for (let i = 0; i < id.length; i++) h = (Math.imul(h ^ id.charCodeAt(i), 0x85ebca6b) >>> 0) + 1;
-  return h >>> 0;
-}
 
 /**
  * buildData is called exactly once per robot, at first use. The result is attached to the def as

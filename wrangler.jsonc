@@ -1,8 +1,13 @@
 {
   "$schema": "https://unpkg.com/wrangler/config-schema.json",
-  // AlloyLogger landing page — assets-only Worker (no script). Ingest lives in cloud/.
+  // AlloyLogger landing page + demo. Static assets, plus /demo/api/chat (worker/chat.js).
+  // Ingest lives in cloud/.
   "name": "alloylogger-site",
   "compatibility_date": "2026-07-02",
+  // nodejs_compat: the Anthropic SDK reaches for node:stream / node:buffer on its fetch shim.
+  // enable_request_signal: request.signal fires on client disconnect, so chat.js can abort the
+  // upstream Anthropic stream instead of paying for an answer nobody will read.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "routes": [
     { "pattern": "alloylogger.com", "custom_domain": true },
     { "pattern": "www.alloylogger.com", "custom_domain": true }
@@ -16,5 +21,22 @@
   },
   "observability": {
     "enabled": true
-  }
+  },
+  // Rate limits for /demo/api/chat. It is a public endpoint spending a real API key, so both
+  // limiters matter: the first stops one visitor hammering it, the second caps total burn.
+  // Limits are per-POP, not global; the real spend backstop is the Anthropic workspace cap.
+  // namespace_id is an arbitrary per-account integer — do not reuse these two elsewhere.
+  // chat.js fails CLOSED (503) if these bindings are missing; local dev sets DEV=1 instead.
+  "ratelimits": [
+    {
+      "name": "CHAT_RL_IP",
+      "namespace_id": "1001",
+      "simple": { "limit": 12, "period": 60 }
+    },
+    {
+      "name": "CHAT_RL_ALL",
+      "namespace_id": "1002",
+      "simple": { "limit": 150, "period": 60 }
+    }
+  ]
 }
