@@ -23,14 +23,18 @@ import * as THREE from 'three';
 // only ever called later from the idle builder. Importing it rather than re-deriving the seed
 // keeps ONE data generator, which the deterministic-data rule depends on.
 import { ensureData } from '../app.js';
+// The staging solve itself (WebGL probe, light rig, hero pose, orbit-safe fit) is shared with the
+// connect screen's hero, so it lives in stage3d.js. This module owns only the picker's one-canvas
+// scissor rig and its constants.
+import {
+  webglAvailable,
+  addStageLights,
+  fitOrbit,
+  heroTime,
+  PICKER_ORBIT_MS,
+} from './stage3d.js';
 
-/** Healthy hero moment per robot. Deliberately not the failure window, and for rescue also
- * before the thermal build-up: its update() drives a data-driven heat glow on the left track,
- * so a late-mission pose reads as a red robot. 22 s is the cool, clean traverse. */
-const T_HERO = { sbr: 20, arm6: 30, drone: 30, rescue: 22 };
-const T_HERO_FALLBACK = 0.3; // fraction of duration
-
-const ORBIT_MS = 14000; // one revolution
+const ORBIT_MS = PICKER_ORBIT_MS; // one revolution
 const DIST_SCALE = 0.9; // fallback distance, relative to the robot's own cameraHome distance
 const ENV_CULL = 1.5; // hide scenery bigger than this many cameraHome distances
 const ENV_RADIUS = 0.28; // and scenery whose centre sits further than this from the machine
@@ -41,26 +45,6 @@ const MIN_FRAME_MS = 1000 / 30 - 2;
 const MAX_DPR = 2; // same ceiling as viewer.js and chart.js: the previews crossfade over vector art
 const ORBIT_SAMPLES = 36; // azimuths the framing is checked against
 const FADE_CLASS = 'preview-live';
-
-// Cached and released immediately: the picker is mounted and disposed on every visit, and a probe
-// context left alive on each one would march the tab towards Chrome's live-context ceiling, which
-// is the exact failure this module is built to avoid.
-let webglSupported = null;
-function webglAvailable() {
-  if (webglSupported !== null) return webglSupported;
-  try {
-    const c = document.createElement('canvas');
-    const gl = c.getContext('webgl2') || c.getContext('webgl');
-    webglSupported = !!(window.WebGLRenderingContext && gl);
-    if (gl) {
-      const ext = gl.getExtension('WEBGL_lose_context');
-      if (ext) ext.loseContext();
-    }
-  } catch (_) {
-    webglSupported = false;
-  }
-  return webglSupported;
-}
 
 /**
  * Live orbiting previews for the picker cards.
@@ -191,181 +175,25 @@ export function createPickerPreviews(entries, host) {
   }
 
   // ------------------------------------------------------------------ scene per robot
-  function addLights(scene) {
-    // The viewer's rig, pushed brighter. In the demo these dark-metal robots sit on a lit ground
-    // plane inside a 58 vh panel; in a 92 px card, with no ground bounce and no fog behind them,
-    // the same exposure read as a smudge. The key and the two fills carry the whole read here.
-    scene.add(new THREE.HemisphereLight(0xa8bcd6, 0x1a1d22, 1.5));
-    scene.add(new THREE.AmbientLight(0xffffff, 0.42));
-    const key = new THREE.DirectionalLight(0xffffff, 2.5);
-    key.position.set(5, 8, 4);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x2f78ff, 0.7);
-    fill.position.set(-5, 3, -4);
-    scene.add(fill);
-    const front = new THREE.DirectionalLight(0xbcd2f0, 0.6);
-    front.position.set(-3, 4, 6);
-    scene.add(front);
-    const rim = new THREE.DirectionalLight(0xffffff, 0.55);
-    rim.position.set(0, 2.5, -7);
-    scene.add(rim);
-  }
-
-  /**
-   * Hide the world, keep the machine, then frame it.
-   *
-   * The demo viewer looks at these scenes across a 58 vh panel, so drone draws a 20 x 14 m survey
-   * field and rescue builds a whole rubble ramp. Inside a 92 px card those read as abstract lines
-   * and a grey slab with the robot lost in them, so anything markedly bigger than the shot itself
-   * is hidden for the preview. What is left is the machine, floating in the card's grid panel like
-   * the line art it replaces.
-   */
+  // Hide the world, keep the machine, then frame it. The solve is shared with the connect-screen
+  // hero (stage3d.js); this adapter only feeds it the picker's constants and copies the result
+  // onto the record the render loop reads.
   function frameRec(rec) {
-    const api = rec.api || {};
-    const home = api.cameraHome;
-
-    let homeDist = 3;
-    let homeTarget = null;
-    rec.elev = 0.34;
-    rec.az0 = 0.9;
-
-    if (home && home.position && home.target) {
-      const ht = new THREE.Vector3(home.target.x, home.target.y, home.target.z);
-      const off = new THREE.Vector3(home.position.x, home.position.y, home.position.z).sub(ht);
-      homeDist = off.length() || 3;
-      homeTarget = ht;
-      rec.elev = Math.asin(THREE.MathUtils.clamp(off.y / homeDist, -1, 1));
-      rec.az0 = Math.atan2(off.z, off.x);
-    }
-
-    // drone and rescue travel across their worlds, so their cameraHome target only holds at t=0.
-    // Both expose cameraFocus(), which reports where the machine actually is at the posed moment.
-    if (typeof api.cameraFocus === 'function') {
-      const p = api.cameraFocus();
-      if (p && Number.isFinite(p.x)) homeTarget = new THREE.Vector3(p.x, p.y, p.z);
-    }
-
-    const focus = homeTarget || new THREE.Vector3(0, 0.4, 0);
-    const limit = homeDist * ENV_CULL;
-    const keep = homeDist * ENV_RADIUS;
-    const subject = new THREE.Box3();
-    const b = new THREE.Box3();
-    const env = new THREE.Box3();
-    const size = new THREE.Vector3();
-    const centre = new THREE.Vector3();
-    rec.mount.updateWorldMatrix(true, true);
-
-    const worldBox = (o) => {
-      if (!o.geometry) return null;
-      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-      if (!o.geometry.boundingBox) return null;
-      b.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
-      return b.isEmpty() ? null : b;
-    };
-    // too big to be part of the machine (survey field, rubble ramp, ground planes), or too far from
-    // it to belong in a 92 px shot (flown track, scattered debris, drop lines). Leaves `size` and
-    // `centre` set for the box it was handed.
-    const isScenery = (bx) => {
-      bx.getSize(size);
-      bx.getCenter(centre);
-      return Math.max(size.x, size.y, size.z) > limit || centre.distanceTo(focus) > keep;
-    };
-
-    // The machine, for the cull below: the mesh nearest the focus point that is not itself scenery.
-    // Its ancestors are the only groups allowed to stay bigger than the shot.
-    let anchor = null;
-    let anchorDist = Infinity;
-    let anchorSize = Infinity;
-    rec.mount.traverse((o) => {
-      if (o.visible === false) return;
-      const bx = worldBox(o);
-      if (!bx || isScenery(bx)) return;
-      const d = bx.distanceToPoint(focus);
-      const s = Math.max(size.x, size.y, size.z);
-      if (d < anchorDist - 1e-6 || (d <= anchorDist + 1e-6 && s < anchorSize)) {
-        anchorDist = d;
-        anchorSize = s;
-        anchor = o;
-      }
+    const fit = fitOrbit({
+      mount: rec.mount,
+      api: rec.api,
+      fov: FOV,
+      fill: SUBJECT_FILL,
+      aspect: ASPECT_REF,
+      samples: ORBIT_SAMPLES,
+      distScale: DIST_SCALE,
+      envCull: ENV_CULL,
+      envRadius: ENV_RADIUS,
     });
-    const machineChain = new Set();
-    for (let p = anchor; p; p = p.parent) machineChain.add(p);
-
-    // A walk rather than a traverse, so a scenery GROUP can be dropped whole. Testing mesh by mesh
-    // leaves the small parts of a big group behind: rescue's rubble pile lost its ramp but kept the
-    // loose chunks near the machine, which floated around it looking like render garbage.
-    const cull = (o) => {
-      if (o.visible === false) return;
-      // path rings, survey lanes, motion trails: line/point renderables are world dressing, and
-      // leaving them in inflates the subject box so the machine frames small in the card
-      if (o.isLine || o.isLineSegments || o.isPoints) {
-        o.visible = false;
-        return;
-      }
-      if (o !== rec.mount && o.children.length && !machineChain.has(o)) {
-        env.setFromObject(o);
-        if (!env.isEmpty()) {
-          env.getSize(size);
-          if (Math.max(size.x, size.y, size.z) > limit) {
-            o.visible = false;
-            return;
-          }
-        }
-      }
-      const bx = worldBox(o);
-      if (bx) {
-        if (isScenery(bx)) {
-          o.visible = false;
-          return;
-        }
-        subject.union(bx);
-      }
-      for (const child of o.children) cull(child);
-    };
-    cull(rec.mount);
-
-    if (subject.isEmpty()) {
-      rec.target.copy(focus);
-      rec.dist = homeDist * DIST_SCALE;
-      return;
-    }
-
-    subject.getCenter(rec.target);
-    // Frame the WHOLE orbit, not one axis-aligned silhouette. With the camera at unit direction u
-    // from the target, a subject corner at offset o needs dist >= o.u + |o.up| / kY (and the same
-    // horizontally): the depth term is what perspective adds as a corner swings towards the camera.
-    // A fit that ignores it is only correct at the azimuths where the machine happens to be side
-    // on, and slices the machine off along the card's bottom border at the rest.
-    const halfFov = Math.tan(((FOV * Math.PI) / 180) / 2);
-    const kY = SUBJECT_FILL * halfFov;
-    const kX = kY * ASPECT_REF; // square tile: horizontal allowance equals vertical
-    const u = new THREE.Vector3();
-    const right = new THREE.Vector3();
-    const up = new THREE.Vector3();
-    const corner = new THREE.Vector3();
-    const ce = Math.cos(rec.elev);
-    const se = Math.sin(rec.elev);
-    let dist = 0;
-    for (let i = 0; i < ORBIT_SAMPLES; i++) {
-      const az = rec.az0 + (i / ORBIT_SAMPLES) * Math.PI * 2;
-      u.set(ce * Math.cos(az), se, ce * Math.sin(az));
-      right.set(Math.sin(az), 0, -Math.cos(az)); // three's lookAt basis for world up +Y
-      up.crossVectors(u, right);
-      for (let j = 0; j < 8; j++) {
-        corner
-          .set(
-            j & 1 ? subject.max.x : subject.min.x,
-            j & 2 ? subject.max.y : subject.min.y,
-            j & 4 ? subject.max.z : subject.min.z
-          )
-          .sub(rec.target);
-        const need =
-          corner.dot(u) +
-          Math.max(Math.abs(corner.dot(up)) / kY, Math.abs(corner.dot(right)) / kX);
-        if (need > dist) dist = need;
-      }
-    }
-    rec.dist = dist;
+    rec.target.copy(fit.target);
+    rec.dist = fit.dist;
+    rec.elev = fit.elev;
+    rec.az0 = fit.az0;
   }
 
   function buildOne(rec) {
@@ -375,7 +203,7 @@ export function createPickerPreviews(entries, host) {
 
     const scene = new THREE.Scene();
     scene.background = null; // transparent: the card's own panel is the backdrop
-    addLights(scene);
+    addStageLights(scene);
 
     const mount = new THREE.Group();
     mount.name = `preview-${def.id}`;
@@ -386,7 +214,7 @@ export function createPickerPreviews(entries, host) {
     rec.mount = mount;
     rec.api = api;
 
-    const tHero = T_HERO[def.id] != null ? T_HERO[def.id] : def.duration * T_HERO_FALLBACK;
+    const tHero = heroTime(def);
     if (typeof api.update === 'function') api.update(tHero, data);
     if (typeof api.setHighlight === 'function') api.setHighlight(null);
 
@@ -446,6 +274,7 @@ export function createPickerPreviews(entries, host) {
 
   function placeCamera(rec, elapsed) {
     const az = reduceMotion ? rec.az0 : rec.az0 + (elapsed / ORBIT_MS) * Math.PI * 2;
+    rec.az = az; // live phase readout for phaseFor()
     const ce = Math.cos(rec.elev);
     rec.camera.position.set(
       rec.target.x + rec.dist * ce * Math.cos(az),
@@ -505,6 +334,20 @@ export function createPickerPreviews(entries, host) {
   scheduleIdle(() => step(0));
 
   return {
+    // Where a card's camera is RIGHT NOW, so another screen can hand a robot off to its own stage
+    // without the shot jumping. Null until that card has been built and framed, and while the
+    // context is down, because there is no live phase to report in either case.
+    phaseFor(id) {
+      const rec = recs.find((r) => r.def.id === id);
+      if (!rec || !rec.ready || contextLost) return null;
+      return {
+        az: rec.az != null ? rec.az : rec.az0,
+        elev: rec.elev,
+        dist: rec.dist,
+        fov: FOV,
+        fill: SUBJECT_FILL,
+      };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
