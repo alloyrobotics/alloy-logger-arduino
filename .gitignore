@@ -19,3 +19,5 @@ Landing page structure.md
 # Site Worker deps (worker/facts.generated.js IS committed)
 node_modules/
 .dev.vars
+.dev.vars*
+.env*
