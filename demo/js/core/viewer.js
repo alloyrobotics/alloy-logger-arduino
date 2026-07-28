@@ -174,6 +174,93 @@ export function createViewer(mount, robotDef, timeline) {
   robotRoot.name = 'robot-root';
   scene.add(robotRoot);
   const sceneApi = robotDef.buildScene(THREE, robotRoot) || {};
+
+  // ---------- optional per-scene rendering treatment ----------
+  // A scene MAY ask for a different look by returning a `rendering` block. The four hand-written
+  // robots return nothing here and are rendered exactly as they always were - which is the point:
+  // they were approved on this image, and tone mapping or an environment map applied globally
+  // would silently restyle all four. Generated scenes ask, because their content is different:
+  // 180 mm robots on a 2 m field need a shadow frustum two orders of magnitude tighter than a
+  // fixed 18 m ortho, and metal parts with no IBL to reflect collapse to flat grey.
+  let pmrem = null;
+  let envRT = null;
+  const rq = sceneApi.rendering;
+  if (rq && typeof rq === 'object') {
+    if (rq.toneMap === 'aces') {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = typeof rq.exposure === 'number' ? rq.exposure : 1.0;
+    }
+    if (rq.env) {
+      // A 64 x 32 equirect ramp PMREM'd once, rather than vendoring RoomEnvironment: it is the
+      // difference between "metalness means something" and "every metal part is dead grey", and
+      // it costs one 256 px cubemap built at construction and nothing per frame.
+      const W = 64;
+      const H = 32;
+      const buf = new Float32Array(W * H * 4);
+      for (let y = 0; y < H; y++) {
+        const v = y / (H - 1);
+        // sky above, floor bounce below, one soft bright band where the key light sits
+        const sky = 0.10 + 0.55 * Math.pow(1 - v, 1.6);
+        const band = Math.exp(-Math.pow((v - 0.22) * 5.2, 2)) * 0.9;
+        const lum = sky + band;
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          buf[i] = lum * 0.96;
+          buf[i + 1] = lum * 0.98;
+          buf[i + 2] = lum * 1.06;
+          buf[i + 3] = 1;
+        }
+      }
+      const eq = new THREE.DataTexture(buf, W, H, THREE.RGBAFormat, THREE.FloatType);
+      eq.mapping = THREE.EquirectangularReflectionMapping;
+      eq.needsUpdate = true;
+      pmrem = new THREE.PMREMGenerator(renderer);
+      envRT = pmrem.fromEquirectangular(eq);
+      scene.environment = envRT.texture;
+      scene.environmentIntensity = 0.55;
+      eq.dispose();
+    }
+    if (rq.anisotropy) {
+      // Only the renderer knows the GPU's limit, and a painted floor viewed along its own plane
+      // beads into a dotted line at the default of 1.
+      const maxA = renderer.capabilities.getMaxAnisotropy();
+      robotRoot.traverse((o) => {
+        if (o.isMesh && o.material && o.material.map) {
+          o.material.map.anisotropy = maxA;
+          o.material.map.needsUpdate = true;
+        }
+      });
+    }
+    if (rq.fog && typeof rq.fog === 'object') {
+      scene.fog = new THREE.Fog(rq.fog.color, rq.fog.near, rq.fog.far);
+    }
+    if (rq.grids === false) {
+      grid.visible = false;
+      gridCoarse.visible = false;
+    }
+    if (rq.ground === false) ground.visible = false;
+    if (rq.shadow && typeof rq.shadow === 'object') {
+      const sh = rq.shadow;
+      const half = typeof sh.half === 'number' ? sh.half : 9;
+      const cx = sh.center && typeof sh.center.x === 'number' ? sh.center.x : 0;
+      const cz = sh.center && typeof sh.center.z === 'number' ? sh.center.z : 0;
+      if (typeof sh.mapSize === 'number') key.shadow.mapSize.set(sh.mapSize, sh.mapSize);
+      key.shadow.camera.left = -half;
+      key.shadow.camera.right = half;
+      key.shadow.camera.top = half;
+      key.shadow.camera.bottom = -half;
+      key.shadow.camera.far = 34 + half;
+      if (typeof sh.bias === 'number') key.shadow.bias = sh.bias;
+      if (typeof sh.normalBias === 'number') key.shadow.normalBias = sh.normalBias;
+      // the light and its target both move onto the play area, or a tight frustum simply misses it
+      key.position.set(cx + 5, 8, cz + 4);
+      key.target.position.set(cx, 0, cz);
+      scene.add(key.target);
+      key.target.updateMatrixWorld();
+      key.shadow.camera.updateProjectionMatrix();
+    }
+  }
+
   const home = sceneApi.cameraHome || { position: { x: 3.4, y: 2.1, z: 4.2 }, target: { x: 0, y: 0.45, z: 0 } };
   camera.position.set(home.position.x, home.position.y, home.position.z);
   controls.target.set(home.target.x, home.target.y, home.target.z);
@@ -364,16 +451,60 @@ export function createViewer(mount, robotDef, timeline) {
   // the shot should stay on; the viewer translates BOTH camera and target by the same delta, so
   // whatever orbit the user has dialled in survives and reset-view still means the same framing.
   // Robots that frame a fixed workspace (sbr, arm6) simply do not implement it.
+  //
+  // A scene may also return `followTuning`, which swaps the fixed-rate chase for a
+  // critically-damped spring aimed slightly AHEAD of the subject. The fixed lerp translates the
+  // camera by exactly the target's delta every frame, so the camera-to-subject vector never
+  // changes and the whole world reads as one rigid plane being panned. A spring with lead runs
+  // into turns and falls behind on reversals, which is what gives the shot parallax. Canned
+  // scenes return nothing and keep the lerp they were approved on.
   const follow = typeof sceneApi.cameraFocus === 'function' ? sceneApi.cameraFocus : null;
+  const tune = sceneApi.followTuning && typeof sceneApi.followTuning === 'object' ? sceneApi.followTuning : null;
   const followPt = new THREE.Vector3();
+  const followVel = new THREE.Vector3();
+  const wantPrev = new THREE.Vector3();
+  const wantVel = new THREE.Vector3();
+  const aimPt = new THREE.Vector3();
   let followed = false;
+  let lastFollowMs = 0;
   function stepFollow() {
     if (!follow) return;
     const want = follow(timeline.t);
     if (!want) return;
     if (!followed) {
       followPt.set(want.x, want.y, want.z);
+      wantPrev.copy(followPt);
+      followVel.set(0, 0, 0);
+      wantVel.set(0, 0, 0);
+      lastFollowMs = 0;
       followed = true;
+    } else if (tune) {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const dt = lastFollowMs ? clamp((now - lastFollowMs) / 1000, 1 / 240, 1 / 20) : 1 / 60;
+      lastFollowMs = now;
+      const jump = Math.abs(want.x - followPt.x) + Math.abs(want.y - followPt.y) + Math.abs(want.z - followPt.z);
+      if (jump > (tune.snap || 1.2)) {
+        followPt.set(want.x, want.y, want.z);
+        followVel.set(0, 0, 0);
+        wantVel.set(0, 0, 0);
+      } else {
+        // subject velocity, low-passed so a single noisy frame does not fling the lead point
+        const k = 0.25;
+        wantVel.x += ((want.x - wantPrev.x) / dt - wantVel.x) * k;
+        wantVel.y += ((want.y - wantPrev.y) / dt - wantVel.y) * k;
+        wantVel.z += ((want.z - wantPrev.z) / dt - wantVel.z) * k;
+        const lead = typeof tune.lead === 'number' ? tune.lead : 0.3;
+        aimPt.set(want.x + wantVel.x * lead, want.y + wantVel.y * lead, want.z + wantVel.z * lead);
+        const w = typeof tune.omega === 'number' ? tune.omega : 4.2;
+        // critically damped: acc = w^2 (aim - p) - 2 w v, integrated semi-implicitly
+        followVel.x += (w * w * (aimPt.x - followPt.x) - 2 * w * followVel.x) * dt;
+        followVel.y += (w * w * (aimPt.y - followPt.y) - 2 * w * followVel.y) * dt;
+        followVel.z += (w * w * (aimPt.z - followPt.z) - 2 * w * followVel.z) * dt;
+        followPt.x += followVel.x * dt;
+        followPt.y += followVel.y * dt;
+        followPt.z += followVel.z * dt;
+      }
+      wantPrev.set(want.x, want.y, want.z);
     } else {
       const jump = Math.abs(want.x - followPt.x) + Math.abs(want.y - followPt.y) + Math.abs(want.z - followPt.z);
       // lag the camera so the subject moves inside the frame (an altitude dip has to be visible),
@@ -425,6 +556,10 @@ export function createViewer(mount, robotDef, timeline) {
       offTick();
       offChange();
       if (typeof sceneApi.dispose === 'function') sceneApi.dispose();
+      // the PMREM render target is a GPU allocation the scene traverse below cannot reach
+      if (envRT) envRT.dispose();
+      if (pmrem) pmrem.dispose();
+      scene.environment = null;
       controls.dispose();
       scene.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
