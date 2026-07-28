@@ -3,7 +3,8 @@
 A try.usealloy.ai-style interactive demo, fully static, served from this repo at `/demo/`.
 The pitch: pick a robot → watch its telemetry "ingest" → an AI analyst answers "why did my robot
 fail?" → **the answer drives a synchronized 3D replay + chart to the exact failure window**, with
-the failing part highlighted. Mobile-first (IG traffic lands on phones). Zero backend.
+the failing part highlighted. Mobile-first (IG traffic lands on phones). Static front end, four
+narrow backend surfaces (see the non-negotiables).
 
 This file is the single source of truth. Do not invent interfaces not specified here.
 If something is ambiguous, pick the simplest thing consistent with this doc and note it in your report.
@@ -13,6 +14,29 @@ If something is ambiguous, pick the simplest thing consistent with this doc and 
 - **Pure static ES modules. No build step, no framework, no CDN at runtime** except the Google Fonts
   link already used by the landing page (`Geist` + `Geist Mono`). Three.js is VENDORED into
   `demo/vendor/` (pin `three@0.166.1`, module build + `OrbitControls`, wired via an import map).
+- **Exactly four network surfaces, all same-origin, all listed here.** The demo page itself is still
+  static files; these are the only requests it makes that a Worker answers, and adding a fifth is a
+  design change, not an implementation detail:
+  1. `POST /demo/api/chat` (`worker/chat.js`) the live analyst. Streams a Claude answer grounded in
+     a facts pack; rate limited by the `CHAT_RL_*` bindings and fails closed (503) without them.
+  2. `POST /api/demo-gen/submit` (`worker/demo-gen.js`) the lead form. Always answers 202 from the
+     visitor's side, including the honeypot, dwell and suppression paths.
+  3. `GET /api/demo-gen/{verify,unsubscribe,approve,reject}` signed-link pages. Self-contained dark
+     HTML, inline styles, no fonts and no script, so they work from a phone with nothing loaded.
+  4. `GET /demo/js/robots/g-<slug>/def.json` the one servable file of a generated bundle.
+  No third-party script is loaded at runtime, ever. **Turnstile is the one sanctioned escalation**:
+  if the honeypot + dwell + per-IP/email limits stop holding and real spam appears, adding
+  Cloudflare Turnstile to the lead form is pre-approved, and it is the only external script that may
+  be added without revisiting this list.
+- **The generated-demo contract is a PUBLISHED API.** `core/prng.js`'s exports, the interpreter
+  behavior of `core/gendata.js` and `core/genscene.js`, and the RobotDefinition interface below are
+  not internal. Every emailed demo link is a bare `def.json` on a Worker plus whatever these modules
+  do to it at open time, forever, with no version of the interpreter pinned alongside it. So: no
+  export is renamed or removed, no default changes value, no clamp tightens, no part id is
+  respelled, and identical `(spec, seed)` keeps producing identical arrays. Breaking changes are
+  gated behind a new `spec_version` and the v1 path stays; anything softer than that needs a compat
+  shim in the interpreter, not a migration of the bundles (they are immutable and already sent).
+  `demo/GENSPEC.md` is the contract; `demo/js/robots/gen-fixture/harness.mjs` is the regression test.
 - **Deterministic data.** All synthetic telemetry comes from seeded PRNG (mulberry32). Two page
   loads produce identical data. `Math.random()` is banned in data generators.
 - **One shared timeline** drives chat evidence, the 3D viewer, and the charts. This sync is the
@@ -51,7 +75,18 @@ demo/
   js/core/ingest.js     ← scaffold agent
   js/core/prng.js       ← scaffold agent (mulberry32 + gaussian + 1D value-noise helpers)
   js/core/markdown.js   ← scaffold agent (tiny renderer: bold, inline code, tables, lists, headings)
-  js/robots/index.js    ← scaffold agent (registry; imports the four robot defs)
+  js/core/matcher.js    ← scaffold agent (pure matchEntry(entries, text); chat.js AND the runner's validator consume it)
+  js/core/gendata.js    ← scaffold agent (GENSPEC data_spec interpreter; isomorphic, no DOM; PUBLISHED API)
+  js/core/genscene.js   ← scaffold agent (GENSPEC scene_spec interpreter; PUBLISHED API)
+  js/core/leadform.js   ← scaffold agent (lead-capture modal; posts /api/demo-gen/submit)
+  js/robots/index.js    ← scaffold agent (registry; imports the four robot defs; registerRobot() for generated ones)
+  js/robots/generated.js ← scaffold agent (fetch + gate + compose a g-<slug> def.json into a RobotDefinition)
+  js/robots/gen-fixture/ ← DEV FIXTURE. A hand-written def.json + harness.mjs that proves interpreter
+                           parity with the runner. Node-only, assetsignored, never registered.
+  js/robots/g-*/        ← GENERATED DATA, not code, and not in this repo at all. Served from the
+                           Durable Object by worker/demo-gen.js, one def.json per slug, only after
+                           the validator and the worker's structural re-check have both passed it.
+                           Nothing here is ever committed and no agent writes it.
   js/robots/stub/       ← scaffold agent (dev-only placeholder proving the loop; registry-excluded at the end)
   js/robots/sbr/{data.js,scene.js,script.js}     ← robot agent 1
   js/robots/arm6/{data.js,scene.js,script.js}    ← robot agent 2
@@ -69,6 +104,17 @@ Each robot dir exports one default object from `data.js`'s sibling `index.js`? N
 ```js
 export default {
   id: 'sbr',                       // url slug, ?robot=sbr deep-links it
+  deviceId: 'sbr',                 // OPTIONAL. The name ingest.js puts on screen: the alloy.begin
+                                   // path, the wifi line, the mission-open line, the finalized
+                                   // `<dev>-01.mcap`, and the terminal card title. All five read
+                                   // `def.deviceId || def.id`, so a canned robot omits it and a
+                                   // generated one sets it to its own device_id: the visitor's
+                                   // terminal must read like their robot, not like the 20 char
+                                   // slug their link happens to carry.
+  generated: false,                // OPTIONAL, true only on a g-<slug> demo. Suppresses the lead
+                                   // form (both the header button and the one-shot popup): a
+                                   // visitor already looking at their own demo has nothing to ask
+                                   // for. Nothing else branches on it.
   name: 'Self-balancing robot',
   device: 'ESP32 · BNO055 IMU · 2x stepper',
   tagline: 'PID balancer, 73 s mission',   // picker card copy
@@ -264,6 +310,20 @@ set, highlight part emissive > 0, chart domain ≈ finding window. WebGL runs he
 screenshots must show an actual rendered robot, not a black canvas — check pixel variance on the
 canvas. Save screenshots to the scratchpad dir given in your brief.
 
+**Generated-demo smoke test** (the runner's `smoke.mjs`, run on every candidate before it can be
+published). Same harness, one bundle: a local `node:http` server over the runner's `runtime/`
+snapshot of this directory plus the candidate `def.json`, then `#/connect/g-<slug>` end to end.
+Assert console and pageerror clean, ingest shows the visitor's device name, evidence sets
+`timeline.loopWindow` and lights the highlight, and the canvas is really rendering. Repeat at
+390x844 and keep the screenshots for the approval DM.
+
+The canvas check is **pixel variance between two different timestamps**, not one frame against
+black: a scene that builds but never moves passes a single-frame check and is exactly the failure
+this gate exists to catch. Read the pixels through the compositor (screenshot the canvas element),
+never `gl.readPixels`. A WebGL back buffer is cleared after every composite unless the context was
+created with `preserveDrawingBuffer: true`, which this app deliberately does not set, so a direct
+read gets a black or torn buffer and the test fails on a demo that is perfectly fine.
+
 ## Picker previews
 
 `js/core/preview.js` replaces the picker cards' static line art with a live, slowly orbiting 3D
@@ -302,7 +362,79 @@ via `IntersectionObserver`, and rendering stops entirely while `document.hidden`
 `prefers-reduced-motion` each card renders a single static frame and only re-renders when a rect
 actually moves, so the 3D is still there but nothing orbits.
 
+## Personalized demo generator
+
+A visitor who has played with a canned robot can ask for the same demo built for THEIR robot. They
+describe it, verify their email, a headless Opus job on Hugh's MBP authors a `def.json`, Hugh
+approves it, and they get an unguessable link. Email capture is the point; the demo is the bait.
+
+**URL shape.** `#/connect/g-<slug>`, slug `^[a-z2-7]{20}$` (100 bits, unguessable, the only access
+control there is). Same two screens a canned robot uses: ingest, then `#/demo/g-<slug>`.
+
+**The bundle.** ONE document, `GET /demo/js/robots/g-<slug>/def.json`, resolved by the Worker out of
+the Durable Object rather than from disk. 404 until the job is `approved`; `?preview=<approve token>`
+serves it earlier to whoever holds Hugh's signed approval link, `no-store`. A slug the DO does not
+know falls through to the asset handler, so a committed fixture directory stays addressable. No
+other file under a slug is servable. **No generated JavaScript, ever.**
+
+**Load path.** `app.js` `route()` sees an id matching `GEN_ID_RE` that is not in the registry, parks
+a "loading mission" card on the connect screen (route state `gen`, its own teardown), and calls
+`loadGeneratedRobot(id)` in `robots/generated.js`. That fetches, runs a structural gate, hands
+`scene_spec` to `buildSceneFromSpec` and `data_spec` to `buildDataFromSpec`, composes a normal
+RobotDefinition with `deviceId` + `generated: true`, then `registerRobot(def)` and re-enters
+`route()`. Any failure at any step is null, logged once with its reason, and renders "This demo link
+is not available. It may have expired." rather than bouncing to the picker: a visitor who followed a
+personal link deserves to be told the link is dead. In-flight and navigated-away guards both apply.
+The def contract, including what the interpreters guarantee, is `demo/GENSPEC.md`.
+
+**Lead form** (`core/leadform.js`). Two ways in: the permanent `[data-cta="mydemo"]` header button,
+and one popup 6 s after the first evidence lands, which is the moment the demo has just proved its
+point. The popup is one-shot per page session. The localStorage gate (`alloy_leadform_seen`, 7 day
+cooldown) is set on DISMISS or SUBMIT, never on open, and only the popup respects it: a visitor who
+deliberately clicks the header button is asking for the form. Both are suppressed entirely when
+`def.generated`. Posts `{use_case, email, robot_seen, website, dwell_ms}`; 202 is always success from
+the client's side.
+
+**State machine** (owned by `DemoGenDO`, `worker/do.js`; the runner drives only the transitions it
+is allowed to):
+
+```
+unverified --(visitor clicks the verify link)--> pending
+pending    --(runner claim, 30 min lease)-----> claimed
+claimed    --(generate, validate, smoke, publish)--> generated
+generated  --(Hugh taps the signed approve link)--> approved
+generated  --(AUTO_APPROVE_AFTER_H, ships unset)--> approved
+approved   --(runner review sweep sends the ready mail)--> emailed
+
+terminals
+  refused          model returned the refusal shape -> refusal email
+  error            3 failed attempts, or publish failed -> apology email
+  delivery_failed  the mailer rejected the address
+  expired          unverified 7 d, or generated and stale 48 h -> apology email
+  rejected         Hugh tapped reject; the bundle is deleted and the origin 404s
+```
+
+No cache purge is implemented. The def.json response carries `Cache-Tag: demogen-<slug>` so
+one can be wired later, but nothing calls the purge API today: rejecting a demo that was
+already approved leaves an edge-cached copy servable for up to the one hour `max-age`. That is
+an accepted residual, because a reject lands minutes after generation and before the link has
+been sent to anyone.
+
+**Approval gate.** Nothing is emailed to a visitor that Hugh has not seen. The approve and reject
+links are per-job single-use HMAC tokens sent in a Slack DM, NOT the runner bearer, and the GET only
+renders a confirm page (robot, email summary, their use case, recipient, bundle size and hash, plus
+a preview link into the real demo). The POST is what commits, so a link scanner following the GET
+cannot approve anything. Auto-approve exists behind `AUTO_APPROVE_AFTER_H` and ships unset.
+
+**Chat.** A generated demo uses the same live analyst as a canned one, `POST /demo/api/chat`. Its
+facts pack is built by the runner from this repo's own `worker/build-facts.mjs` and published beside
+the def; `chat.js` fetches it per request out of the DO by slug. `def.chat.script` stays in the
+bundle as the offline fallback and is still fully validated. See `worker/README.md` for that path
+and for everything operational (deploy, the facts freshness gate, which states answer).
+
 ## Out of scope
 
-Real auth, real backend, real LLM calls, PostHog wiring (add a `data-analytics-todo` comment where
-events would go), deploy (Hugh gates), changes to landing `index.html`, service workers.
+Real auth, PostHog wiring (add a `data-analytics-todo` comment where events would go), deploy (Hugh
+gates), changes to landing `index.html`, service workers. There is no user auth and there are no
+accounts; the only backend surfaces are exactly the four listed in the non-negotiables, and a
+generated demo's slug is the entire access-control story.

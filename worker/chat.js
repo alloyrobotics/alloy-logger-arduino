@@ -27,6 +27,16 @@ const MAX_BODY_BYTES = 32 * 1024;
  * question, so accept 11; at 10 the slice ate the oldest exchange every time. */
 const MAX_HISTORY = 11;
 
+/**
+ * A personalized demo, built for one visitor by the generator in worker/demo-gen.js. Its pack is
+ * published per slug into the Durable Object rather than baked into facts.generated.js, because
+ * it is created long after this Worker was deployed. Same 20 character base32 slug the def.json
+ * route serves, prefixed the same way the demo app names the robot.
+ */
+const GEN_ROBOT_RE = /^g-[a-z2-7]{20}$/;
+/** The generator's DO is a single named instance; demo-gen.js resolves it the same way. */
+const DO_NAME = 'main';
+
 const ALLOWED_ORIGINS = new Set([
   'https://alloylogger.com',
   'https://www.alloylogger.com',
@@ -110,12 +120,39 @@ async function underLimit(limiter, key) {
   }
 }
 
-/** Validate the posted body. Returns {robot, messages} or throws a message string. */
-function parseBody(body) {
-  const robotId = String(body?.robot || '');
+/**
+ * The mission pack for a robot id, or null if there is no mission we can answer for.
+ *
+ * The four canned robots are compiled in. A `g-<slug>` robot is a generated private mission: its
+ * pack was built by the same builder (worker/build-facts.mjs) on the runner and published into
+ * the DO, so what comes back here is the identical `{ facts, evidenceIds }` shape and everything
+ * downstream, including the cache breakpoint, is unchanged. Each generated pack is simply its own
+ * cache prefix.
+ */
+async function resolveRobot(env, robotId) {
   // Plain index would accept "__proto__"/"constructor" and hand back Object.prototype.
-  if (!Object.hasOwn(FACTS, robotId)) throw 'Unknown robot.';
-  const robot = FACTS[robotId];
+  if (Object.hasOwn(FACTS, robotId)) return FACTS[robotId];
+  if (!GEN_ROBOT_RE.test(robotId) || !env.DEMOGEN_DO) return null;
+  let res;
+  try {
+    const stub = env.DEMOGEN_DO.get(env.DEMOGEN_DO.idFromName(DO_NAME));
+    res = await stub.factsPack(robotId.slice(2));
+  } catch (err) {
+    // A DO that is unreachable must read as "no such mission", not as a 500 the visitor sees.
+    console.error('chat facts lookup failed', robotId, err?.message);
+    return null;
+  }
+  if (!res?.ok) return null;
+  const pack = res.pack;
+  // Published bytes are trusted-but-checked: the two fields the request below actually reads.
+  if (typeof pack?.facts !== 'string' || !Array.isArray(pack.evidenceIds)) return null;
+  return pack;
+}
+
+/** Validate the posted body. Returns {robot, messages} or throws a message string. */
+function parseBody(body, robot) {
+  const robotId = String(body?.robot || '');
+  if (!robot) throw 'Unknown robot.';
 
   if (!Array.isArray(body?.messages) || !body.messages.length) throw 'No question.';
   const turns = body.messages.slice(-MAX_HISTORY);
@@ -196,7 +233,8 @@ export async function handleChat(request, env) {
 
   let parsed;
   try {
-    parsed = parseBody(await request.json());
+    const body = await request.json();
+    parsed = parseBody(body, await resolveRobot(env, String(body?.robot || '')));
   } catch (err) {
     return json({ error: typeof err === 'string' ? err : 'Bad request.' }, 400);
   }

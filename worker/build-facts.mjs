@@ -13,6 +13,11 @@
 //   node worker/build-facts.mjs
 //
 // Output: worker/facts.generated.js (committed - the Worker imports it at build time).
+//
+// Running this file builds the four canned robots. IMPORTING it gets the pure builders and
+// writes nothing: the demo generator's runner snapshots this module into its own runtime/ and
+// calls buildFacts() over a generated def, so a personalized mission is described to the
+// analyst in exactly the format the canned four are. One builder, one format, no second copy.
 
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,12 +25,12 @@ import path from 'node:path';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ROBOTS_DIR = path.join(ROOT, 'demo', 'js', 'robots');
-const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue'];
+export const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue'];
 
 /** How many points a whole-mission series is downsampled to. */
-const SERIES_POINTS = 80;
+export const SERIES_POINTS = 80;
 /** How many points the dense excerpt around a finding window gets. */
-const WINDOW_POINTS = 30;
+export const WINDOW_POINTS = 30;
 
 // ---------------------------------------------------------------------------- loading
 
@@ -36,7 +41,7 @@ const WINDOW_POINTS = 30;
  * throwaway sibling module and import that. The temp file lives next to the original so its
  * relative './data.js' import still resolves.
  */
-async function loadRobotDefinition(id) {
+export async function loadRobotDefinition(id) {
   const dir = path.join(ROBOTS_DIR, id);
   const src = await readFile(path.join(dir, 'script.js'), 'utf8');
   const stubbed = src.replace(
@@ -57,7 +62,7 @@ async function loadRobotDefinition(id) {
 // ---------------------------------------------------------------------------- formatting
 
 /** Trim a float to something readable without inventing precision. */
-function fmt(v) {
+export function fmt(v) {
   if (v == null || !Number.isFinite(v)) return 'n/a';
   if (Number.isInteger(v)) return String(v);
   const a = Math.abs(v);
@@ -67,10 +72,10 @@ function fmt(v) {
   return v.toFixed(3);
 }
 
-const fmtT = (t) => `${t.toFixed(2)}s`;
+export const fmtT = (t) => `${t.toFixed(2)}s`;
 
 /** Evenly spaced indices across [lo, hi], inclusive of both ends. */
-function pickIndices(lo, hi, count) {
+export function pickIndices(lo, hi, count) {
   const span = hi - lo;
   if (span <= 0) return [lo];
   const n = Math.min(count, span + 1);
@@ -80,14 +85,14 @@ function pickIndices(lo, hi, count) {
 }
 
 /** First index whose time is >= s. */
-function indexAt(times, s) {
+export function indexAt(times, s) {
   for (let i = 0; i < times.length; i++) if (times[i] >= s) return i;
   return times.length - 1;
 }
 
 // ---------------------------------------------------------------------------- facts sections
 
-function statsFor(series, times) {
+export function statsFor(series, times) {
   let min = Infinity;
   let max = -Infinity;
   let sum = 0;
@@ -120,7 +125,7 @@ function statsFor(series, times) {
   };
 }
 
-function channelSection(def, data) {
+export function channelSection(def, data) {
   const lines = [];
   for (const ch of def.channels) {
     const block = data[ch.path];
@@ -144,7 +149,7 @@ function channelSection(def, data) {
 }
 
 /** A whole-mission table so the model can answer "what was X doing at t". */
-function seriesSection(def, data) {
+export function seriesSection(def, data) {
   const lines = [];
   for (const ch of def.channels) {
     const block = data[ch.path];
@@ -166,7 +171,7 @@ function seriesSection(def, data) {
 }
 
 /** Dense excerpt across each finding's window, on the fields that finding focuses. */
-function findingsSection(def, data) {
+export function findingsSection(def, data) {
   const lines = [];
   for (const f of def.findings) {
     const w = f.window || [0, def.duration];
@@ -218,7 +223,7 @@ function findingsSection(def, data) {
 }
 
 /** The hand-verified answers, verbatim. These carry the analyst voice and the causal story. */
-function analysesSection(def) {
+export function analysesSection(def) {
   const lines = [];
   for (const entry of def.script || []) {
     lines.push(`### topic: ${entry.id}`);
@@ -235,7 +240,7 @@ function analysesSection(def) {
  * everything else about Alloy gets deflected to usealloy.ai, because the model's ordinary
  * knowledge of "Alloy" is a different company.
  */
-const ABOUT_PRODUCT = `## About the product
+export const ABOUT_PRODUCT = `## About the product
 
 The only product facts you may state; anything about Alloy this does not cover, point at usealloy.ai.
 
@@ -247,7 +252,7 @@ The only product facts you may state; anything about Alloy this does not cover, 
 `;
 
 /** One line per sibling so "what about the drone?" gets a useful pointer, not a shrug. */
-function otherMissionsSection(def, all) {
+export function otherMissionsSection(def, all) {
   const lines = ['## Other missions on this page', ''];
   lines.push('The visitor can switch demos with the robot picker (top of the page). You only see this mission.');
   for (const o of all) {
@@ -258,7 +263,23 @@ function otherMissionsSection(def, all) {
   return lines.join('\n');
 }
 
-function buildFacts(def, data, all) {
+/**
+ * The whole pack, in the order the analyst reads it.
+ *
+ * `opts` exists for the personalized demos the generator runner builds. Both fields default to
+ * nothing, so the four canned robots produce byte-identical output to before it existed (the
+ * freshness gate in worker/README.md is what proves that).
+ *
+ * @param {object} def RobotDefinition, or the generated equivalent the runner assembles
+ * @param {object} data `{ "<channel path>": { t, "<field key>": ... } }`
+ * @param {Array<{id:string,name:string,tagline:string}>} all siblings, for the pointer section
+ * @param {{ analystContext?: string, otherMissions?: string, aboutProduct?: string }} [opts]
+ *   analystContext - an extra section inserted after the verified analyses. A generated mission
+ *     has no hand-written analyses to lean on, so its def carries `facts_notes`: the generator's
+ *     own account of the storyline, every number in it cross-checked by the validator.
+ *   otherMissions - replaces the sibling list. A private mission has no siblings to enumerate.
+ */
+export function buildFacts(def, data, all, opts = {}) {
   const evidenceIds = def.findings.map((f) => f.id);
   return `# Mission: ${def.name}
 
@@ -283,43 +304,51 @@ These were written and fact-checked against this exact log. When a visitor asks 
 them already answers, reuse its numbers and its conclusion. Rephrase freely; do not contradict.
 
 ${analysesSection(def)}
-${otherMissionsSection(def, all)}
-${ABOUT_PRODUCT}`;
+${opts.analystContext ?? ''}${opts.otherMissions ?? otherMissionsSection(def, all)}
+${opts.aboutProduct ?? ABOUT_PRODUCT}`;
 }
 
 // ---------------------------------------------------------------------------- main
 
-// seedFor is shared with app.js via prng.js: one definition, no silent drift.
-const { mulberry32, seedFor } = await import(
-  pathToFileURL(path.join(ROOT, 'demo', 'js', 'core', 'prng.js')).href
-);
+async function main() {
+  // seedFor is shared with app.js via prng.js: one definition, no silent drift.
+  const { mulberry32, seedFor } = await import(
+    pathToFileURL(path.join(ROOT, 'demo', 'js', 'core', 'prng.js')).href
+  );
 
-const defs = [];
-for (const id of ROBOT_IDS) defs.push(await loadRobotDefinition(id));
-const siblings = defs.map((d) => ({ id: d.id, name: d.name, tagline: d.tagline }));
+  const defs = [];
+  for (const id of ROBOT_IDS) defs.push(await loadRobotDefinition(id));
+  const siblings = defs.map((d) => ({ id: d.id, name: d.name, tagline: d.tagline }));
 
-const out = {};
-for (const def of defs) {
-  const id = def.id;
-  // Same call ensureData() makes in app.js: one seeded prng per robot id.
-  const built = def.buildData(mulberry32(seedFor(id)));
-  out[id] = {
-    name: def.name,
-    device: def.device,
-    tagline: def.tagline,
-    duration: def.duration,
-    evidenceIds: def.findings.map((f) => f.id),
-    suggested: def.suggested || [],
-    facts: buildFacts(def, built, siblings),
-  };
-  process.stdout.write(`${id}: ${out[id].facts.length} chars (~${Math.round(out[id].facts.length / 3.6)} tokens)\n`);
-}
+  const out = {};
+  for (const def of defs) {
+    const id = def.id;
+    // Same call ensureData() makes in app.js: one seeded prng per robot id.
+    const built = def.buildData(mulberry32(seedFor(id)));
+    out[id] = {
+      name: def.name,
+      device: def.device,
+      tagline: def.tagline,
+      duration: def.duration,
+      evidenceIds: def.findings.map((f) => f.id),
+      suggested: def.suggested || [],
+      facts: buildFacts(def, built, siblings),
+    };
+    process.stdout.write(`${id}: ${out[id].facts.length} chars (~${Math.round(out[id].facts.length / 3.6)} tokens)\n`);
+  }
 
-const banner = `// GENERATED by worker/build-facts.mjs - do not edit by hand.
+  const banner = `// GENERATED by worker/build-facts.mjs - do not edit by hand.
 // Re-run \`node worker/build-facts.mjs\` after changing any robot's data.js or script.js.
 `;
-await writeFile(
-  path.join(ROOT, 'worker', 'facts.generated.js'),
-  `${banner}\nexport const FACTS = ${JSON.stringify(out, null, 2)};\n`,
-);
-process.stdout.write('wrote worker/facts.generated.js\n');
+  await writeFile(
+    path.join(ROOT, 'worker', 'facts.generated.js'),
+    `${banner}\nexport const FACTS = ${JSON.stringify(out, null, 2)};\n`,
+  );
+  process.stdout.write('wrote worker/facts.generated.js\n');
+}
+
+// Run the CLI only when this file IS the entry point. An `import` (the runner's runtime snapshot)
+// gets the builders above and touches neither demo/js nor facts.generated.js.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
+}
