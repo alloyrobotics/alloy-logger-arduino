@@ -223,7 +223,12 @@ export function createContext(mount, robotDef, opts = {}) {
         b.question
           ? `<button class="ctx-ask" type="button" data-stage="4">
         <span class="ctx-ask-q"></span>
-        <span class="ctx-ask-go mono">ask the analyst <span aria-hidden="true">&rarr;</span></span>
+        <span class="ctx-ask-send" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 12.6V3.6M4.3 7.2 8 3.4l3.7 3.8"/>
+          </svg>
+        </span>
       </button>`
           : `<button class="btn ctx-go" type="button" data-stage="4">Hand it the logs <span aria-hidden="true">&rarr;</span></button>`
       }
@@ -236,7 +241,20 @@ export function createContext(mount, robotDef, opts = {}) {
       `${loc(b.values)} raw datapoints across ${loc(b.count)} channels. The answer is in there, ` +
       'but it only shows up when you read the channels against each other.';
   }
-  if (b.question) q('.ctx-ask-q').textContent = `“${b.question}”`;
+  if (b.question) {
+    q('.ctx-ask-q').textContent = `“${b.question}”`;
+    // the send disc has no visible label, so the button carries the whole intent for a screen reader
+    q('.ctx-ask').setAttribute('aria-label', `Ask the analyst: ${b.question}`);
+  }
+  // The send disc is filled with the robot's accent; its arrow must read on top of it. Light
+  // accents (arm6's pale green) need dark ink, dark accents need white.
+  {
+    const acc = (def.accent || '#2f78ff').replace('#', '');
+    const n = acc.length === 3 ? acc.split('').map((c) => c + c).join('') : acc;
+    const [rr, gg, bb] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) || 0);
+    const lum = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+    el.style.setProperty('--acc-ink', lum > 168 ? '#10131a' : '#ffffff');
+  }
 
   mount.appendChild(el);
 

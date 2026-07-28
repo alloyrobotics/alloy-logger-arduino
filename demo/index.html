@@ -243,29 +243,30 @@ input { font: inherit; color: inherit; }
 .ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .ctx-system, .ctx-volume { font-size: 14.5px; color: var(--tx-body); }
 .ctx-charge { font-size: 14.5px; color: rgba(255,255,255,0.82); }
-/* the robot's own first question, as a card-shaped button: clicking it hands the mission to the
-   analyst, and the demo screen opens by asking this exact question, so the card keeps its promise */
+/* the robot's own first question as an iMessage-style composer: the question sits "typed" in a
+   message pill with a round accent send disc on the right. The WHOLE pill is the button; clicking
+   it hands the mission to the analyst, and the demo opens by asking this exact question. */
 .ctx-ask {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-  width: 100%; margin-top: 6px; padding: 16px 18px;
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; margin-top: 6px; padding: 9px 9px 9px 19px;
   font: inherit; text-align: left; cursor: pointer; color: inherit;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--line); border-left: 2px solid var(--acc);
-  border-radius: 12px;
-  transition: background .18s ease, border-color .18s ease,
-              transform .18s cubic-bezier(.16,1,.3,1);
+  background: rgba(255,255,255,0.045);
+  border: 1px solid var(--line-hi);
+  border-radius: 28px;
+  transition: background .18s ease, border-color .18s ease;
 }
-.ctx-ask:hover {
-  background: color-mix(in srgb, var(--acc) 8%, transparent);
-  border-color: color-mix(in srgb, var(--acc) 45%, var(--line));
-  border-left-color: var(--acc);
-  transform: translateY(-2px);
-}
+.ctx-ask:hover { background: rgba(255,255,255,0.07); border-color: color-mix(in srgb, var(--acc) 40%, var(--line-hi)); }
 .ctx-ask:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
-.ctx-ask-q { font-size: 17px; line-height: 1.35; color: var(--tx); }
-.ctx-ask-go { font-size: 12px; letter-spacing: .02em; color: var(--acc); }
-.ctx-ask-go span { display: inline-block; transition: transform .18s ease; }
-.ctx-ask:hover .ctx-ask-go span { transform: translateX(3px); }
+.ctx-ask-q { flex: 1; min-width: 0; font-size: 16.5px; line-height: 1.35; color: var(--tx); }
+.ctx-ask-send {
+  flex: 0 0 auto; width: 37px; height: 37px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--acc); color: var(--acc-ink, #fff);
+  transition: transform .18s cubic-bezier(.16,1,.3,1), filter .18s ease;
+}
+.ctx-ask-send svg { width: 17px; height: 17px; }
+.ctx-ask:hover .ctx-ask-send { transform: scale(1.08); filter: brightness(1.08); }
+.ctx-ask:active .ctx-ask-send { transform: scale(0.94); }
 .ctx-go { letter-spacing: -0.005em; align-self: flex-start; } /* questionless-def fallback CTA */
 
 /* ---- staged reveal ---- */
@@ -288,8 +289,10 @@ input { font: inherit; color: inherit; }
   .ctx-stage:not(.live) .ctx-ghost { width: 50%; }
   .ctx-copy { gap: 15px; }
   .ctx-system, .ctx-volume, .ctx-charge { font-size: 13.5px; }
-  .ctx-ask { padding: 14px 15px; }
-  .ctx-ask-q { font-size: 15px; }
+  .ctx-ask { padding: 7px 7px 7px 15px; gap: 11px; }
+  .ctx-ask-q { font-size: 14.5px; }
+  .ctx-ask-send { width: 33px; height: 33px; }
+  .ctx-ask-send svg { width: 15px; height: 15px; }
 }
 
 /* The global reduced-motion rule zeroes animation DURATIONS but not DELAYS, so without this the
