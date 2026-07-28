@@ -44,8 +44,10 @@ const MAX_DT = 64; // clamp the integrator's step: a stalled tab must not fling 
 const ELEV_EPS = 0.02; // rad: below this the hand-off elevation is the hero's, so nothing to lerp
 
 /** Fallback line art for a robot with no registry icon (generated robots, stubs). Same grammar as
- * ROBOT_ICONS: viewBox "0 0 96 64", strokes inherit currentColor, `.acc` strokes the accent. */
-const GENERIC_ICON = `<rect x="22" y="34" width="52" height="18" rx="3"/><circle cx="34" cy="52" r="5"/><circle cx="62" cy="52" r="5"/><path d="M27 52h42" class="acc"/><path d="M48 34V18"/><rect x="40" y="8" width="16" height="10" rx="2" class="acc"/><path d="M56 13h6" class="acc"/><path d="M8 59h80"/>`;
+ * ROBOT_ICONS: viewBox "0 0 96 64", strokes inherit currentColor, `.acc` strokes the accent.
+ * Exported because app.js stands the same machine in the same panel while a generated def is still
+ * being fetched, and a second copy of the path data would drift from this one. */
+export const GENERIC_ICON = `<rect x="22" y="34" width="52" height="18" rx="3"/><circle cx="34" cy="52" r="5"/><circle cx="62" cy="52" r="5"/><path d="M27 52h42" class="acc"/><path d="M48 34V18"/><rect x="40" y="8" width="16" height="10" rx="2" class="acc"/><path d="M56 13h6" class="acc"/><path d="M8 59h80"/>`;
 
 /** Per-stage reveal delay, ms. Read into `--d` on each staged child. */
 const STAGE_DELAY = { 1: 260, 2: 520, 3: 780, 4: 1020 };

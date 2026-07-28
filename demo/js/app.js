@@ -4,7 +4,8 @@
 // Routes: #/  (picker)  ·  #/connect/:id  ·  #/demo/:id
 // ?robot=<id> on any load deep-links straight to #/demo/<id>.
 
-import { ROBOTS, getRobot, ROBOT_ICONS } from './robots/index.js';
+import { ROBOTS, getRobot, registerRobot, ROBOT_ICONS } from './robots/index.js';
+import { GEN_ID_RE, loadGeneratedRobot } from './robots/generated.js';
 import { mulberry32, seedFor } from './core/prng.js';
 import { createTimeline } from './core/timeline.js';
 import { createViewer } from './core/viewer.js';
@@ -12,7 +13,8 @@ import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
-import { createContext } from './core/context.js';
+import { createContext, GENERIC_ICON } from './core/context.js';
+import { createLeadForm, leadFormGated } from './core/leadform.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
@@ -160,11 +162,42 @@ function takeHeroHandoff(id) {
   return h;
 }
 
+// ---------------------------------------------------------------------------- lead form
+// Two ways in: the permanent header button, and one unmissable popup 6 s after the first piece
+// of evidence lands, which is the exact moment the demo has just proved its point. It is a
+// one-shot for the whole page session, it never fires on a generated demo (that visitor already
+// has their own demo), and dismissing it buys a 7 day quiet period.
+
+let leadForm = null;
+/** Pending 6 s popup timer, so teardown and the next question can both cancel it. */
+let leadTimer = 0;
+/** The popup gets one chance per page session, armed by the first evidence and never rearmed. */
+let leadPopupUsed = false;
+
+function clearLeadTimer() {
+  if (!leadTimer) return;
+  window.clearTimeout(leadTimer);
+  leadTimer = 0;
+}
+
+function scheduleLeadForm(def) {
+  if (!leadForm || leadPopupUsed || leadTimer) return;
+  if (def.generated || leadFormGated()) return;
+  leadPopupUsed = true;
+  leadTimer = window.setTimeout(() => {
+    leadTimer = 0;
+    // the demo may have been left, replaced or swapped for a generated one in those 6 s
+    if (currentRoute.name !== 'demo' || !demo || demo.def.generated) return;
+    leadForm.open('evidence');
+  }, 6000);
+}
+
 // ---------------------------------------------------------------------------- demo
 let demo = null;
 
 function teardownDemo() {
   if (!demo) return;
+  clearLeadTimer();
   // #chart-toggle is a persistent node: its handler closes over this demo's chart/viewer/timeline,
   // so leaving it attached pins the whole torn-down three.js scene graph in memory.
   const toggle = screens.demo.querySelector('#chart-toggle');
@@ -184,6 +217,10 @@ function buildDemo(def) {
   const host = screens.demo;
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
+  // A visitor already looking at their own generated demo has nothing to ask for here.
+  host.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
+    b.hidden = Boolean(def.generated);
+  });
 
   const viewerMount = host.querySelector('#viewer-mount');
   const chartMount = host.querySelector('#chart-mount');
@@ -249,12 +286,19 @@ function buildDemo(def) {
     // 4
     viewer.showBanner(finding, clearEvidence);
 
+    // 5. the demo has just made its case, so the lead form gets its one shot 6 s later
+    scheduleLeadForm(def);
+
     // data-analytics-todo: capture('demo_evidence_fired', { robot: def.id, finding: finding.id })
   }
 
   const chat = createChat(chatMount, def, {
     onEvidence,
-    onAsk: () => clearEvidence(),
+    onAsk: () => {
+      clearEvidence();
+      // a visitor mid-conversation is engaged, not idle: do not interrupt them with the popup
+      clearLeadTimer();
+    },
   });
 
   // Scrubbing (marker click, drag, chart click) outside a running evidence loop drops the loop in
@@ -290,6 +334,146 @@ function buildDemo(def) {
   // data-analytics-todo: capture('demo_opened', { robot: def.id })
 }
 
+// ------------------------------------------------------------------- generated robots
+// A `g-<slug>` id is not compiled in: it is one def.json fetched at route time. The fetch has to
+// happen between the hash changing and the screen building, so it gets its own tiny state machine
+// that parks on the connect screen and re-enters the router once the def is registered.
+
+/** Slug currently being fetched, so a repeat hashchange does not start a second request. */
+let genPending = null;
+
+/**
+ * The loading and dead-link states, rendered in the mission brief's own frame: the same hero panel
+ * and the same staged copy column the brief itself is about to occupy, with the generic line art
+ * standing in for a machine there is no def for yet. Built by hand rather than through
+ * createContext because at this point there is nothing to brief and no buildScene to stage.
+ *
+ * `.ctx-charge` and `.ctx-system` are used purely as the brief's two type sizes, bright line first.
+ *
+ * @param {{ line:string, cap:string, action?:{label:string, href:string}, progress?:boolean }} o
+ */
+function renderGenCard(o) {
+  const section = screens.connect;
+  const mount = section.querySelector('#ingest-mount');
+  mount.innerHTML = '';
+  // the brief is a full-width two-column layout; without this the connect body centres a small card
+  section.classList.add('ctx-mode');
+
+  const el = document.createElement('div');
+  el.className = 'ctx';
+  // there is no def to take an accent off yet, and the panel's backdrop is a color-mix() on --acc:
+  // leaving it unset makes that whole background shorthand invalid and the product shot loses its
+  // texture entirely. The house blue is the same default the picker cards fall back to.
+  el.style.setProperty('--acc', '#2f78ff');
+  el.innerHTML = `
+    <div class="ctx-stage">
+      <div class="ctx-fly">
+        <svg class="ctx-ghost" viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GENERIC_ICON}</svg>
+      </div>
+    </div>
+    <div class="ctx-copy">
+      <p class="ctx-charge" data-stage="1" style="--d:0ms"></p>
+      <p class="ctx-system" data-stage="2" style="--d:220ms"></p>
+    </div>`;
+
+  el.querySelector('.ctx-charge').textContent = o.line;
+  el.querySelector('.ctx-system').textContent = o.cap;
+
+  const copy = el.querySelector('.ctx-copy');
+  if (o.progress) {
+    // indeterminate on purpose: a percentage would be a lie, the fetch is one request
+    const bar = document.createElement('div');
+    bar.className = 'ctx-wait';
+    bar.style.setProperty('--d', '440ms');
+    bar.dataset.stage = '3';
+    bar.appendChild(document.createElement('span'));
+    copy.appendChild(bar);
+  }
+  if (o.action) {
+    // the same slot, and the same button, the brief's own CTA occupies
+    const act = document.createElement('a');
+    act.className = 'btn ctx-go';
+    act.href = o.action.href;
+    act.dataset.stage = '3';
+    act.style.setProperty('--d', '440ms');
+    act.textContent = o.action.label;
+    copy.appendChild(act);
+  }
+
+  mount.appendChild(el);
+}
+
+/**
+ * Fetch, gate and register a generated robot, then hand the route back to route(). Failure stops
+ * on an explanatory card rather than bouncing to the picker: a visitor who followed a personal
+ * link deserves to be told the link is dead, not silently dropped somewhere else.
+ *
+ * @param {{name:string, id:string}} next the route that asked for this robot
+ */
+function resolveGenerated(next) {
+  if (genPending === next.id) return;
+  genPending = next.id;
+
+  // leave whatever screen we were on, same teardown order route() uses
+  if (currentRoute.name === 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'demo') teardownDemo();
+  if (ingestApi) {
+    ingestApi.dispose();
+    ingestApi = null;
+  }
+
+  // A sentinel, not the target route: the target has not been built yet, and route() must treat
+  // the next pass as a fresh entry into whichever screen the hash names.
+  currentRoute = { name: 'gen', id: next.id };
+  show('connect');
+  document.title = 'Loading demo · AlloyLogger';
+  renderGenCard({
+    line: 'Loading this mission.',
+    cap: 'Pulling the robot, its telemetry and the brief the analyst is about to be handed.',
+    progress: true,
+  });
+
+  loadGeneratedRobot(next.id).then((def) => {
+    genPending = null;
+    // navigated away mid-fetch: the def is stale, drop it and leave the current screen alone
+    if (parseHash().id !== next.id) return;
+
+    if (!def) {
+      currentRoute = { name: 'gen', id: null };
+      document.title = 'Demo unavailable · AlloyLogger';
+      renderGenCard({
+        line: 'This demo link is not available.',
+        cap: 'It may have expired. Generated demos are one-off links and they do not last forever.',
+        action: { label: 'Pick a robot instead', href: '#/' },
+      });
+      return;
+    }
+
+    // The scene half of a generated def is compiled inside loadGeneratedRobot, in a try/catch that
+    // turns a bad scene_spec into this same card. The DATA half is lazy (`buildData` is a closure
+    // the def hands back), so it would otherwise throw later, out of ensureData, with the demo
+    // screen already up and no handler above it. Build it here, in the same shape as the scene
+    // wrap, so a data_spec the interpreter cannot evaluate fails as "not available" too.
+    try {
+      ensureData(def);
+    } catch (err) {
+      console.warn(`[generated] ${next.id}: data_spec would not build (${err && err.message})`);
+      currentRoute = { name: 'gen', id: null };
+      document.title = 'Demo unavailable · AlloyLogger';
+      renderGenCard({
+        line: 'This demo link is not available.',
+        cap: 'It may have expired. Generated demos are one-off links and they do not last forever.',
+        action: { label: 'Pick a robot instead', href: '#/' },
+      });
+      return;
+    }
+
+    registerRobot(def);
+    route();
+  });
+}
+
 // ---------------------------------------------------------------------------- router
 let currentRoute = { name: 'picker', id: null };
 
@@ -313,6 +497,12 @@ function route() {
   const def = next.id ? getRobot(next.id) : null;
 
   if (next.name !== 'picker' && !def) {
+    // A generated demo is not in the registry until its def.json has landed. Resolve it and
+    // re-enter, rather than bouncing a perfectly good personal link to the picker.
+    if (GEN_ID_RE.test(next.id)) {
+      resolveGenerated(next);
+      return;
+    }
     location.hash = '#/';
     return;
   }
@@ -320,9 +510,17 @@ function route() {
   // leaving a screen
   if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
-  if (currentRoute.name === 'connect' && next.name !== 'connect' && ingestApi) {
-    ingestApi.dispose();
-    ingestApi = null;
+  // 'gen' is the transient generated-robot resolve state; it parks its own card in #ingest-mount,
+  // so it leaves the connect screen the same way a running ingest does.
+  if ((currentRoute.name === 'connect' || currentRoute.name === 'gen') && next.name !== 'connect') {
+    if (ingestApi) {
+      ingestApi.dispose();
+      ingestApi = null;
+    }
+    screens.connect.querySelector('#ingest-mount').innerHTML = '';
+    // createContext's dispose() takes this off for the normal path; the 'gen' cards have no api to
+    // dispose, so the brief's layout mode would otherwise stay latched onto the screen.
+    screens.connect.classList.remove('ctx-mode');
   }
 
   const prev = currentRoute;
@@ -366,10 +564,23 @@ function boot() {
     a.href = setupHref;
   });
 
+  // The lead form is built once and reused: it reads the CURRENT robot at submit time rather
+  // than being handed a def, so it survives every route change without being rebuilt.
+  leadForm = createLeadForm(document.body, { getDef: () => (demo ? demo.def : null) });
+  document.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (demo && demo.def.generated) return;
+      clearLeadTimer(); // the button beat the popup to it
+      leadForm.open('header');
+    });
+  });
+
   // ?robot=<id> deep link
   const q = new URLSearchParams(location.search);
   const deep = q.get('robot');
-  if (deep && getRobot(deep) && !location.hash.startsWith('#/demo/')) {
+  // A generated id is not in the registry yet, so it is gated on its shape instead: route() then
+  // resolves it exactly as it does for a #/demo/g-... hash.
+  if (deep && (getRobot(deep) || GEN_ID_RE.test(deep)) && !location.hash.startsWith('#/demo/')) {
     // keep location.search: dropping it makes the target differ from the current URL by more than
     // the fragment, so the browser does a real navigation and boots the whole page a second time
     location.replace(location.pathname + location.search + `#/demo/${deep}`);

@@ -7,6 +7,10 @@
  * @param {object} robotDef with `.data` attached
  */
 export function ingestLines(robotDef) {
+  // Device naming. The canned robots are their own device, so id is the name. A generated demo's
+  // id is the mailing-list slug (g-<20 chars>) and its device_id is the visitor's own robot, so
+  // every string on this screen has to read off `deviceId` where it exists.
+  const dev = robotDef.deviceId || robotDef.id;
   const data = robotDef.data || {};
   const rows = {};
   let total = 0;
@@ -22,9 +26,9 @@ export function ingestLines(robotDef) {
   const chunks = Math.max(2, Math.round(bytes / 16384));
 
   const lines = [
-    { text: `alloy.begin(key, "robots/${robotDef.id}")`, cls: 'cmd' },
-    { text: `wifi link up · device ${robotDef.id}-01 · rssi -58 dBm`, cls: 'dim' },
-    { text: `handshake ok · mission ${robotDef.id}-01 open`, cls: 'ok' },
+    { text: `alloy.begin(key, "robots/${dev}")`, cls: 'cmd' },
+    { text: `wifi link up · device ${dev}-01 · rssi -58 dBm`, cls: 'dim' },
+    { text: `handshake ok · mission ${dev}-01 open`, cls: 'ok' },
   ];
 
   // Rate is measured off the channel's own timestamps, not assumed from robotDef.rate: sub-rate
@@ -54,7 +58,7 @@ export function ingestLines(robotDef) {
   });
 
   lines.push({ text: `alloy.end() · ${robotDef.duration.toFixed(1)} s of telemetry`, cls: 'cmd' });
-  lines.push({ text: `mission finalized -> ${robotDef.id}-01.mcap`, cls: 'ok' });
+  lines.push({ text: `mission finalized -> ${dev}-01.mcap`, cls: 'ok' });
 
   return lines;
 }
@@ -68,6 +72,7 @@ export function ingestLines(robotDef) {
 export function createIngest(mount, robotDef, opts = {}) {
   const onDone = opts.onDone || (() => {});
   const totalMs = opts.total != null ? opts.total : 2500;
+  const dev = robotDef.deviceId || robotDef.id;
   const lines = ingestLines(robotDef);
 
   const el = document.createElement('div');
@@ -75,13 +80,13 @@ export function createIngest(mount, robotDef, opts = {}) {
   el.innerHTML = `
     <div class="ing-card">
       <div class="ing-top">
-        <span class="ing-title mono">alloy stream · ${robotDef.id}-01</span>
+        <span class="ing-title mono">alloy stream · ${dev}-01</span>
         <button class="ing-skip mono" type="button">skip</button>
       </div>
       <div class="ing-body mono" role="log" aria-live="polite"></div>
       <div class="ing-bar"><span></span></div>
     </div>
-    <div class="ing-cap">Streaming this mission into Alloy. Nothing leaves your browser, this demo is fully local.</div>`;
+    <div class="ing-cap">Streaming this mission into Alloy. The telemetry is synthetic and replays in your browser.</div>`;
   mount.appendChild(el);
 
   const body = el.querySelector('.ing-body');
