@@ -4,7 +4,8 @@
 // Routes: #/  (picker)  ·  #/connect/:id  ·  #/demo/:id
 // ?robot=<id> on any load deep-links straight to #/demo/<id>.
 
-import { ROBOTS, getRobot, ROBOT_ICONS } from './robots/index.js';
+import { ROBOTS, getRobot, registerRobot, ROBOT_ICONS } from './robots/index.js';
+import { GEN_ID_RE, loadGeneratedRobot } from './robots/generated.js';
 import { mulberry32, seedFor } from './core/prng.js';
 import { createTimeline } from './core/timeline.js';
 import { createViewer } from './core/viewer.js';
@@ -12,6 +13,7 @@ import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
+import { createLeadForm, leadFormGated } from './core/leadform.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
@@ -108,11 +110,42 @@ function buildConnect(def) {
   });
 }
 
+// ---------------------------------------------------------------------------- lead form
+// Two ways in: the permanent header button, and one unmissable popup 6 s after the first piece
+// of evidence lands, which is the exact moment the demo has just proved its point. It is a
+// one-shot for the whole page session, it never fires on a generated demo (that visitor already
+// has their own demo), and dismissing it buys a 7 day quiet period.
+
+let leadForm = null;
+/** Pending 6 s popup timer, so teardown and the next question can both cancel it. */
+let leadTimer = 0;
+/** The popup gets one chance per page session, armed by the first evidence and never rearmed. */
+let leadPopupUsed = false;
+
+function clearLeadTimer() {
+  if (!leadTimer) return;
+  window.clearTimeout(leadTimer);
+  leadTimer = 0;
+}
+
+function scheduleLeadForm(def) {
+  if (!leadForm || leadPopupUsed || leadTimer) return;
+  if (def.generated || leadFormGated()) return;
+  leadPopupUsed = true;
+  leadTimer = window.setTimeout(() => {
+    leadTimer = 0;
+    // the demo may have been left, replaced or swapped for a generated one in those 6 s
+    if (currentRoute.name !== 'demo' || !demo || demo.def.generated) return;
+    leadForm.open('evidence');
+  }, 6000);
+}
+
 // ---------------------------------------------------------------------------- demo
 let demo = null;
 
 function teardownDemo() {
   if (!demo) return;
+  clearLeadTimer();
   // #chart-toggle is a persistent node: its handler closes over this demo's chart/viewer/timeline,
   // so leaving it attached pins the whole torn-down three.js scene graph in memory.
   const toggle = screens.demo.querySelector('#chart-toggle');
@@ -132,6 +165,10 @@ function buildDemo(def) {
   const host = screens.demo;
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
+  // A visitor already looking at their own generated demo has nothing to ask for here.
+  host.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
+    b.hidden = Boolean(def.generated);
+  });
 
   const viewerMount = host.querySelector('#viewer-mount');
   const chartMount = host.querySelector('#chart-mount');
@@ -197,12 +234,19 @@ function buildDemo(def) {
     // 4
     viewer.showBanner(finding, clearEvidence);
 
+    // 5. the demo has just made its case, so the lead form gets its one shot 6 s later
+    scheduleLeadForm(def);
+
     // data-analytics-todo: capture('demo_evidence_fired', { robot: def.id, finding: finding.id })
   }
 
   const chat = createChat(chatMount, def, {
     onEvidence,
-    onAsk: () => clearEvidence(),
+    onAsk: () => {
+      clearEvidence();
+      // a visitor mid-conversation is engaged, not idle: do not interrupt them with the popup
+      clearLeadTimer();
+    },
   });
 
   // Scrubbing (marker click, drag, chart click) outside a running evidence loop drops the loop in
@@ -238,6 +282,154 @@ function buildDemo(def) {
   // data-analytics-todo: capture('demo_opened', { robot: def.id })
 }
 
+// ------------------------------------------------------------------- generated robots
+// A `g-<slug>` id is not compiled in: it is one def.json fetched at route time. The fetch has to
+// happen between the hash changing and the screen building, so it gets its own tiny state machine
+// that parks on the connect screen and re-enters the router once the def is registered.
+
+/** Slug currently being fetched, so a repeat hashchange does not start a second request. */
+let genPending = null;
+
+/**
+ * A card in the connect screen's shell, built from the ingest terminal's own classes so the
+ * loading and failure states sit in exactly the frame the stream is about to appear in.
+ *
+ * @param {{ title:string, line:string, cap:string, action?:{label:string, href:string}, progress?:boolean }} o
+ */
+function renderGenCard(o) {
+  const mount = screens.connect.querySelector('#ingest-mount');
+  mount.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'ingest';
+
+  const card = document.createElement('div');
+  card.className = 'ing-card';
+
+  const top = document.createElement('div');
+  top.className = 'ing-top';
+  const title = document.createElement('span');
+  title.className = 'ing-title mono';
+  title.textContent = o.title;
+  top.appendChild(title);
+  if (o.action) {
+    // .ing-skip, not a bare link: `a { color: inherit; text-decoration: none }` is global here, so
+    // an unstyled anchor in the caption reads as prose. This is the pill the working path already
+    // puts in exactly this slot.
+    const act = document.createElement('a');
+    act.className = 'ing-skip mono';
+    act.href = o.action.href;
+    act.textContent = o.action.label;
+    top.appendChild(act);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'ing-body mono';
+  const row = document.createElement('div');
+  row.className = 'ing-line dim';
+  const arrow = document.createElement('span');
+  arrow.className = 'ing-arrow';
+  arrow.textContent = '·';
+  const text = document.createElement('span');
+  text.textContent = o.line;
+  row.append(arrow, text);
+  body.appendChild(row);
+
+  card.append(top, body);
+
+  if (o.progress) {
+    const bar = document.createElement('div');
+    bar.className = 'ing-bar';
+    const fill = document.createElement('span');
+    bar.appendChild(fill);
+    card.appendChild(bar);
+    // one frame later, so the transition actually runs
+    window.requestAnimationFrame(() => {
+      fill.style.width = '35%';
+    });
+  }
+
+  const cap = document.createElement('div');
+  cap.className = 'ing-cap';
+  cap.textContent = o.cap;
+
+  wrap.append(card, cap);
+  mount.appendChild(wrap);
+}
+
+/**
+ * Fetch, gate and register a generated robot, then hand the route back to route(). Failure stops
+ * on an explanatory card rather than bouncing to the picker: a visitor who followed a personal
+ * link deserves to be told the link is dead, not silently dropped somewhere else.
+ *
+ * @param {{name:string, id:string}} next the route that asked for this robot
+ */
+function resolveGenerated(next) {
+  if (genPending === next.id) return;
+  genPending = next.id;
+
+  // leave whatever screen we were on, same teardown order route() uses
+  if (currentRoute.name === 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'demo') teardownDemo();
+  if (ingestApi) {
+    ingestApi.dispose();
+    ingestApi = null;
+  }
+
+  // A sentinel, not the target route: the target has not been built yet, and route() must treat
+  // the next pass as a fresh entry into whichever screen the hash names.
+  currentRoute = { name: 'gen', id: next.id };
+  show('connect');
+  document.title = 'Loading demo · AlloyLogger';
+  renderGenCard({
+    title: 'alloy stream',
+    line: 'loading mission',
+    cap: 'Fetching this mission.',
+    progress: true,
+  });
+
+  loadGeneratedRobot(next.id).then((def) => {
+    genPending = null;
+    // navigated away mid-fetch: the def is stale, drop it and leave the current screen alone
+    if (parseHash().id !== next.id) return;
+
+    if (!def) {
+      currentRoute = { name: 'gen', id: null };
+      document.title = 'Demo unavailable · AlloyLogger';
+      renderGenCard({
+        title: 'alloy stream',
+        line: 'mission not found',
+        cap: 'This demo link is not available. It may have expired.',
+        action: { label: 'pick a robot', href: '#/' },
+      });
+      return;
+    }
+
+    // The scene half of a generated def is compiled inside loadGeneratedRobot, in a try/catch that
+    // turns a bad scene_spec into this same card. The DATA half is lazy (`buildData` is a closure
+    // the def hands back), so it would otherwise throw later, out of ensureData, with the demo
+    // screen already up and no handler above it. Build it here, in the same shape as the scene
+    // wrap, so a data_spec the interpreter cannot evaluate fails as "not available" too.
+    try {
+      ensureData(def);
+    } catch (err) {
+      console.warn(`[generated] ${next.id}: data_spec would not build (${err && err.message})`);
+      currentRoute = { name: 'gen', id: null };
+      document.title = 'Demo unavailable · AlloyLogger';
+      renderGenCard({
+        title: 'alloy stream',
+        line: 'mission not found',
+        cap: 'This demo link is not available. It may have expired.',
+        action: { label: 'pick a robot', href: '#/' },
+      });
+      return;
+    }
+
+    registerRobot(def);
+    route();
+  });
+}
+
 // ---------------------------------------------------------------------------- router
 let currentRoute = { name: 'picker', id: null };
 
@@ -261,6 +453,12 @@ function route() {
   const def = next.id ? getRobot(next.id) : null;
 
   if (next.name !== 'picker' && !def) {
+    // A generated demo is not in the registry until its def.json has landed. Resolve it and
+    // re-enter, rather than bouncing a perfectly good personal link to the picker.
+    if (GEN_ID_RE.test(next.id)) {
+      resolveGenerated(next);
+      return;
+    }
     location.hash = '#/';
     return;
   }
@@ -268,9 +466,14 @@ function route() {
   // leaving a screen
   if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
-  if (currentRoute.name === 'connect' && next.name !== 'connect' && ingestApi) {
-    ingestApi.dispose();
-    ingestApi = null;
+  // 'gen' is the transient generated-robot resolve state; it parks its own card in #ingest-mount,
+  // so it leaves the connect screen the same way a running ingest does.
+  if ((currentRoute.name === 'connect' || currentRoute.name === 'gen') && next.name !== 'connect') {
+    if (ingestApi) {
+      ingestApi.dispose();
+      ingestApi = null;
+    }
+    screens.connect.querySelector('#ingest-mount').innerHTML = '';
   }
 
   const prev = currentRoute;
@@ -314,10 +517,23 @@ function boot() {
     a.href = setupHref;
   });
 
+  // The lead form is built once and reused: it reads the CURRENT robot at submit time rather
+  // than being handed a def, so it survives every route change without being rebuilt.
+  leadForm = createLeadForm(document.body, { getDef: () => (demo ? demo.def : null) });
+  document.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (demo && demo.def.generated) return;
+      clearLeadTimer(); // the button beat the popup to it
+      leadForm.open('header');
+    });
+  });
+
   // ?robot=<id> deep link
   const q = new URLSearchParams(location.search);
   const deep = q.get('robot');
-  if (deep && getRobot(deep) && !location.hash.startsWith('#/demo/')) {
+  // A generated id is not in the registry yet, so it is gated on its shape instead: route() then
+  // resolves it exactly as it does for a #/demo/g-... hash.
+  if (deep && (getRobot(deep) || GEN_ID_RE.test(deep)) && !location.hash.startsWith('#/demo/')) {
     // keep location.search: dropping it makes the target differ from the current URL by more than
     // the fragment, so the browser does a real navigation and boots the whole page a second time
     location.replace(location.pathname + location.search + `#/demo/${deep}`);

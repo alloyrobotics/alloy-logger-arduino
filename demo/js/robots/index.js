@@ -16,6 +16,19 @@ export function getRobot(id) {
   return ROBOTS_BY_ID.get(id) || null;
 }
 
+/**
+ * Add a robot that was not compiled in: a generated demo, fetched as one def.json at route time
+ * and composed by robots/generated.js. Lookup only. ROBOTS is deliberately untouched, so the
+ * picker stays the four canned cards and a personalized demo never leaks into a shared link.
+ *
+ * @param {object} def a full RobotDefinition
+ * @returns {object} the same def, for chaining
+ */
+export function registerRobot(def) {
+  ROBOTS_BY_ID.set(def.id, def);
+  return def;
+}
+
 // Line-art schematics for the picker cards. Owned by the scaffold agent, keyed by robot id, so
 // robot agents never touch markup outside their own directory. Each is a viewBox="0 0 96 64"
 // fragment: stroke inherits currentColor (--tx-mute), `.acc` strokes the robot accent.

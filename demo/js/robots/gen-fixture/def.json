@@ -1,0 +1,176 @@
+{
+  "spec_version": 1,
+  "robot_name": "Warehouse rover",
+  "device_line": "ESP32-S3, hall encoders, INA219 current sense",
+  "device_id": "warehouse-rover",
+  "tagline": "Stalls on the ramp at 12 s",
+  "accent": "#61d4a3",
+  "seed": 482911,
+  "duration": 20,
+  "rate": 50,
+  "channels": [
+    {
+      "path": "/drive",
+      "fields": [
+        { "key": "vel", "label": "Velocity", "unit": "m/s" },
+        { "key": "current", "label": "Motor current", "unit": "A" }
+      ]
+    },
+    {
+      "path": "/sys",
+      "fields": [
+        { "key": "temp", "label": "Driver temperature", "unit": "C" },
+        { "key": "vbat", "label": "Battery voltage", "unit": "V" }
+      ]
+    }
+  ],
+  "data_spec": {
+    "/drive.vel": {
+      "base": [
+        { "t0": 0, "t1": 4, "kind": "ramp", "from": 0, "to": 1.2, "ease": "smooth" },
+        { "t0": 4, "t1": 11, "kind": "hold", "value": 1.2 },
+        { "t0": 11, "t1": 15, "kind": "decay", "from": 1.2, "to": 0.05, "tau": 1.2 },
+        { "t0": 15, "t1": 20, "kind": "ramp", "from": 0.05, "to": 1.15, "ease": "smooth" }
+      ],
+      "events": [
+        { "t": 12.0, "kind": "spike", "amp": -0.35, "width": 0.8 }
+      ],
+      "noise": { "kind": "fbm", "octaves": 3, "amp": 0.04, "hz": 2 },
+      "clamp": [0, 2]
+    },
+    "/drive.current": {
+      "base": [
+        { "t0": 0, "t1": 4, "kind": "ramp", "from": 0.3, "to": 1.4, "ease": "linear" },
+        { "t0": 4, "t1": 11, "kind": "hold", "value": 1.5 },
+        { "t0": 11, "t1": 15, "kind": "hold", "value": 5.4 },
+        { "t0": 15, "t1": 20, "kind": "hold", "value": 1.6 }
+      ],
+      "events": [
+        { "t": 12.4, "kind": "burst", "amp": 0.6, "freq": 6, "width": 1.6 }
+      ],
+      "noise": { "kind": "gauss", "sd": 0.05 },
+      "clamp": [0, 8]
+    },
+    "/sys.temp": {
+      "base": [
+        { "t0": 0, "t1": 20, "kind": "ramp", "from": 38, "to": 44, "ease": "linear" }
+      ],
+      "couple": [
+        { "from": "/drive.current", "kind": "lag1", "gain": 3.2, "tau": 2.5 }
+      ],
+      "noise": { "kind": "gauss", "sd": 0.12 },
+      "clamp": [20, 110]
+    },
+    "/sys.vbat": {
+      "base": [
+        { "t0": 0, "t1": 11, "kind": "ramp", "from": 12.4, "to": 12.0, "ease": "linear" },
+        { "t0": 11, "t1": 15, "kind": "hold", "value": 11.9 },
+        { "t0": 15, "t1": 20, "kind": "ramp", "from": 11.9, "to": 12.1, "ease": "smooth" }
+      ],
+      "couple": [
+        { "from": "/drive.current", "kind": "scale", "gain": -0.08 }
+      ],
+      "noise": { "kind": "fbm", "octaves": 2, "amp": 0.03, "hz": 1.5 },
+      "clamp": [9, 13]
+    }
+  },
+  "scene_spec": {
+    "environment": "warehouse",
+    "scale": 1,
+    "units": [
+      {
+        "id": "bot1",
+        "archetype": "wheeled",
+        "tint": "#2a6fd6",
+        "params": { "wheels": 4, "body_len": 0.42, "body_w": 0.3, "body_h": 0.12, "wheel_r": 0.07, "mast": true },
+        "extra_parts": [
+          { "id": "lidar", "kind": "cylinder", "size": [0.05, 0.05, 0.04], "pos": [0, 0.18, 0], "rot": [0, 0, 0], "color": "#cccccc", "parent": "body" }
+        ],
+        "motion": {
+          "kind": "waypoints",
+          "loop": false,
+          "points": [
+            [0, 0, 0],
+            [0, 2.4, 10.5],
+            [0.1, 2.7, 15],
+            [0.2, 5.2, 20]
+          ]
+        }
+      }
+    ],
+    "props": [
+      {
+        "id": "pallet",
+        "kind": "box",
+        "size": [0.6, 0.3, 0.6],
+        "color": "#8a6b3f",
+        "motion": { "kind": "static", "pos": [1.6, 0, 3], "yaw": 0 }
+      }
+    ],
+    "bindings": [
+      { "part": "bot1.wheel_fl", "kind": "spin", "axis": "x", "channel": "/drive.vel", "gain": 6 },
+      { "part": "bot1.wheel_fr", "kind": "spin", "axis": "x", "channel": "/drive.vel", "gain": 6 },
+      { "part": "bot1.body", "kind": "glow", "channel": "/sys.temp", "min": 38, "max": 70 }
+    ],
+    "camera": { "height": 2.2, "dist": 3.4, "focus": "bot1" }
+  },
+  "findings": [
+    {
+      "id": "ramp-stall",
+      "title": "Drive stalls on the ramp",
+      "window": [10.5, 15],
+      "t": 12,
+      "severity": "alert",
+      "focus": { "channel": "/drive", "fields": ["vel", "current"] },
+      "highlight": "bot1.wheel_fl",
+      "slowmo": true
+    },
+    {
+      "id": "thermal-creep",
+      "title": "Driver temperature climbs all mission",
+      "window": [2, 20],
+      "t": 16,
+      "severity": "warn",
+      "focus": { "channel": "/sys", "fields": ["temp"] },
+      "highlight": "bot1.body",
+      "slowmo": false
+    }
+  ],
+  "chat": {
+    "first_question": "Why did the rover stall on the ramp at 12 s?",
+    "suggested": [
+      "Show me the stall",
+      "What is the root cause?",
+      "Is the driver overheating?",
+      "How do I log this from my own robot?"
+    ],
+    "script": [
+      {
+        "id": "why-stall",
+        "matchers": ["stall", "stalled", "ramp", "12", "went wrong", "lose speed"],
+        "answer": "Not a flat battery. It ran into the ramp load at **11.0 s** and never recovered speed until 15.0 s.\n\n| metric | value |\n| --- | --- |\n| velocity before | 1.20 m/s, held from 4.0 s |\n| velocity floor | 0.05 m/s at 15.0 s |\n| motor current | 1.5 A to 5.4 A at 11.0 s |\n| recovery | back over 1.0 m/s by 19.5 s |\n\nCurrent goes up 3.6x while velocity falls. That is a load problem, not a command problem.\n\n{{ev:ramp-stall}}",
+        "evidence": ["ramp-stall"]
+      },
+      {
+        "id": "show-me",
+        "matchers": ["show", "replay", "watch", "see it", "where"],
+        "answer": "Looping 10.5 s to 15.0 s at 0.4x. Watch the front wheels slow while the current trace pins near 5.4 A, then the burst at 12.4 s as the drivers hunt for grip.\n\n{{ev:ramp-stall}}",
+        "evidence": ["ramp-stall"]
+      },
+      {
+        "id": "root-cause",
+        "matchers": ["root cause", "cause", "fix", "current", "driver", "overheat", "temperature", "hot"],
+        "answer": "Two things, and the second one is the slow killer.\n\n1. **Ramp load**: motor current sits at 5.4 A for 4 s, well past the 1.5 A cruise draw. The gearbox is geared for flat floor, not the 6 degree ramp.\n2. **Thermal creep**: driver temperature tracks that current with a 2.5 s lag and never comes back down inside the mission. It starts near 39 C and is still climbing at the end.\n\nFix in order: shorten the ramp duty cycle, then add a current ceiling so the drivers back off before they cook.\n\n{{ev:thermal-creep}}",
+        "evidence": ["ramp-stall", "thermal-creep"]
+      },
+      {
+        "id": "log-my-robot",
+        "matchers": ["own robot", "log this", "my robot", "how do i", "arduino", "esp32"],
+        "answer": "Same two channels, straight off an ESP32. Declare the fields once, then log a row per control loop.\n\n```cpp\n#include <AlloyLogger.h>\nAlloyLogger alloy;\n\nvoid setup() {\n  alloy.wifi(\"your-ssid\", \"your-password\");\n  alloy.begin(\"warehouse-rover\", \"your-device-key\");\n  alloy.describe(\"/drive\", \"vel\", \"m/s\");\n  alloy.describe(\"/drive\", \"current\", \"A\");\n  alloy.describe(\"/sys\", \"temp\", \"C\");\n}\n\nvoid loop() {\n  alloy.log(\"/drive\").set(\"vel\", readVelocity()).set(\"current\", readCurrent());\n  alloy.log(\"/sys\").set(\"temp\", readDriverTemp());\n  alloy.end();\n}\n```\n\nThat is the whole integration. The mission you are looking at now is the same shape of data.",
+        "evidence": ["ramp-stall"]
+      }
+    ]
+  },
+  "facts_notes": "Mission is 20 s at 50 Hz across two channels. Velocity holds 1.20 m/s from 4.0 s to 11.0 s, decays to about 0.05 m/s by 15.0 s, then ramps back over 1.0 m/s by 19.5 s. Motor current steps from 1.5 A to 5.4 A at 11.0 s and drops back to 1.6 A at 15.0 s, with a decaying 6 Hz burst starting at 12.4 s. Driver temperature is a first-order lag of motor current with tau 2.5 s and gain 3.2, on top of a 38 C to 44 C baseline ramp, so it keeps climbing after the stall clears. Battery voltage is the current trace scaled by -0.08 on a slow droop from 12.4 V. The alert finding is the stall window 10.5 s to 15.0 s. The warn finding is the whole-mission thermal creep from 2 s onward.",
+  "email_summary": "A warehouse rover that stalls on a ramp at 12 s while the drivers quietly cook."
+}
