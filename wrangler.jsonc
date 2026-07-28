@@ -19,6 +19,27 @@
     "binding": "ASSETS",
     "run_worker_first": true
   },
+  // Personalized demo generator (worker/demo-gen.js + worker/do.js). One sqlite Durable
+  // Object owns the whole funnel: job state machine, claim leases, dedupe, rate windows,
+  // daily cap, published bundles, suppression list. KV has no CAS and a lost write here is
+  // a lost lead, so none of that state lives anywhere else.
+  // This Worker has never had a migration before, so v1 is the next free tag.
+  "durable_objects": {
+    "bindings": [{ "name": "DEMOGEN_DO", "class_name": "DemoGenDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DemoGenDO"] }],
+  // Secrets (wrangler secret put, mirrored to pass alloylogger/*):
+  //   DEMOGEN_TOKEN        bearer for /api/demo-gen/runner/* (the MBP poller)
+  //   DEMOGEN_SIGNING_KEY  HMAC key for verify / approve / reject / unsubscribe links AND
+  //                        for the keyed IP + email hashes, so raw IPs are never stored
+  //   DEMOGEN_RESEND_KEY   Resend API key for the one email this Worker sends (verification)
+  // Optional dev-only vars, set via `wrangler dev --var`, never in this file:
+  //   DEMOGEN_ORIGIN       link origin override (defaults to https://alloylogger.com)
+  //   DEMOGEN_DEV_NO_EMAIL "1" logs the verification link instead of calling Resend
+  "vars": {
+    "DEMOGEN_FROM": "Hugh at Alloy <hugh@alloylogger.com>",
+    "DEMOGEN_MAX_JOBS_PER_DAY": "8"
+  },
   "observability": {
     "enabled": true
   },

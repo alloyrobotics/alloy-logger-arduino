@@ -1,4 +1,6 @@
 cloud/
+# The worktree .git is a FILE, not a directory, so the `.git/` line below never matches it.
+.git
 .git/
 .obsidian/
 .vercel/
@@ -22,9 +24,14 @@ library.properties
 LICENSE
 README.md
 demo/DESIGN.md
+demo/GENSPEC.md
+demo/js/robots/gen-fixture/
 docs/
 worker/
 node_modules/
 package.json
 package-lock.json
 .dev.vars
+.dev.vars*
+.env*
+.claude/
