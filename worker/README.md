@@ -1,7 +1,42 @@
 # /demo/api/chat worker
 
 The live analyst behind the demo's chat panel: `site-worker.js` routes `POST /demo/api/chat` to
-`chat.js`, which streams a Claude Haiku answer grounded in `facts.generated.js`.
+`chat.js`, which streams a Claude Haiku answer grounded in a facts pack for the mission being
+asked about. The pack is the only thing the model is told, so every number it quotes is a number
+the page is plotting.
+
+Two kinds of mission reach it:
+
+| robot id | pack comes from | built by |
+| --- | --- | --- |
+| `sbr` `arm6` `drone` `rescue` | `facts.generated.js`, imported at build time | `build-facts.mjs`, run by hand, committed |
+| `g-<20 char slug>` | the `DemoGenDO` bundle for that slug, fetched per request | the demo generator's runner, published alongside the def |
+
+## Generated missions
+
+A `g-` robot is a personalized demo (`demo-gen.js`): one visitor described their robot, the
+runner generated a `def.json` for it and emailed them an unguessable link. Those demos are
+created long after this Worker was deployed, so their packs cannot be compiled in. `chat.js`
+falls through to the DO when, and only when, the posted id is not a canned robot AND matches
+`^g-[a-z2-7]{20}$`; anything else is the same `400 Unknown robot.` as before. Everything after
+the lookup, including the `cache_control` breakpoint, is identical for both kinds. Each generated
+pack is simply its own cache prefix.
+
+The runner builds those packs by importing THIS repo's `build-facts.mjs` out of a snapshot
+(`sync-template.sh` there), so a generated mission is described to the model in exactly the
+format the canned four are. Two sections differ, both because a private mission is not a canned
+one: `## Analyst context` carries the def's `facts_notes` (its numbers cross-checked against the
+built arrays by the runner's validator), and `## Other missions on this page` points at the
+public demo page instead of enumerating siblings.
+
+### Which states answer
+
+`DemoGenDO.factsPack()` serves `generated`, `approved` and `emailed`. That is one state wider
+than the `def.json` gate, which starts at `approved`: a demo Hugh is previewing from the confirm
+page sits in `generated`, and a preview whose chat panel 400s is not a preview of anything.
+It leaks nothing, because the slug is 100 bits of unguessable secret, the pack says only what
+the bundle already says, and `reject` deletes the bundle, so a rejected demo stops answering at
+the same moment it stops serving.
 
 ## Fresh checkout
 
@@ -23,6 +58,14 @@ node worker/build-facts.mjs && git diff --exit-code worker/facts.generated.js
 
 A dirty diff means the model was about to quote numbers the page no longer plots.
 
+Running `build-facts.mjs` writes the four canned robots. IMPORTING it writes nothing and touches
+nothing under `demo/` - it just exports the builders, which is how the generator runner reuses
+them. Keep that split intact: any new top level side effect in that file would fire inside the
+runner too.
+
+After changing `build-facts.mjs`, re-run the runner's `sync-template.sh` as well, or generated
+demos keep being described by the old builder.
+
 ## Testing
 
 `wrangler dev` has a watcher reload loop in this repo; use the direct-Node harness instead:
@@ -43,4 +86,5 @@ npx wrangler tail   # look for `chat usage ... cache_read=` lines
 
 `chat.js` fails closed (503) if the `ratelimits` bindings in `wrangler.jsonc` are missing.
 The PERSONA string in `chat.js` plus the facts pack is the prompt-cache prefix; edits to either
-are fine but rewrite the cache for all four robots.
+are fine but rewrite the cache for all four robots (and for every generated demo, which each
+carry their own suffix).
