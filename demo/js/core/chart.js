@@ -102,7 +102,17 @@ export function createChart(mount, robotDef, timeline) {
       b.type = 'button';
       b.className = 'fchip mono' + (idx >= 0 ? ' on' : '');
       if (idx >= 0) b.style.setProperty('--fc', SERIES_COLORS[idx % SERIES_COLORS.length]);
-      b.innerHTML = `<i class="fdot"></i>${f.label || f.key}${f.unit ? `<em>${f.unit}</em>` : ''}`;
+      // Built as nodes, not markup: field labels and units come from the robot def, and a
+      // generated def is untrusted text. Same elements, same order, same classes as before.
+      const dot = document.createElement('i');
+      dot.className = 'fdot';
+      b.appendChild(dot);
+      b.appendChild(document.createTextNode(f.label || f.key));
+      if (f.unit) {
+        const em = document.createElement('em');
+        em.textContent = f.unit;
+        b.appendChild(em);
+      }
       b.addEventListener('click', () => {
         const at = fields.indexOf(f.key);
         if (at >= 0) {
@@ -489,15 +499,31 @@ export function createChart(mount, robotDef, timeline) {
       return;
     }
     const t = px2x(px);
-    const rows = fields
-      .map((key, si) => {
-        const arr = ch[key];
-        if (!arr) return '';
-        const fd = fieldDef(key) || {};
-        return `<span class="ro-row"><i style="background:${SERIES_COLORS[si % SERIES_COLORS.length]}"></i>${fd.label || key} <b>${fmt(sampleAt(ch.t, arr, t))}</b><em>${fd.unit || ''}</em></span>`;
-      })
-      .join('');
-    readout.innerHTML = `<span class="ro-t">${t.toFixed(2)} s</span>${rows}`;
+    // Built as nodes, not markup: labels and units come from the robot def, and a generated def
+    // is untrusted text. Same elements, same order, same classes as the old template.
+    readout.textContent = '';
+    const tEl = document.createElement('span');
+    tEl.className = 'ro-t';
+    tEl.textContent = `${t.toFixed(2)} s`;
+    readout.appendChild(tEl);
+    fields.forEach((key, si) => {
+      const arr = ch[key];
+      if (!arr) return;
+      const fd = fieldDef(key) || {};
+      const row = document.createElement('span');
+      row.className = 'ro-row';
+      const swatch = document.createElement('i');
+      swatch.style.background = SERIES_COLORS[si % SERIES_COLORS.length];
+      row.appendChild(swatch);
+      row.appendChild(document.createTextNode(`${fd.label || key} `));
+      const val = document.createElement('b');
+      val.textContent = fmt(sampleAt(ch.t, arr, t));
+      row.appendChild(val);
+      const em = document.createElement('em');
+      em.textContent = fd.unit || '';
+      row.appendChild(em);
+      readout.appendChild(row);
+    });
     readout.hidden = false;
     const left = clamp(px + 14, 8, Math.max(w - 190, 8));
     readout.style.left = left + 'px';

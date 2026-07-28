@@ -3,6 +3,7 @@
 // answer to onEvidence(). Chips re-fire on click.
 
 import { renderMarkdown } from './markdown.js';
+import { matchEntry as matchEntryIn } from './matcher.js';
 
 const CHARS_PER_FRAME = 3;
 
@@ -72,39 +73,10 @@ export function createChat(mount, robotDef, hooks = {}) {
   });
 
   // ---------- matching ----------
-  /**
-   * A matcher hits when it appears at the START of a word in the question. Plain `includes` let
-   * short matchers fire inside unrelated words ("esc" inside "telescope", "bat" inside "combat"),
-   * which sent nonsense questions to a real answer instead of the fallback. Anchoring to a word
-   * start keeps the intended prefix behaviour ("temp" -> "temperature", "fall" -> "falling") and
-   * keeps multi-word matchers ("root cause", "own robot") working.
-   */
-  function hasMatcher(q, matcher) {
-    const needle = String(matcher).toLowerCase();
-    if (!needle) return false;
-    for (let from = 0; ; ) {
-      const i = q.indexOf(needle, from);
-      if (i < 0) return false;
-      if (i === 0 || !/[a-z0-9]/.test(q[i - 1])) return true;
-      from = i + 1;
-    }
-  }
-
+  // The scoring itself lives in core/matcher.js so the generator's validator can decide, with
+  // the exact same code, whether a generated question will hit an answer in this panel.
   function matchEntry(text) {
-    const q = String(text || '').toLowerCase();
-    let best = null;
-    let bestScore = 0;
-    for (const entry of robotDef.script || []) {
-      let score = 0;
-      for (const m of entry.matchers || []) {
-        if (hasMatcher(q, m)) score++;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        best = entry;
-      }
-    }
-    return bestScore > 0 ? best : null;
+    return matchEntryIn(robotDef.script || [], text);
   }
 
   // ---------- rendering ----------
