@@ -16,7 +16,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import { applyShelvePurge, computeStateSnapshot } from "./do-shelve.js";
+import { applyLeadCapture, applyShelvePurge, computeStateSnapshot, selectLeads } from "./do-shelve.js";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -167,6 +167,22 @@ export class DemoGenDO extends DurableObject {
       email TEXT PRIMARY KEY,
       at INTEGER NOT NULL
     );`);
+
+    // Signup-popup leads (worker/signup-lead.js). Nothing to do with the job state machine above:
+    // a lead is one address and how it got here, with no lifecycle at all. The email is the primary
+    // key, which is what makes dedupe a constraint rather than a query, and `last_seen` is the only
+    // column a repeat submission ever moves. `ip_hash` is the Worker's keyed digest and exists only
+    // to hold the per-IP daily cap; the raw IP is never stored here or anywhere else.
+    sql.exec(`CREATE TABLE IF NOT EXISTS leads(
+      email TEXT PRIMARY KEY,
+      robot TEXT,
+      src TEXT,
+      dwell_ms INTEGER,
+      ip_hash TEXT,
+      created_at INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL
+    );`);
+    sql.exec(`CREATE INDEX IF NOT EXISTS leads_ip_at ON leads(ip_hash, created_at);`);
   }
 
   // ---------------------------------------------------------------- internals
@@ -640,6 +656,44 @@ export class DemoGenDO extends DurableObject {
     const res = applyShelvePurge(this.sql, { allowSlugs, purgeableStates: SHELF_PURGEABLE_STATES });
     this.emit("shelf_purge", null, at);
     return res;
+  }
+
+  // ------------------------------------------------------------------ signup leads
+
+  /**
+   * Capture one signup-popup lead: dedupe, per-IP cap, global daily cap, insert and the day's
+   * notification budget, atomically. Returns `{ ok, status, notify }` with status `new`,
+   * `duplicate`, `capped` or `daily_capped`; the Worker answers 202 to all four and only mails
+   * Hugh when the status is `new` AND `notify` is true. Scope and reasoning live in do-shelve.js.
+   *
+   * Nothing else in this class reads or writes the `leads` table. It also appends two event kinds
+   * (`signup_lead`, `signup_lead_notified`) to the shared append-only `events` ledger, which is
+   * where every daily counter in this DO lives; it writes to no other table, so a popup submission
+   * still cannot move a demo job.
+   */
+  recordLead({ email, robot, src, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget }) {
+    return applyLeadCapture(this.sql, {
+      email,
+      robot,
+      src,
+      dwellMs,
+      ipHash,
+      now: now ?? Date.now(),
+      ipCap,
+      windowMs,
+      dailyCap,
+      notifyBudget,
+    });
+  }
+
+  /**
+   * The export path. Newest first, no `ip_hash`, ISO timestamps. `(before, beforeEmail)` is a
+   * compound cursor over the total ordering (created_at DESC, email DESC): rows come back strictly
+   * after that position, so the Worker can page the table without an offset that would shift under
+   * it as new leads land at the top, and without a millisecond tie ever hiding a row.
+   */
+  listLeads(limit, before = null, beforeEmail = null) {
+    return selectLeads(this.sql, { limit, before, beforeEmail });
   }
 
   /** Read-only introspection for the curl matrix and the funnel digest. */

@@ -19,21 +19,57 @@ still live. The rows below are marked where the shelve changed the observed answ
 rows are kept, because un-shelving is reverting the tombstones and this is the matrix that then
 has to pass again.
 
+**(2026-07-28, signup leads.)** The demo's signup popup captures an email now, so the site Worker
+has one new pair of routes in `worker/signup-lead.js`: public `POST /api/signup-lead` and
+bearer-gated `GET /api/signup-lead/list`. They share the DO (a new `leads` table, two new methods)
+and the `DEMOGEN_TOKEN` bearer, and nothing else: no job row, no state machine, no signed link. See
+"Signup lead capture" below.
+
+**(2026-07-28, signup-lead hardening.)** A security pass over that pair changed four things, all of
+them ceilings and all of them documented in the matrix below:
+
+- the 8 KB body cap is enforced on the STREAM, not after `request.text()`. A chunked post carries
+  no `Content-Length`, so the old order buffered the whole body and only then measured it; the read
+  now cancels the moment the running total would cross 8 KB.
+- two new edge rate limiters, `LEAD_RL_IP` (5/60s per `CF-Connecting-IP`) and `LEAD_RL_ALL`
+  (60/60s, keyless), run before the body is read and before the DO is touched. Missing bindings are
+  a `503`, exactly as `chat.js` reads them.
+- a GLOBAL cap of 500 NEW leads per UTC day (`DEMOGEN_LEAD_DAILY_CAP`), and a budget of 25
+  notification emails per UTC day. Past the lead cap: no row, no mail. Past the notify budget: the
+  lead is STILL STORED and only the mail is skipped.
+- `GET /api/signup-lead/list` pages. The response is an object now, not a bare array, and it hands
+  back a `next_before` cursor when it truncated.
+
 There is no full automated test runner for the site Worker (the repo has no test harness outside
 `cloud/`), so this file is the contract for everything that needs a live `wrangler dev`. The parts
 that do NOT need one are executable and must stay green:
 
 ```sh
-node --test worker/demo-gen.unit.test.mjs     # 19 tests, no network, no wrangler
+node --test worker/demo-gen.unit.test.mjs     # 43 tests, no network, no wrangler
 ```
 
-`worker/demo-gen.unit.test.mjs` drives `handleDemoGen()` directly under Node. It owns the
-assertions a curl matrix cannot make: the submit tombstone driven with a request whose `text()`,
-DO getter, `ctx.waitUntil` and `fetch` all throw if touched (that is how "zero side effects" is
-proved rather than eyeballed), the paused verify asserted against a DO stub that WOULD have moved
-the row, and the two new runner routes' auth, exact field contract, read-only-ness, purge scope,
-refusals and idempotence. It reads the state enum, the review states and the schema out of
-`worker/do.js` itself, so it fails if the machine's shape drifts from what it asserts.
+`worker/demo-gen.unit.test.mjs` drives `handleDemoGen()` and `handleSignupLead()` directly under
+Node. It owns the assertions a curl matrix cannot make: the submit tombstone driven with a request
+whose `text()`, DO getter, `ctx.waitUntil` and `fetch` all throw if touched (that is how "zero side
+effects" is proved rather than eyeballed), the paused verify asserted against a DO stub that WOULD
+have moved the row, the two shelve-era runner routes' auth, exact field contract, read-only-ness,
+purge scope, refusals and idempotence, and (2026-07-28) the whole of the lead capture: dedupe,
+per-IP cap, honeypot, the 400s, the export, and a `fetch` stub that FAILS the test if a silent-drop
+path so much as attempts a Resend call. It reads the state enum, the review states and the schema
+out of `worker/do.js` itself, so it fails if the machine's shape drifts from what it asserts, and
+the lead SQL under test is the real `do-shelve.js` code the DO calls, not a restatement of it.
+
+The hardening pass added seven more, and each one is a claim a curl matrix cannot make:
+
+| test | what only the unit test can prove |
+| --- | --- |
+| chunked oversize | a 64 KB body with NO `Content-Length`, fed 1 KB at a time from a real `ReadableStream`, is refused after roughly 8 chunks with the reader CANCELLED, against an env whose DO getter throws. "Never buffered and never reached the DO" is then a fact about the code path, not an absence in a log |
+| limiters fail closed | four shapes of missing/partial/malformed `LEAD_RL_*` binding, each a `503` that never reaches the DO, plus `DEV=1` running open and both limiters being consulted with the right keys when present |
+| over-limit is silent | the per-IP limiter and the global limiter each dropping on their own, with the other wide open, so the answer is a `202` with no DO call, no row and no scheduled work. Also that a limiter which THROWS runs open, because a Cloudflare blip must not cost a lead |
+| global daily cap | 500 leads from 500 distinct IPs, then a 501st from a fresh IP well under the per-IP cap. Only the global ceiling can stop it, and it does: no row, no mail, a `202` |
+| cap override | `DEMOGEN_LEAD_DAILY_CAP=2` caps at two, and `=0` pauses the capture entirely rather than silently restoring 500 |
+| notify budget | 25 leads, 25 recorded Resend calls, then a 26th that is STORED, appears in the export, and never touches `fetch`. The budget cannot cost a lead, only a mail |
+| list cursor | a `?before=` walk over real rows, a `bad_cursor` 400, and a stubbed 5000-row DO proving the Worker asks for 1001, returns 1000, and names the OLDEST returned row as `next_before` |
 
 ## Running it
 
@@ -65,15 +101,41 @@ npx wrangler dev --port 8788 --ip 127.0.0.1 --persist-to /tmp/wstate8788 \
 
 - `DEMOGEN_ORIGIN` makes every generated link point at localhost. Production leaves it
   unset and the code falls back to `https://alloylogger.com`.
-- `DEMOGEN_DEV_NO_EMAIL:1` is INERT since the 2026-07-28 shelve. It gated the verification
-  mail on the submit path, and that path is a 410 tombstone with no mail code behind it. It is
-  kept in the line above only so a copy-pasted dev command still matches what was run before.
-  See "Email in dev" below.
+- `DEMOGEN_DEV_NO_EMAIL:1` gated the verification mail on the submit path, and that path is a 410
+  tombstone with no mail code behind it, so it is inert for `demo-gen.js`. It is LIVE again for
+  `worker/signup-lead.js`, whose lead notification honours the same guard, and it should be set on
+  every local run. See "Email in dev" below.
 - `DEMOGEN_LEASE_MS` (Phase B only) shortens the 30 minute claim lease so the reclaim path
   is testable in seconds. Never set it in production.
 - `DEMOGEN_MAX_JOBS_PER_DAY` overrides the `vars` default of 8. **(2026-07-27 pass 2)** `0` now
   means zero: the DO parses it with `Number.isFinite` instead of `Number(x) || 8`, so setting it
   to `0` pauses the funnel instead of silently restoring the default cap.
+- **(2026-07-28 hardening)** `DEMOGEN_LEAD_DAILY_CAP` overrides the 500/UTC-day global new-lead
+  cap in `signup-lead.js`, parsed the same way and with the same reading of `0`: a deliberate pause
+  of the capture, not a typo that restores 500. Set it to something small (`--var
+  DEMOGEN_LEAD_DAILY_CAP:2`) to drive the cap row in the matrix below without posting 501 leads.
+
+**The `ratelimits` bindings DO work in `wrangler dev`, and this was verified, not assumed.**
+Starting the command above prints them in the bindings table and enforces them in local mode:
+
+```
+env.CHAT_RL_IP (12 requests/60s)     Rate Limit   local
+env.CHAT_RL_ALL (150 requests/60s)   Rate Limit   local
+env.LEAD_RL_IP (5 requests/60s)      Rate Limit   local
+env.LEAD_RL_ALL (60 requests/60s)    Rate Limit   local
+```
+
+Seven POSTs from one `cf-connecting-ip` on 2026-07-28 gave five `202`s that stored a row and two
+that logged `[signup-lead] rl-drop ip`, so the limiter really counts locally rather than being a
+no-op stub. **No extra `--var` or binding flag is needed for them.**
+
+`DEV:1` is therefore a FALLBACK, not the thing that makes local dev work, and the distinction
+matters: it satisfies the "are the limiters configured" gate, so a wrangler version that ever
+stopped binding them would still run locally, and it does NOT stop a bound limiter from counting.
+`.dev.vars` sets it already, so the `--var DEV:1` in the commands above is belt and braces rather
+than a requirement. To exercise the wall, post faster than 5/60s from one `cf-connecting-ip`; to
+see what `DEV:1` is actually for, run against a config with the `ratelimits` block removed, where
+it is the difference between a working local Worker and a `503` on every capture.
 
 Two helpers used below live in the session scratchpad, not the repo:
 
@@ -511,17 +573,157 @@ survives a `wrangler dev` restart (`.wrangler/state`), so the day's claim count 
 
 Event counters after the phase: `claimed` 5, `lease_reclaimed` 1.
 
+## Signup lead capture (new 2026-07-28)
+
+`worker/signup-lead.js`, shimmed from `site-worker.js` on two exact paths. Run it on the same
+`wrangler dev` as everything above; the routes need `DEMOGEN_TOKEN` (for the export) and read
+`DEMOGEN_SIGNING_KEY` (for the keyed IP hash). Add `--var DEMOGEN_DEV_NO_EMAIL:1`, always: see
+"Email in dev" below for why a real Resend call cannot be driven from `wrangler dev`.
+
+Every answer carries `Cache-Control: no-store`. **202 is the only success it admits to, and it
+covers every silent drop**: a filled honeypot, an address already on the list, an IP past its daily
+cap, the whole route past its daily cap, and either edge rate limiter refusing all answer exactly
+like an accepted lead. Anything else would make this endpoint an oracle for "is this person already
+on the list", and a `429` in particular would tell a bot exactly where the wall is.
+
+**The four ceilings, cheapest first.** They nest, and nothing past any of them writes a row or
+sends a mail:
+
+| ceiling | where | limit | over it |
+| --- | --- | --- | --- |
+| `LEAD_RL_IP` | Cloudflare edge, before the body is read | 5/60s per `CF-Connecting-IP`, per POP | `202`, log `[signup-lead] rl-drop ip` |
+| `LEAD_RL_ALL` | Cloudflare edge, before the body is read | 60/60s keyless, per POP | `202`, log `[signup-lead] rl-drop global` |
+| per-IP daily cap | the DO, atomic with the insert | 5 NEW leads per keyed IP hash per rolling 24 h | `202`, log `[signup-lead] capped` |
+| global daily cap | the DO, atomic with the insert | 500 NEW leads per UTC day (`DEMOGEN_LEAD_DAILY_CAP`) | `202`, log `[signup-lead] daily_capped` |
+
+Beside them sits the notification budget, which is NOT a ceiling on leads: 25 mails per UTC day,
+counted in the DO on the same append-only `events` ledger the job cap uses. Past it the lead is
+stored, exported and logged as `[signup-lead] notify-budget lead=<address>`, and only the Resend
+call is skipped.
+
+### POST /api/signup-lead
+
+```sh
+curl -i -X POST localhost:8787/api/signup-lead -H 'content-type: application/json' \
+  -d '{"email":"lead@example.com","hp":"","dwell_ms":4200,"robot":"sbr","src":"dm"}'
+```
+
+| curl | observed |
+| --- | --- |
+| the body above | `202 {"ok":true}`, one `leads` row, one Resend notification to `hughphan2@gmail.com` |
+| the same body again | `202 {"ok":true}`, still ONE row, `last_seen` bumped, `created_at` / `robot` / `src` / `dwell_ms` untouched, **no second email** |
+| `"email":"  Lead@Example.COM "` | `202`, stored as `lead@example.com` (trimmed, lowercased), and a later post of `LEAD@example.com` is the duplicate path |
+| `"hp":"http://spam.example"` | `202 {"ok":true}`, no row, no DO call at all, no email. Checked BEFORE the address, so a bot cannot tell a filled honeypot from a rejected address |
+| `"email":"nope"` / `"no@domain"` / missing / 250-char local part | `400 {"ok":false,"reason":"bad_email"}`, no row |
+| `-d '{oops'` / `-d '[]'` / `-d 'null'` / `-d '42'` | `400 {"ok":false,"reason":"bad_json"}` |
+| a body over 8 KB, or a `Content-Length` claiming over 8 KB | `400 {"ok":false,"reason":"bad_json"}`. The declared length is checked first, so an oversized body is refused before it is read |
+| **(hardening)** 40 KB posted with `Transfer-Encoding: chunked` and NO `Content-Length` | `400 {"ok":false,"reason":"bad_json"}` in ~1 ms. The body is read from `request.body`'s reader and the reader is CANCELLED the moment the running total would cross 8 KB, so the rest of the body is never pulled across and nothing oversized is ever allocated. This is the row the old `await request.text()` could not pass: chunked declares no size, so the cap ran after the buffering it existed to prevent |
+| a 4 KB `src` | `202`, and `src` is truncated to 64 chars on the way in (same for `robot`) |
+| a 6th NEW address from the same IP inside 24 h | `202 {"ok":true}`, no row, no email. The cap is 5 new leads per IP per rolling day |
+| a DUPLICATE from an IP already at the cap | `202`, `last_seen` still bumps. Dedupe is checked before the cap, so a returning lead is never swallowed by it |
+| the 6th address from a DIFFERENT IP | `202`, row written, email sent. The per-IP cap is per IP; the 500/day one below is the global ceiling |
+| **(hardening)** 7 posts in a row from one `cf-connecting-ip` | five `202`s that store a row, then two `202`s logging `[signup-lead] rl-drop ip`. Observed on 2026-07-28: the limiter counts in `wrangler dev`, no extra flag needed |
+| **(hardening)** the 501st NEW address of the UTC day, from a fresh IP | `202 {"ok":true}`, no row, no email, log `[signup-lead] daily_capped`. Drive it locally with `--var DEMOGEN_LEAD_DAILY_CAP:2` rather than 501 curls; `--var DEMOGEN_LEAD_DAILY_CAP:0` pauses the capture outright and every post is a silent `202` |
+| **(hardening)** the 26th NEW lead of the UTC day | `202`, row WRITTEN, present in the export, no Resend call, log `[signup-lead] notify-budget lead=...`. The budget bounds the inbox, never the list |
+| **(hardening)** `LEAD_RL_IP` / `LEAD_RL_ALL` unbound and `DEV` unset | `503 {"ok":false,"error":"not configured"}`, and the DO is never reached. A public write path to the DO fails closed, exactly as `chat.js` does for its API key |
+| `GET` / `PUT` / `DELETE` / `HEAD` on `/api/signup-lead` | `405 {"ok":false,"reason":"method_not_allowed"}` |
+| Resend 500s, times out or throws | still `202`, row already written. Storage is the source of truth and the send runs in `ctx.waitUntil` after the response is out |
+
+The stored row is `email, robot, src, dwell_ms, ip_hash, created_at, last_seen`. `ip_hash` is
+`sha256(ip + DEMOGEN_SIGNING_KEY)` truncated to 32 hex chars, exactly the idiom the job table uses:
+the raw IP is never stored, and the digest exists only to hold the per-IP cap.
+
+**Confirming a row landed is the BEARER LIST ROUTE, not the debug route.**
+`GET /api/demo-gen/runner/debug` dumps jobs, event counters, the suppression list and bundles, and
+`DemoGenDO.debug()` does not read the `leads` table at all, so it can neither confirm nor deny that
+a capture stored anything. The one assertion path is:
+
+```sh
+curl -s -H "Authorization: Bearer $DEMOGEN_TOKEN" localhost:8787/api/signup-lead/list \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["count"], [l["email"] for l in d["leads"]])'
+```
+
+The debug route is still the right tool for the assertion it CAN make about this route, which is
+the negative one every silent-drop row above depends on: that the capture created no job row.
+
+### GET /api/signup-lead/list
+
+The export path, and the only way the leads come out. Same bearer and same constant-time compare
+as `/api/demo-gen/runner/*`.
+
+```sh
+curl -s -H "Authorization: Bearer $DEMOGEN_TOKEN" localhost:8787/api/signup-lead/list
+```
+
+**(2026-07-28 hardening.)** The response is an OBJECT now, not a bare array, because a page that
+truncated has to be able to say so. Observed on `wrangler dev` after five captures:
+
+```json
+{"ok":true,"count":5,"next_before":null,"next_before_email":null,
+ "leads":[{"email":"rl5@example.com","robot":null,"src":"dm","dwell_ms":1000,
+           "created_at":"2026-07-28T08:39:27.696Z","last_seen":"2026-07-28T08:39:27.696Z"}]}
+```
+
+Paging is a COMPOUND cursor over (created_at DESC, email DESC), not an offset: the table grows at
+the TOP, so an offset would re-serve rows every time a lead landed mid-walk, and a timestamp-only
+cursor loses a row when two leads share the millisecond at a page boundary (email is unique after
+dedupe, so the compound ordering is total). A truncated page names BOTH halves; feed them straight
+back together:
+
+```sh
+curl -s -H "Authorization: Bearer $DEMOGEN_TOKEN" \
+  'localhost:8787/api/signup-lead/list?before=2026-07-28T08:39:27.679Z&before_email=rl3%40example.com'
+# -> {"ok":true,"count":2,"next_before":null,"next_before_email":null,"leads":[rl2, rl1]}
+# `before_email` WITHOUT `before` -> 400 bad_cursor. `before` alone is accepted (first-page-after-
+# a-time), it just cannot land inside a tie.
+```
+
+| case | observed |
+| --- | --- |
+| no `Authorization` header | `401 {"ok":false,"error":"unauthorized"}`, and the DO is never called |
+| `Bearer nope`, the token plus one char, the token minus one char | `401 {"ok":false,"error":"unauthorized"}` |
+| right bearer | `200`, `Cache-Control: no-store`, `{ok, count, next_before, leads}`, newest `created_at` first |
+| response content | each lead is `email, robot, src, dwell_ms, created_at, last_seen`. **No `ip_hash`**: it is a rate-limit bucket, not a fact about the lead, and an export carrying it would have to be handled like one carrying IPs |
+| a page under 1000 rows | `next_before: null`. Null is the end of the walk, and it is the ONLY end condition: an empty `leads` array is not required |
+| more than 1000 rows | `count: 1000` and `next_before` set to the OLDEST returned row's `created_at`. The Worker asks the DO for 1001 and returns 1000; the extra row exists only so "there is more" is observed rather than inferred from a full page |
+| `?before=<ISO>` | rows STRICTLY older than the cursor, so the row the cursor names is never repeated. Walking to the end gives `{"count":0,"leads":[],"next_before":null}` rather than looping |
+| `?before=nope` / `?before=` / `?before=yesterday` | `400 {"ok":false,"reason":"bad_cursor"}`. A bad cursor is refused rather than ignored: silently serving page one would read exactly like a list that had stopped growing, which is the one wrong answer an export must never give |
+| `POST /api/signup-lead/list` with the right bearer | `405 {"ok":false,"reason":"method_not_allowed"}` (bearer is checked first, so a wrong bearer on any verb is still `401`) |
+| `GET /api/signup-lead/nope` | `404` with an EMPTY body: `site-worker.js` matches the two paths exactly rather than by prefix, so a typo below them falls through to `env.ASSETS.fetch`, not to the JSON 404 |
+
+Note the list route is deliberately NOT rate limited. It is bearer gated with a constant-time
+compare and it is Hugh's own export path; putting a 5/60s wall in front of a paging walk would
+break the one caller it has.
+
 ## Email in dev: HISTORICAL
 
-**(2026-07-28.)** The Worker sends no email. The verification mail was the only mail it ever
-sent, and it went with the submit path when the entry was shelved: there is no mail function, no
-mail counters and no Resend call left in `worker/`, which is why the unit test can assert zero
-sends simply by handing the handler a `fetch` that throws. Visitor delivery and Hugh's approval
-notice are the RUNNER's job (`mailer.mjs`, `notify.mjs`, keyed by `RESEND_API_KEY` out of `pass`),
-not the Worker's, and the runner is off for the shelve.
+**(2026-07-28, shelve.)** `demo-gen.js` sends no email. The verification mail was the only mail it
+ever sent, and it went with the submit path when the entry was shelved: there is no mail function,
+no mail counters and no Resend call left in that file, which is why the unit test can assert zero
+sends from the tombstone simply by handing the handler a `fetch` that throws. Visitor delivery and
+Hugh's approval notice are the RUNNER's job (`mailer.mjs`, `notify.mjs`, keyed by `RESEND_API_KEY`
+out of `pass`), not the Worker's, and the runner is off for the shelve.
 
-`DEMOGEN_DEV_NO_EMAIL:1` in the `wrangler dev` command above is therefore inert. It is still
-listed there so a copy-pasted dev command matches what earlier sessions ran; it gates nothing.
+**(2026-07-28, signup leads.)** One Worker-side send came BACK, in `worker/signup-lead.js` only:
+a plain-text notification to `hughphan2@gmail.com` per NEW lead, on the shelved path's exact idiom
+(`DEMOGEN_RESEND_KEY`, `DEMOGEN_FROM` or the `Hugh at Alloy <hugh@alloylogger.com>` fallback,
+`AbortSignal.timeout(10_000)`, every failure caught and logged). It is a notification, not a
+delivery: it runs inside `ctx.waitUntil` after the `202`, and the `leads` row is the record whether
+or not it lands.
+
+**(2026-07-28, hardening.)** That send is budgeted at 25 a UTC day, counted in the DO on the
+`events` ledger as `signup_lead_notified` beside the `signup_lead` rows the daily cap counts. The
+budget is spent when the DECISION is made, inside the same atomic `recordLead` call that wrote the
+row, not when Resend answers: a failed send that handed its slot back would turn a provider outage
+into a retry storm, and two simultaneous leads must not both read the last slot as free. Past the
+budget the lead is stored and exported exactly as always and only the mail is skipped, which is the
+right way round, because the row is the record and the email is a nudge.
+
+`DEMOGEN_DEV_NO_EMAIL:1` therefore gates one thing again. It is inert for `demo-gen.js` (kept in
+the dev command so a copy-paste matches what earlier sessions ran) and live for `signup-lead.js`,
+where it logs the lead instead of calling Resend. **Set it for every local run**, per the paragraph
+below: the mail leg of the lead capture cannot be exercised against `wrangler dev` at all, only
+against a deployed preview.
 
 What was true before the shelve is kept here because it is the thing to re-read if the entry is
 ever reopened, and because it still describes this machine rather than that code path: with a real

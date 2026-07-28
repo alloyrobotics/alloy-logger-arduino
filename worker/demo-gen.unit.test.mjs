@@ -1,22 +1,26 @@
-// demo-gen.unit.test.mjs - the shelve's executable contract for worker/demo-gen.js.
+// demo-gen.unit.test.mjs - the executable contract for the site Worker's non-asset surfaces.
 //
 //   node --test worker/demo-gen.unit.test.mjs
 //
 // worker/demo-gen.test.md is the curl matrix against a real `wrangler dev`, and it stays the
 // integration layer. This file is the part that must not need a running Worker: the submit
-// tombstone's ZERO SIDE EFFECTS, the paused verify making no state transition, and the two new
-// runner routes' auth, shape and read-only-ness. A prose assertion cannot fail a build; this can.
+// tombstone's ZERO SIDE EFFECTS, the paused verify making no state transition, the two shelve-era
+// runner routes' auth/shape/read-only-ness, and (2026-07-28) the signup popup's capture endpoint
+// in worker/signup-lead.js. A prose assertion cannot fail a build; this can.
 //
 // How it runs outside workerd at all:
-//   - demo-gen.js imports nothing and uses only Request/Response/Headers/crypto.subtle/btoa,
-//     all of which Node has, so the real handler is exercised, not a copy of it.
+//   - demo-gen.js and signup-lead.js import nothing and use only
+//     Request/Response/Headers/crypto.subtle/btoa/fetch, all of which Node has, so the real
+//     handlers are exercised, not copies of them.
 //   - do.js cannot be imported here (it imports "cloudflare:workers"), so the DO is a stub whose
-//     two new methods call the REAL helpers from do-shelve.js against the REAL schema, read out
-//     of do.js's own source and run on node:sqlite. The state enum, the review states and the
-//     purgeable states are read out of do.js too, so this file cannot silently drift from the
-//     machine it is asserting about.
-//   - no test here makes an outbound fetch. `fetch` is replaced by a throwing stub for the
-//     tombstone cases, which is also how "zero Resend sends" is proved.
+//     methods call the REAL helpers from do-shelve.js against the REAL schema, read out of do.js's
+//     own source and run on node:sqlite. The state enum, the review states and the purgeable
+//     states are read out of do.js too, so this file cannot silently drift from the machine it is
+//     asserting about.
+//   - the only outbound fetch anything here can make is the lead notification to Resend, and
+//     `fetch` is always replaced: by a recorder where a send is expected, and by a stub that
+//     THROWS where the point is that no send happens. That is how "the silent-drop paths never
+//     touch Resend" is proved rather than asserted in a comment.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +30,8 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 import handleDemoGen from './demo-gen.js';
-import { applyShelvePurge, computeStateSnapshot } from './do-shelve.js';
+import handleSignupLead from './signup-lead.js';
+import { applyLeadCapture, applyShelvePurge, computeStateSnapshot, selectLeads } from './do-shelve.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DO_SRC = readFileSync(join(HERE, 'do.js'), 'utf8');
@@ -159,6 +164,16 @@ function makeDoStub(db, calls = []) {
       calls.push('verify');
       db.prepare("UPDATE jobs SET state = 'pending' WHERE id = ? AND state = 'unverified'").run(jobId);
       return { status: 'confirmed' };
+    },
+    // The two lead methods, same arrangement as the shelve pair: the stub is only the plumbing,
+    // the dedupe / cap / insert logic under test is the real do-shelve.js code the DO calls.
+    recordLead: async (args) => {
+      calls.push('recordLead');
+      return applyLeadCapture(sql, args);
+    },
+    listLeads: async (limit, before = null, beforeEmail = null) => {
+      calls.push('listLeads');
+      return selectLeads(sql, { limit, before, beforeEmail });
     },
     note: async () => {
       throw new Error('DO.note() must not be reached');
@@ -688,4 +703,917 @@ test('unsubscribe, approve and reject still route', async (t) => {
   }
   const unknown = await callWorker(get('/api/demo-gen/nope'), env);
   assert.equal(unknown.status, 404);
+});
+
+// ---------------------------------------------------------------------------------------------
+// POST /api/signup-lead + GET /api/signup-lead/list  (worker/signup-lead.js, 2026-07-28)
+// ---------------------------------------------------------------------------------------------
+
+const LEAD_IP = '203.0.113.9';
+const RESEND_URL = 'https://api.resend.com/emails';
+
+function callSignup(request, env, ctx = noopCtx) {
+  return handleSignupLead(request, env, ctx, new URL(request.url));
+}
+
+function leadEnv(db, extra = {}, calls = []) {
+  // A key present and the dev guard OFF, so the default for every test below is "a send WOULD
+  // happen". A test that asserts no send is then asserting about behaviour, not about config.
+  //
+  // DEV=1 is the edge-limiter bypass, and it is the DEFAULT here on purpose: every test that
+  // predates the limiters is about the DO's caps, and leaving a 5/60s IP limiter in front of them
+  // would make those tests assert about the limiter instead. The limiters get their own tests
+  // below, which pass explicit stub bindings.
+  return envWith(db, { DEMOGEN_RESEND_KEY: 'resend-test-key', DEV: '1', ...extra }, calls);
+}
+
+function postLead(body, { ip = LEAD_IP, headers = {}, raw = null } = {}) {
+  return new Request('https://alloylogger.com/api/signup-lead', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip, ...headers },
+    body: raw ?? JSON.stringify(body),
+  });
+}
+
+/**
+ * A limiter binding shaped like Cloudflare's: `limit({ key }) -> { success }`. `allow` is how many
+ * calls succeed before it starts refusing, so a test can put the wall exactly where it wants it.
+ */
+function stubLimiter(allow = Infinity) {
+  const seen = [];
+  return {
+    seen,
+    limit: async ({ key }) => {
+      seen.push(key);
+      return { success: seen.length <= allow };
+    },
+  };
+}
+
+/** A POST whose body is a real chunked stream: no Content-Length, delivered in pieces. */
+function postLeadChunked(chunks, { ip = LEAD_IP } = {}) {
+  const encoder = new TextEncoder();
+  const parts = chunks.map((c) => (typeof c === 'string' ? encoder.encode(c) : c));
+  let pulled = 0;
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (pulled >= parts.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(parts[pulled]);
+      pulled += 1;
+    },
+    cancel() {
+      // Recorded so a test can assert the reader really was cancelled rather than drained.
+      stream.cancelledAfter = pulled;
+    },
+  });
+  const request = new Request('https://alloylogger.com/api/signup-lead', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+    body: stream,
+    duplex: 'half',
+  });
+  return { request, stream, pulledSoFar: () => pulled };
+}
+
+/** Collects `ctx.waitUntil` promises so a test can await the notification instead of racing it. */
+function capturingCtx() {
+  const waited = [];
+  return {
+    waitUntil: (p) => waited.push(p),
+    settle: () => Promise.all(waited.map((p) => Promise.resolve(p).catch(() => {}))),
+    waited,
+  };
+}
+
+/**
+ * Replaces `fetch` for the duration of one test and records every call.
+ * `impl` defaults to a Resend-shaped 200. Pass one that throws to prove a send failure cannot
+ * reach the visitor; the recorder still sees the attempt either way.
+ */
+function recordFetch(t, impl) {
+  const calls = [];
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), init });
+    if (impl) return impl(input, init);
+    return new Response(JSON.stringify({ id: 'resend-msg-1' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = before;
+  });
+  return calls;
+}
+
+/** `fetch` that fails the test if anything calls it at all. Used for every silent-drop path. */
+function forbidFetch(t) {
+  return recordFetch(t, () => {
+    throw new Error('signup-lead made an outbound fetch on a path that must never send mail');
+  });
+}
+
+function leadRows(db) {
+  return db.prepare('SELECT * FROM leads ORDER BY created_at ASC').all();
+}
+
+/**
+ * An env whose DO getter EXPLODES. "the oversized body never reached the DO" is then a fact about
+ * the code path rather than an absence in a call log: if the handler so much as resolves the stub,
+ * the test dies with this message instead of quietly passing.
+ */
+function explodingDoEnv(extra = {}) {
+  return {
+    DEMOGEN_TOKEN: TOKEN,
+    DEMOGEN_SIGNING_KEY: SIGNING_KEY,
+    DEMOGEN_RESEND_KEY: 'resend-test-key',
+    DEV: '1',
+    DEMOGEN_DO: {
+      idFromName: () => {
+        throw new Error('the DO must not be reached on this path');
+      },
+      get: () => {
+        throw new Error('the DO must not be reached on this path');
+      },
+    },
+    ...extra,
+  };
+}
+
+test('POST /api/signup-lead stores the lead, answers 202 and mails Hugh exactly once', async (t) => {
+  const db = freshDb(t);
+  const sent = recordFetch(t);
+  const env = leadEnv(db);
+  const ctx = capturingCtx();
+
+  const res = await callSignup(
+    postLead({ email: '  Lead@Example.COM ', hp: '', dwell_ms: 4200, robot: 'sbr', src: 'dm' }),
+    env,
+    ctx,
+  );
+
+  assert.equal(res.status, 202);
+  assertNoStore(res, 'signup-lead accept');
+  assert.deepEqual(await res.json(), { ok: true });
+
+  const rows = leadRows(db);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].email, 'lead@example.com', 'the address is stored lowercased and trimmed');
+  assert.equal(rows[0].robot, 'sbr');
+  assert.equal(rows[0].src, 'dm');
+  assert.equal(Number(rows[0].dwell_ms), 4200);
+  assert.equal(rows[0].created_at, rows[0].last_seen, 'a fresh row is seen exactly when it is made');
+  assert.ok(rows[0].ip_hash && rows[0].ip_hash.length === 32, 'the IP is stored as a keyed digest');
+  assert.ok(!String(rows[0].ip_hash).includes(LEAD_IP), 'and never as an address');
+
+  await ctx.settle();
+  assert.equal(sent.length, 1, 'exactly one Resend call');
+  assert.equal(sent[0].url, RESEND_URL);
+  assert.match(sent[0].init.headers.authorization, /^Bearer resend-test-key$/);
+  const mail = JSON.parse(sent[0].init.body);
+  assert.deepEqual(mail.to, ['hughphan2@gmail.com']);
+  assert.equal(mail.subject, 'AlloyLogger lead: lead@example.com');
+  assert.equal(mail.reply_to, 'lead@example.com');
+  assert.match(mail.from, /alloylogger\.com>$/, 'sent from the alloylogger.com identity');
+  assert.match(mail.text, /sbr/);
+  assert.match(mail.text, /dm/);
+  assert.match(mail.text, /4200 ms/);
+  assert.ok(!/[—–―]/.test(mail.text), 'no em dash, en dash or horizontal bar in the notification');
+});
+
+test('a duplicate address bumps last_seen, adds no row and sends NO second mail', async (t) => {
+  const db = freshDb(t);
+  let sendsAreBanned = false;
+  const sent = recordFetch(t, () => {
+    if (sendsAreBanned) throw new Error('a duplicate lead must never reach Resend');
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const env = leadEnv(db);
+
+  const ctx1 = capturingCtx();
+  await callSignup(postLead({ email: 'dup@example.com', hp: '', dwell_ms: 1000, robot: 'sbr', src: 'dm' }), env, ctx1);
+  await ctx1.settle();
+  assert.equal(sent.length, 1, 'the first capture mails');
+  const before = leadRows(db)[0];
+
+  // Everything after this point must not touch Resend at all.
+  sendsAreBanned = true;
+
+  const ctx2 = capturingCtx();
+  const res = await callSignup(
+    postLead({ email: 'DUP@example.com', hp: '', dwell_ms: 99_000, robot: 'drone', src: 'ig' }),
+    env,
+    ctx2,
+  );
+  assert.equal(res.status, 202, 'a duplicate is indistinguishable from an accept');
+  assert.deepEqual(await res.json(), { ok: true });
+  assert.deepEqual(ctx2.waited, [], 'no background work is even scheduled for a duplicate');
+  await ctx2.settle();
+
+  const rows = leadRows(db);
+  assert.equal(sent.length, 1, 'still one send in the whole test');
+  assert.equal(rows.length, 1, 'still one row: the email is the primary key');
+  assert.equal(Number(rows[0].created_at), Number(before.created_at), 'created_at is not rewritten');
+  assert.ok(Number(rows[0].last_seen) >= Number(before.last_seen), 'last_seen moved forward');
+  assert.equal(rows[0].robot, 'sbr', 'the first capture still describes how they arrived');
+  assert.equal(rows[0].src, 'dm');
+  assert.equal(Number(rows[0].dwell_ms), 1000);
+});
+
+test('a filled honeypot answers 202, writes nothing, and never reaches the DO or Resend', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const calls = [];
+  const env = leadEnv(db, {}, calls);
+  const ctx = capturingCtx();
+
+  for (const hp of ['http://spam.example', '   x', 'anything']) {
+    const res = await callSignup(postLead({ email: 'bot@example.com', hp, dwell_ms: 10 }), env, ctx);
+    assert.equal(res.status, 202, `hp=${JSON.stringify(hp)}`);
+    assertNoStore(res, 'honeypot');
+    assert.deepEqual(await res.json(), { ok: true });
+  }
+
+  assert.deepEqual(calls, [], 'the honeypot path costs no DO round trip at all');
+  assert.deepEqual(ctx.waited, [], 'and schedules no background work');
+  assert.equal(countRows(db, 'leads'), 0, 'no row');
+});
+
+test('an address that is not an address is a 400 bad_email, and stores nothing', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const env = leadEnv(db);
+
+  const bad = [
+    undefined,
+    '',
+    '   ',
+    'nope',
+    'no@domain',
+    'two@@example.com',
+    'spaces in@example.com',
+    'trailing@example.com\nbcc: someone@else.com',
+    `${'a'.repeat(250)}@example.com`,
+    12345,
+  ];
+  for (const email of bad) {
+    const res = await callSignup(postLead({ email, hp: '', dwell_ms: 3000 }), env);
+    assert.equal(res.status, 400, `email ${JSON.stringify(email)}`);
+    assertNoStore(res, 'bad_email');
+    assert.deepEqual(await res.json(), { ok: false, reason: 'bad_email' }, `email ${JSON.stringify(email)}`);
+  }
+  assert.equal(countRows(db, 'leads'), 0);
+});
+
+test('a body that is not a JSON object is a 400 bad_json', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const env = leadEnv(db);
+
+  for (const raw of ['{oops', '', '[]', '"a string"', 'null', '42']) {
+    const res = await callSignup(postLead(null, { raw }), env);
+    assert.equal(res.status, 400, JSON.stringify(raw));
+    assertNoStore(res, 'bad_json');
+    assert.deepEqual(await res.json(), { ok: false, reason: 'bad_json' }, JSON.stringify(raw));
+  }
+  assert.equal(countRows(db, 'leads'), 0);
+});
+
+test('an oversized body is refused, by the declared length and by the real bytes', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const env = leadEnv(db);
+
+  // A lying content-length: refused before the body is ever read.
+  const lying = await callSignup(
+    postLead({ email: 'lead@example.com', hp: '', dwell_ms: 3000 }, { headers: { 'content-length': '900000' } }),
+    env,
+  );
+  assert.equal(lying.status, 400);
+  assert.deepEqual(await lying.json(), { ok: false, reason: 'bad_json' });
+
+  // An honestly huge body: over the 8 KB cap on the bytes themselves.
+  const huge = await callSignup(
+    postLead({ email: 'lead@example.com', hp: '', dwell_ms: 3000, src: 'x'.repeat(20_000) }),
+    env,
+  );
+  assert.equal(huge.status, 400);
+  assert.deepEqual(await huge.json(), { ok: false, reason: 'bad_json' });
+
+  // Just under the cap still works, so the gate is a cap and not a coincidence.
+  const okRes = await callSignup(
+    postLead({ email: 'lead@example.com', hp: '', dwell_ms: 3000, src: 'y'.repeat(4000) }, { headers: {} }),
+    leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' }),
+    capturingCtx(),
+  );
+  assert.equal(okRes.status, 202);
+  assert.equal(countRows(db, 'leads'), 1);
+  assert.equal(leadRows(db)[0].src.length, 64, 'and the src is truncated to the tag cap on the way in');
+});
+
+test('a CHUNKED oversized body is cancelled mid-stream, never buffered, and never reaches the DO', async (t) => {
+  forbidFetch(t);
+  // No db and an exploding DO getter: this path must not resolve a stub, let alone write a row.
+  const env = explodingDoEnv();
+
+  // 1 KB at a time with no Content-Length at all, which is exactly what the old `request.text()`
+  // could not defend against: nothing declares a size, so the whole 64 KB would have been
+  // allocated and only then measured.
+  const chunk = 'z'.repeat(1024);
+  const chunks = Array.from({ length: 64 }, () => chunk);
+  const { request, stream, pulledSoFar } = postLeadChunked(chunks);
+  assert.equal(request.headers.get('content-length'), null, 'a chunked post declares no length');
+
+  const res = await callSignup(request, env);
+  assert.equal(res.status, 400, 'the streaming cap answers on the existing bad_json path');
+  assertNoStore(res, 'chunked oversize');
+  assert.deepEqual(await res.json(), { ok: false, reason: 'bad_json' });
+
+  // 8 KB is the cap, so the read stops at the chunk that would cross it and cancels: a handful of
+  // 1 KB chunks, nowhere near the 64 that were on offer.
+  assert.ok(pulledSoFar() <= 12, `stopped early, pulled ${pulledSoFar()} of 64 chunks`);
+  assert.equal(typeof stream.cancelledAfter, 'number', 'the reader was cancelled, not drained');
+
+  // And the same stream shape UNDER the cap is a normal accepted lead, so the gate is the size and
+  // not the chunking.
+  const db = freshDb(t);
+  const okEnv = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+  const small = postLeadChunked(['{"email":"chunk', 'ed@example.com","hp":"","dwell_ms":10}']);
+  const okRes = await callSignup(small.request, okEnv, capturingCtx());
+  assert.equal(okRes.status, 202);
+  assert.equal(countRows(db, 'leads'), 1);
+  assert.equal(leadRows(db)[0].email, 'chunked@example.com', 'reassembled across chunk boundaries');
+});
+
+test('the edge limiters fail CLOSED when their bindings are missing, and DEV=1 bypasses them', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const calls = [];
+
+  // envWith, not leadEnv: no DEV and no LEAD_RL_* bindings at all.
+  const unconfigured = envWith(db, { DEMOGEN_RESEND_KEY: 'resend-test-key' }, calls);
+  for (const partial of [
+    {},
+    { LEAD_RL_IP: stubLimiter() },
+    { LEAD_RL_ALL: stubLimiter() },
+    { LEAD_RL_IP: {}, LEAD_RL_ALL: {} },
+  ]) {
+    const env = { ...unconfigured, ...partial };
+    const res = await callSignup(postLead({ email: 'closed@example.com', hp: '', dwell_ms: 10 }), env);
+    assert.equal(res.status, 503, `bindings ${JSON.stringify(Object.keys(partial))}`);
+    assertNoStore(res, 'unconfigured limiters');
+    assert.deepEqual(await res.json(), { ok: false, error: 'not configured' });
+  }
+  assert.deepEqual(calls, [], 'a request refused for missing limiters never reaches the DO');
+  assert.equal(countRows(db, 'leads'), 0);
+
+  // Both bindings present: the request runs, and both limiters are consulted.
+  const ipLimiter = stubLimiter();
+  const allLimiter = stubLimiter();
+  const configured = envWith(
+    db,
+    { DEMOGEN_RESEND_KEY: 'resend-test-key', DEMOGEN_DEV_NO_EMAIL: '1', LEAD_RL_IP: ipLimiter, LEAD_RL_ALL: allLimiter },
+    calls,
+  );
+  const ok = await callSignup(postLead({ email: 'open@example.com', hp: '', dwell_ms: 10 }), configured, capturingCtx());
+  assert.equal(ok.status, 202);
+  assert.deepEqual(ipLimiter.seen, [LEAD_IP], 'the per-IP limiter is keyed on CF-Connecting-IP');
+  assert.deepEqual(allLimiter.seen, ['global'], 'the second limiter is keyless');
+  assert.equal(countRows(db, 'leads'), 1);
+
+  // DEV=1 with no bindings at all is the documented local bypass, and it must still store.
+  const dev = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' }); // leadEnv sets DEV: '1'
+  assert.equal(dev.DEV, '1');
+  assert.equal(dev.LEAD_RL_IP, undefined);
+  const devRes = await callSignup(postLead({ email: 'dev-bypass@example.com', hp: '', dwell_ms: 10 }), dev, capturingCtx());
+  assert.equal(devRes.status, 202);
+  assert.equal(countRows(db, 'leads'), 2);
+});
+
+test('an over-limit request is a SILENT 202: no DO call, no row, no mail', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const calls = [];
+
+  // The per-IP limiter allows one call, then refuses. The global one is wide open, so the second
+  // request can only have been stopped by the IP limiter.
+  const ipLimiter = stubLimiter(1);
+  const env = envWith(
+    db,
+    {
+      DEMOGEN_RESEND_KEY: 'resend-test-key',
+      DEMOGEN_DEV_NO_EMAIL: '1',
+      LEAD_RL_IP: ipLimiter,
+      LEAD_RL_ALL: stubLimiter(),
+    },
+    calls,
+  );
+
+  const first = await callSignup(postLead({ email: 'in@example.com', hp: '', dwell_ms: 10 }), env, capturingCtx());
+  assert.equal(first.status, 202);
+  assert.deepEqual(calls, ['recordLead'], 'the allowed request does reach the DO');
+
+  const ctx = capturingCtx();
+  const blocked = await callSignup(postLead({ email: 'out@example.com', hp: '', dwell_ms: 10 }), env, ctx);
+  assert.equal(blocked.status, 202, 'over-limit is indistinguishable from an accepted lead');
+  assertNoStore(blocked, 'rl-drop');
+  assert.deepEqual(await blocked.json(), { ok: true }, 'and carries no reason a prober could read');
+  assert.deepEqual(calls, ['recordLead'], 'the dropped request never reached the DO');
+  assert.deepEqual(ctx.waited, [], 'and scheduled no background work');
+  assert.equal(countRows(db, 'leads'), 1, 'nothing was stored');
+
+  // The GLOBAL limiter drops the same way, on its own, with the IP limiter wide open.
+  const db2 = freshDb(t);
+  const calls2 = [];
+  const globalEnv = envWith(
+    db2,
+    {
+      DEMOGEN_RESEND_KEY: 'resend-test-key',
+      DEMOGEN_DEV_NO_EMAIL: '1',
+      LEAD_RL_IP: stubLimiter(),
+      LEAD_RL_ALL: stubLimiter(0),
+    },
+    calls2,
+  );
+  const globalDrop = await callSignup(
+    postLead({ email: 'flood@example.com', hp: '', dwell_ms: 10 }, { ip: '198.51.100.77' }),
+    globalEnv,
+    capturingCtx(),
+  );
+  assert.equal(globalDrop.status, 202);
+  assert.deepEqual(await globalDrop.json(), { ok: true });
+  assert.deepEqual(calls2, [], 'the global limiter also stops short of the DO');
+  assert.equal(countRows(db2, 'leads'), 0);
+
+  // A limiter that THROWS is a provider blip, not a config error: it runs open rather than losing
+  // a real lead, which is the same call chat.js makes.
+  const db3 = freshDb(t);
+  const throwingEnv = envWith(db3, {
+    DEMOGEN_RESEND_KEY: 'resend-test-key',
+    DEMOGEN_DEV_NO_EMAIL: '1',
+    LEAD_RL_IP: { limit: async () => { throw new Error('ratelimit unavailable'); } },
+    LEAD_RL_ALL: stubLimiter(),
+  });
+  const blip = await callSignup(postLead({ email: 'blip@example.com', hp: '', dwell_ms: 10 }), throwingEnv, capturingCtx());
+  assert.equal(blip.status, 202);
+  assert.equal(countRows(db3, 'leads'), 1, 'a limiter outage does not cost a lead');
+});
+
+test('the per-IP cap silently 202s past 5 new leads a day, and never mails past it', async (t) => {
+  const db = freshDb(t);
+  // One recorder for the whole test, with a latch: once the cap is reached, any send at all is a
+  // failure. Two nested recorders would leave the restore order deciding what `fetch` is
+  // afterwards, which is a trap for the next test rather than a check on this one.
+  let sendsAreBanned = false;
+  const sent = recordFetch(t, () => {
+    if (sendsAreBanned) throw new Error('a capped lead must never reach Resend');
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const env = leadEnv(db);
+
+  for (let i = 0; i < 5; i++) {
+    const ctx = capturingCtx();
+    const res = await callSignup(postLead({ email: `lead${i}@example.com`, hp: '', dwell_ms: 3000 }), env, ctx);
+    await ctx.settle();
+    assert.equal(res.status, 202, `lead ${i}`);
+  }
+  assert.equal(countRows(db, 'leads'), 5);
+  assert.equal(sent.length, 5, 'five new leads, five notifications');
+
+  // Anything past the cap from this IP must be indistinguishable from an accept, and free.
+  sendsAreBanned = true;
+  for (const email of ['lead5@example.com', 'lead6@example.com']) {
+    const ctx = capturingCtx();
+    const res = await callSignup(postLead({ email, hp: '', dwell_ms: 3000 }), env, ctx);
+    assert.equal(res.status, 202, email);
+    assert.deepEqual(await res.json(), { ok: true });
+    assert.deepEqual(ctx.waited, [], 'no notification is scheduled for a capped lead');
+  }
+  assert.equal(countRows(db, 'leads'), 5, 'and no row was written');
+  assert.equal(sent.length, 5, 'still five: nothing past the cap so much as attempted a send');
+
+  // The cap is per IP, not global: a different visitor is unaffected.
+  sendsAreBanned = false;
+  const ctx = capturingCtx();
+  const res = await callSignup(
+    postLead({ email: 'elsewhere@example.com', hp: '', dwell_ms: 3000 }, { ip: '198.51.100.4' }),
+    env,
+    ctx,
+  );
+  await ctx.settle();
+  assert.equal(res.status, 202);
+  assert.equal(countRows(db, 'leads'), 6);
+  assert.equal(sent.length, 6, 'and it does get its notification');
+});
+
+/** A distinct IP per lead, so the per-IP cap never fires while a GLOBAL ceiling is under test. */
+function spreadIp(i) {
+  return `10.${Math.floor(i / 65536) % 256}.${Math.floor(i / 256) % 256}.${i % 256}`;
+}
+
+test('the global daily cap silently 202s past 500 new leads, with no row and no mail', async (t) => {
+  const db = freshDb(t);
+  // DEV_NO_EMAIL keeps 500 accepted leads from being 500 sends; forbidFetch then proves that not
+  // one of them, capped or not, so much as attempted the network.
+  forbidFetch(t);
+  const env = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+
+  for (let i = 0; i < 500; i++) {
+    const res = await callSignup(
+      postLead({ email: `bulk${i}@example.com`, hp: '', dwell_ms: 10 }, { ip: spreadIp(i) }),
+      env,
+      capturingCtx(),
+    );
+    assert.equal(res.status, 202, `lead ${i}`);
+  }
+  assert.equal(countRows(db, 'leads'), 500, 'the day fills exactly to the cap');
+
+  // The 501st is a brand new address, from a brand new IP, well under the per-IP cap. Only the
+  // global ceiling can stop it.
+  const calls = [];
+  const capped = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' }, calls);
+  const ctx = capturingCtx();
+  const res = await callSignup(
+    postLead({ email: 'lead501@example.com', hp: '', dwell_ms: 10 }, { ip: spreadIp(9999) }),
+    capped,
+    ctx,
+  );
+  assert.equal(res.status, 202, 'and answers exactly like an accepted lead');
+  assertNoStore(res, 'daily cap');
+  assert.deepEqual(await res.json(), { ok: true });
+  assert.deepEqual(ctx.waited, [], 'no notification is scheduled past the daily cap');
+  assert.equal(countRows(db, 'leads'), 500, 'no row was written');
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM leads WHERE email = ?').get('lead501@example.com').n,
+    0,
+  );
+  assert.deepEqual(calls, ['recordLead'], 'the cap is enforced in the DO, atomically with the insert');
+});
+
+test('DEMOGEN_LEAD_DAILY_CAP overrides the cap, and 0 pauses the capture entirely', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+
+  const two = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1', DEMOGEN_LEAD_DAILY_CAP: '2' });
+  for (let i = 0; i < 3; i++) {
+    const res = await callSignup(
+      postLead({ email: `small${i}@example.com`, hp: '', dwell_ms: 10 }, { ip: spreadIp(i) }),
+      two,
+      capturingCtx(),
+    );
+    assert.equal(res.status, 202, `lead ${i}`);
+  }
+  assert.equal(countRows(db, 'leads'), 2, 'the third is over the overridden cap');
+
+  // Number.isFinite, not `|| 500`: zero is a deliberate pause, the same reading do.js gives
+  // DEMOGEN_MAX_JOBS_PER_DAY.
+  const db2 = freshDb(t);
+  const paused = leadEnv(db2, { DEMOGEN_DEV_NO_EMAIL: '1', DEMOGEN_LEAD_DAILY_CAP: '0' });
+  const res = await callSignup(postLead({ email: 'paused@example.com', hp: '', dwell_ms: 10 }), paused, capturingCtx());
+  assert.equal(res.status, 202);
+  assert.equal(countRows(db2, 'leads'), 0, 'a cap of 0 stores nothing and still answers 202');
+});
+
+test('the notification budget stops the MAIL at 25 a day and never stops the LEAD', async (t) => {
+  const db = freshDb(t);
+  const sent = recordFetch(t);
+  const env = leadEnv(db);
+
+  for (let i = 0; i < 25; i++) {
+    const ctx = capturingCtx();
+    const res = await callSignup(
+      postLead({ email: `notify${i}@example.com`, hp: '', dwell_ms: 10 }, { ip: spreadIp(i) }),
+      env,
+      ctx,
+    );
+    await ctx.settle();
+    assert.equal(res.status, 202, `lead ${i}`);
+  }
+  assert.equal(countRows(db, 'leads'), 25);
+  assert.equal(sent.length, 25, 'twenty-five new leads, twenty-five notifications');
+
+  // The 26th NEW lead of the day. Stored, exported, and deliberately unmailed.
+  const ctx = capturingCtx();
+  const res = await callSignup(
+    postLead({ email: 'notify25@example.com', hp: '', dwell_ms: 10, robot: 'sbr' }, { ip: spreadIp(25) }),
+    env,
+    ctx,
+  );
+  assert.equal(res.status, 202);
+  assert.deepEqual(ctx.waited, [], 'no send is even scheduled once the budget is spent');
+  await ctx.settle();
+
+  assert.equal(sent.length, 25, 'still twenty-five: the 26th never touched Resend');
+  assert.equal(countRows(db, 'leads'), 26, 'and the lead is STORED, which is the whole point');
+  const stored = db.prepare('SELECT * FROM leads WHERE email = ?').get('notify25@example.com');
+  assert.ok(stored, 'the unmailed lead is a real row');
+  assert.equal(stored.robot, 'sbr', 'with its attribution intact');
+
+  // And it is in the export, so an unmailed lead is never an invisible one.
+  const list = await callSignup(get('/api/signup-lead/list', { bearer: TOKEN }), env);
+  const body = await list.json();
+  assert.ok(
+    body.leads.some((l) => l.email === 'notify25@example.com'),
+    'the export is the record the notification budget cannot touch',
+  );
+});
+
+test('a duplicate from a capped IP still bumps last_seen', async (t) => {
+  const db = freshDb(t);
+  recordFetch(t);
+  const env = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+
+  for (let i = 0; i < 5; i++) {
+    const ctx = capturingCtx();
+    await callSignup(postLead({ email: `lead${i}@example.com`, hp: '', dwell_ms: 3000 }), env, ctx);
+    await ctx.settle();
+  }
+  const before = db.prepare('SELECT last_seen FROM leads WHERE email = ?').get('lead0@example.com').last_seen;
+
+  const res = await callSignup(postLead({ email: 'lead0@example.com', hp: '', dwell_ms: 8000 }), env, capturingCtx());
+  assert.equal(res.status, 202);
+  const after = db.prepare('SELECT last_seen FROM leads WHERE email = ?').get('lead0@example.com').last_seen;
+  assert.ok(Number(after) >= Number(before), 'dedupe is checked before the cap, so a returning lead is not swallowed');
+  assert.equal(countRows(db, 'leads'), 5);
+});
+
+test('a Resend failure never reaches the visitor and never loses the lead', async (t) => {
+  const db = freshDb(t);
+  const env = leadEnv(db);
+
+  for (const [name, impl] of [
+    ['throws', () => { throw new Error('network down'); }],
+    ['500s', async () => new Response(JSON.stringify({ message: 'nope' }), { status: 500, headers: { 'content-type': 'application/json' } })],
+  ]) {
+    const before = globalThis.fetch;
+    globalThis.fetch = async (...args) => impl(...args);
+    const ctx = capturingCtx();
+    const res = await callSignup(postLead({ email: `fail-${name}@example.com`, hp: '', dwell_ms: 3000 }), env, ctx);
+    assert.equal(res.status, 202, `${name}: storage is the source of truth, not the mail`);
+    await ctx.settle();
+    globalThis.fetch = before;
+  }
+  assert.equal(countRows(db, 'leads'), 2);
+});
+
+test('DEMOGEN_DEV_NO_EMAIL=1 stores the lead and sends nothing', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const env = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+  const ctx = capturingCtx();
+
+  const res = await callSignup(postLead({ email: 'dev@example.com', hp: '', dwell_ms: 3000 }), env, ctx);
+  assert.equal(res.status, 202);
+  await ctx.settle();
+  assert.equal(countRows(db, 'leads'), 1);
+});
+
+test('a missing Resend key stores the lead and sends nothing', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  // envWith, not leadEnv: no DEMOGEN_RESEND_KEY at all. DEV=1 only to bypass the edge limiters,
+  // which are a separate gate and have their own tests.
+  const env = envWith(db, { DEV: '1' });
+  const ctx = capturingCtx();
+
+  const res = await callSignup(postLead({ email: 'nokey@example.com', hp: '', dwell_ms: 3000 }), env, ctx);
+  assert.equal(res.status, 202);
+  await ctx.settle();
+  assert.equal(countRows(db, 'leads'), 1);
+});
+
+test('/api/signup-lead is POST only', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const env = leadEnv(db);
+
+  for (const method of ['GET', 'PUT', 'DELETE', 'HEAD']) {
+    const res = await callSignup(new Request('https://alloylogger.com/api/signup-lead', { method }), env);
+    assert.equal(res.status, 405, method);
+    assertNoStore(res, `${method} /api/signup-lead`);
+  }
+  assert.equal(countRows(db, 'leads'), 0);
+});
+
+test('GET /api/signup-lead/list is bearer gated', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const calls = [];
+  const env = leadEnv(db, {}, calls);
+
+  for (const bearer of [undefined, 'nope', `${TOKEN}x`, TOKEN.slice(0, -1)]) {
+    const res = await callSignup(get('/api/signup-lead/list', { bearer }), env);
+    assert.equal(res.status, 401, `bearer ${String(bearer)}`);
+    assertNoStore(res, 'unauthorized list');
+    assert.deepEqual(await res.json(), { ok: false, error: 'unauthorized' });
+  }
+  assert.deepEqual(calls, [], 'an unauthorized list never reaches the DO');
+});
+
+test('GET /api/signup-lead/list exports the leads, newest first, without the IP hash', async (t) => {
+  const db = freshDb(t);
+  recordFetch(t);
+  const env = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+
+  for (const [i, email] of ['first@example.com', 'second@example.com', 'third@example.com'].entries()) {
+    const ctx = capturingCtx();
+    await callSignup(postLead({ email, hp: '', dwell_ms: 1000 * (i + 1), robot: 'sbr', src: 'dm' }), env, ctx);
+    await ctx.settle();
+    // Distinct created_at values, so "newest first" is an ordering and not a tie.
+    db.prepare('UPDATE leads SET created_at = ? WHERE email = ?').run(1_000_000 + i * 1000, email);
+  }
+
+  const res = await callSignup(get('/api/signup-lead/list', { bearer: TOKEN }), env);
+  assert.equal(res.status, 200);
+  assertNoStore(res, 'list');
+  const body = await res.json();
+
+  assert.equal(body.ok, true);
+  assert.equal(body.count, 3);
+  assert.equal(body.next_before, null, 'a page that is not truncated hands back no cursor');
+  assert.ok(Array.isArray(body.leads), 'the rows live under `leads`');
+  assert.deepEqual(
+    body.leads.map((l) => l.email),
+    ['third@example.com', 'second@example.com', 'first@example.com'],
+  );
+  assert.deepEqual(Object.keys(body.leads[0]).sort(), ['created_at', 'dwell_ms', 'email', 'last_seen', 'robot', 'src']);
+  assert.equal(body.leads[0].robot, 'sbr');
+  assert.equal(body.leads[0].dwell_ms, 3000);
+  assert.match(body.leads[0].created_at, /^\d{4}-\d{2}-\d{2}T/, 'timestamps are ISO, like every other export here');
+  const text = JSON.stringify(body);
+  assert.ok(!text.includes('ip_hash'), 'the rate-limit bucket is not part of the export');
+  assert.ok(!text.includes(LEAD_IP));
+
+  // ?before=<ISO created_at>: the page after the newest row. Strictly before, so the row the
+  // cursor names is not repeated.
+  const cursor = body.leads[0].created_at;
+  const page2 = await callSignup(get(`/api/signup-lead/list?before=${encodeURIComponent(cursor)}`, { bearer: TOKEN }), env);
+  assert.equal(page2.status, 200);
+  const rest = await page2.json();
+  assert.deepEqual(
+    rest.leads.map((l) => l.email),
+    ['second@example.com', 'first@example.com'],
+    'the cursor row itself is excluded, and the order is still newest first',
+  );
+  assert.equal(rest.count, 2);
+  assert.equal(rest.next_before, null);
+  assert.equal(rest.next_before_email, null);
+
+  // Walking the cursor to the end empties the page rather than looping.
+  const last = await callSignup(
+    get(`/api/signup-lead/list?before=${encodeURIComponent(rest.leads[1].created_at)}`, { bearer: TOKEN }),
+    env,
+  );
+  const tail = await last.json();
+  assert.deepEqual(tail.leads, [], 'past the oldest row the page is empty');
+  assert.equal(tail.count, 0);
+  assert.equal(tail.next_before, null);
+
+  // A cursor that is not a date is refused rather than ignored: silently serving page one would
+  // read exactly like a list that had stopped growing.
+  for (const bad of ['nope', '', 'yesterday']) {
+    const res400 = await callSignup(
+      get(`/api/signup-lead/list?before=${encodeURIComponent(bad)}`, { bearer: TOKEN }),
+      env,
+    );
+    assert.equal(res400.status, 400, `before=${JSON.stringify(bad)}`);
+    assert.deepEqual(await res400.json(), { ok: false, reason: 'bad_cursor' });
+  }
+
+  // Half a compound cursor is malformed, same as a bad date.
+  const half = await callSignup(
+    get('/api/signup-lead/list?before_email=x%40example.com', { bearer: TOKEN }),
+    env,
+  );
+  assert.equal(half.status, 400, 'before_email without before is bad_cursor');
+});
+
+test('a millisecond tie across the page boundary hides no lead (compound cursor)', async (t) => {
+  const db = freshDb(t);
+  recordFetch(t);
+  const env = leadEnv(db, { DEMOGEN_DEV_NO_EMAIL: '1' });
+
+  // Five leads, and the middle THREE share one created_at. Page size 2 puts the boundary inside
+  // the tie, which is exactly the shape that lost a row under the timestamp-only cursor.
+  const emails = ['a@example.com', 'b@example.com', 'c@example.com', 'd@example.com', 'e@example.com'];
+  for (const email of emails) {
+    const ctx = capturingCtx();
+    await callSignup(postLead({ email, hp: '', dwell_ms: 1, robot: null, src: null }), env, ctx);
+    await ctx.settle();
+  }
+  db.prepare('UPDATE leads SET created_at = ? WHERE email = ?').run(5_000_000, 'e@example.com');
+  for (const tied of ['b@example.com', 'c@example.com', 'd@example.com']) {
+    db.prepare('UPDATE leads SET created_at = ? WHERE email = ?').run(4_000_000, tied);
+  }
+  db.prepare('UPDATE leads SET created_at = ? WHERE email = ?').run(3_000_000, 'a@example.com');
+
+  // Walk the whole table two rows at a time against the REAL SQL (the route's page size is fixed
+  // at 1000, so the boundary-inside-a-tie shape is exercised where the ordering lives), feeding
+  // back BOTH cursor halves. Every email must come out exactly once.
+  const sql = sqlHandle(db);
+  const seen = [];
+  let before = null;
+  let beforeEmail = null;
+  for (let page = 0; page < 5; page++) {
+    const rows = selectLeads(sql, { limit: 2, before, beforeEmail });
+    if (!rows.length) break;
+    seen.push(...rows.map((l) => l.email));
+    const last = rows[rows.length - 1];
+    before = Date.parse(last.created_at);
+    beforeEmail = last.email;
+  }
+  assert.equal(seen.length, 5, 'no lead is repeated or hidden by the tie');
+  assert.deepEqual([...seen].sort(), emails, 'every stored lead is reachable through the cursor walk');
+
+  // And the same tie regression codex reproduced at the route: a timestamp-only cursor placed ON
+  // the tied millisecond must still reach the tied rows the page did not include. On the wire the
+  // full walk uses both halves; this asserts the wiring end to end.
+  const all = await callSignup(get('/api/signup-lead/list', { bearer: TOKEN }), env);
+  const full = await all.json();
+  assert.equal(full.count, 5);
+  const tiedIso = new Date(4_000_000).toISOString();
+  const afterTie = await callSignup(
+    get(
+      `/api/signup-lead/list?before=${encodeURIComponent(tiedIso)}&before_email=${encodeURIComponent('c@example.com')}`,
+      { bearer: TOKEN },
+    ),
+    env,
+  );
+  const rest = await afterTie.json();
+  assert.deepEqual(
+    rest.leads.map((l) => l.email),
+    ['b@example.com', 'a@example.com'],
+    'the compound cursor resumes INSIDE the tied millisecond instead of skipping past it',
+  );
+});
+
+test('a truncated list page hands back the next_before cursor', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+
+  // 1001 real rows would be a slow way to assert arithmetic. The DO's own paging is covered by the
+  // cursor walk above; what is under test HERE is the Worker's "ask for one more than the page,
+  // return the page, name the cursor", so the stub answers with exactly what a full table would.
+  const rows = Array.from({ length: 5000 }, (_, i) => ({
+    email: `bulk${i}@example.com`,
+    robot: null,
+    src: null,
+    dwell_ms: null,
+    created_at: new Date(9_000_000_000 - i * 1000).toISOString(),
+    last_seen: new Date(9_000_000_000 - i * 1000).toISOString(),
+  }));
+  let askedFor = null;
+  const env = {
+    DEMOGEN_TOKEN: TOKEN,
+    DEV: '1',
+    DEMOGEN_DO: {
+      idFromName: () => 'main-id',
+      get: () => ({
+        listLeads: async (limit, before) => {
+          askedFor = { limit, before };
+          return rows.slice(0, limit);
+        },
+      }),
+    },
+  };
+
+  const res = await callSignup(get('/api/signup-lead/list', { bearer: TOKEN }), env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(askedFor.limit, 1001, 'one row past the page is fetched, purely to detect "there is more"');
+  assert.equal(askedFor.before, null);
+  assert.equal(body.count, 1000, 'and the extra row is never returned');
+  assert.equal(body.leads.length, 1000);
+  assert.equal(
+    body.next_before,
+    rows[999].created_at,
+    'the cursor is the OLDEST returned row, so the next page starts strictly below it',
+  );
+  assert.equal(body.next_before_email, rows[999].email, 'both halves of the compound cursor are named');
+  assert.equal(body.leads[999].email, 'bulk999@example.com');
+  assert.equal(body.leads.at(-1).email, 'bulk999@example.com', 'row 1001 was dropped, not row 1000');
+
+  // Feeding the cursor back is what the next page looks like on the wire.
+  await callSignup(get(`/api/signup-lead/list?before=${encodeURIComponent(body.next_before)}`, { bearer: TOKEN }), env);
+  assert.equal(askedFor.before, Date.parse(rows[999].created_at), 'the ISO cursor reaches the DO as epoch ms');
+});
+
+test('a non-GET on the list route is a 405, not an export', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const res = await callSignup(postJson('/api/signup-lead/list', {}, { bearer: TOKEN }), leadEnv(db));
+  assert.equal(res.status, 405);
+  assertNoStore(res, 'POST list');
+});
+
+test('an unknown path under the signup-lead prefix is a 404', async (t) => {
+  const db = freshDb(t);
+  forbidFetch(t);
+  const res = await callSignup(get('/api/signup-lead/nope', { bearer: TOKEN }), leadEnv(db));
+  assert.equal(res.status, 404);
 });

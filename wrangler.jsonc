@@ -32,10 +32,16 @@
   //   DEMOGEN_TOKEN        bearer for /api/demo-gen/runner/* (the MBP poller)
   //   DEMOGEN_SIGNING_KEY  HMAC key for verify / approve / reject / unsubscribe links AND
   //                        for the keyed IP + email hashes, so raw IPs are never stored
-  //   DEMOGEN_RESEND_KEY   Resend API key for the one email this Worker sends (verification)
+  //   DEMOGEN_RESEND_KEY   Resend API key for the mail this Worker sends. The verification mail
+  //                        went with the shelve; what uses this key today is the signup-lead
+  //                        notification (worker/signup-lead.js), one plain-text email to Hugh per
+  //                        NEW lead, budgeted at 25 a UTC day inside the DO
   // Optional dev-only vars, set via `wrangler dev --var`, never in this file:
   //   DEMOGEN_ORIGIN       link origin override (defaults to https://alloylogger.com)
-  //   DEMOGEN_DEV_NO_EMAIL "1" logs the verification link instead of calling Resend
+  //   DEMOGEN_DEV_NO_EMAIL "1" logs the lead (and, historically, the verification link) instead of
+  //                        calling Resend. Set it on every local run: an outbound Resend fetch
+  //                        kills the local workerd process
+  //   DEMOGEN_LEAD_DAILY_CAP overrides the 500/day global new-lead cap. `0` pauses the capture
   "vars": {
     "DEMOGEN_FROM": "Hugh at Alloy <hugh@alloylogger.com>",
     "DEMOGEN_MAX_JOBS_PER_DAY": "8"
@@ -43,11 +49,17 @@
   "observability": {
     "enabled": true
   },
-  // Rate limits for /demo/api/chat. It is a public endpoint spending a real API key, so both
-  // limiters matter: the first stops one visitor hammering it, the second caps total burn.
+  // Rate limits. Two pairs, one per public endpoint, each an IP-keyed limiter plus a keyless
+  // global one: the first stops a single visitor hammering the route, the second bounds the route
+  // as a whole when one visitor is not the problem.
   // Limits are per-POP, not global; the real spend backstop is the Anthropic workspace cap.
-  // namespace_id is an arbitrary per-account integer — do not reuse these two elsewhere.
-  // chat.js fails CLOSED (503) if these bindings are missing; local dev sets DEV=1 instead.
+  // namespace_id is an arbitrary per-account integer, and every one here is unique: reusing an id
+  // would silently share one counter between two endpoints.
+  // BOTH handlers fail CLOSED (503) if their bindings are missing; local dev sets DEV=1 instead.
+  //   CHAT_* /demo/api/chat, a public endpoint spending a real API key.
+  //   LEAD_* /api/signup-lead, a public endpoint that reaches the Durable Object on every post.
+  //          Tighter than chat because a human fills this form once: 5/min per IP is already ten
+  //          times the per-IP daily cap the DO enforces behind it.
   "ratelimits": [
     {
       "name": "CHAT_RL_IP",
@@ -58,6 +70,16 @@
       "name": "CHAT_RL_ALL",
       "namespace_id": "1002",
       "simple": { "limit": 150, "period": 60 }
+    },
+    {
+      "name": "LEAD_RL_IP",
+      "namespace_id": "1003",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "LEAD_RL_ALL",
+      "namespace_id": "1004",
+      "simple": { "limit": 60, "period": 60 }
     }
   ]
 }

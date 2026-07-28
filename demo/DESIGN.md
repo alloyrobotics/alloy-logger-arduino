@@ -16,9 +16,9 @@ If something is ambiguous, pick the simplest thing consistent with this doc and 
   `demo/vendor/` (pin `three@0.166.1`, module build + `OrbitControls`, wired via an import map).
 - **A fixed, listed set of network surfaces, all same-origin, all listed here.** The demo page
   itself is still static files, and adding a surface is a design change, not an implementation
-  detail. The page calls exactly TWO of the list below (1 and 4); everything else is entered from
-  an email link or by the runner. The old "exactly four" wording is superseded by this list, which
-  now states which of them are live and which the 2026-07-28 shelve closed.
+  detail. The page calls exactly THREE of the list below (1, 4 and 6); everything else is entered
+  from an email link or by the runner. The old "exactly four" wording is superseded by this list,
+  which now states which of them are live and which the 2026-07-28 shelve closed.
   1. `POST /demo/api/chat` (`worker/chat.js`) the live analyst. Streams a Claude answer grounded in
      a facts pack; rate limited by the `CHAT_RL_*` bindings and fails closed (503) without them.
      LIVE, for canned and generated demos alike.
@@ -41,6 +41,27 @@ If something is ambiguous, pick the simplest thing consistent with this doc and 
      `next_claim_expiry_s`; no PII, and it deliberately neither reclaims an expired lease nor
      records `runner_seen`). `POST runner/shelf-purge` EXISTS only while `DEMOGEN_SHELF_PURGE=1`
      is set for the shelve deploy and 404s without it, so there is no standing bulk-delete surface.
+  6. `POST /api/signup-lead` (`worker/signup-lead.js`) the signup popup's capture endpoint. **NEW
+     2026-07-28**, and the only surface the page has ever posted a visitor's own data to since the
+     lead form went. No auth, 8 KB cap, `Cache-Control: no-store`. It answers `202 {"ok":true}` to
+     an accepted lead AND to every silent drop (filled honeypot, per-IP cap of 5 new leads a day,
+     the global cap of 500 new leads a UTC day, either edge rate limiter, and an address already on
+     the list, which bumps a `last_seen` column instead of inserting), so the endpoint is never an
+     oracle for who is already on the list. `400 {"ok":false,"reason":...}`
+     only for a body it could not parse (`bad_json`, which also covers over-cap bodies, read as a
+     stream and cancelled the moment it passes 8 KB so a chunked post cannot be buffered whole) or
+     an address that is not an address (`bad_email`); `405` for any other verb; `503` if the
+     `LEAD_RL_IP` / `LEAD_RL_ALL` bindings are missing, because a public path to the DO fails
+     closed. A row lands in a new
+     `leads` table in the SAME DemoGenDO sqlite, and a Resend notification goes to Hugh per NEW
+     lead inside `ctx.waitUntil` (budgeted at 25 a UTC day; past the budget the lead is still
+     stored and only the mail is skipped), so a mail failure can never fail the `202`: storage is
+     the source of truth. `GET /api/signup-lead/list`, bearer `DEMOGEN_TOKEN`, is the export path
+     and the only way the list comes out; it pages 1000 at a time over the total ordering
+     (created_at DESC, email DESC) with a COMPOUND cursor, `?before=<ISO created_at>` plus
+     `?before_email=<email>`, echoed back as `next_before` / `next_before_email` (email is unique
+     after dedupe, so a millisecond shared across a page boundary can never hide a row), and it
+     never projects the keyed `ip_hash`.
   No third-party script is loaded at runtime, ever. **Turnstile is the one sanctioned escalation**:
   if the generator is un-shelved and the honeypot + dwell + per-IP/email limits stop holding,
   adding Cloudflare Turnstile to the entry form is pre-approved, and it is the only external script
@@ -98,7 +119,7 @@ demo/
   js/core/matcher.js    ← scaffold agent (pure matchEntry(entries, text); chat.js AND the runner's validator consume it)
   js/core/gendata.js    ← scaffold agent (GENSPEC data_spec interpreter; isomorphic, no DOM; PUBLISHED API)
   js/core/genscene.js   ← scaffold agent (GENSPEC scene_spec interpreter; PUBLISHED API)
-  js/core/signup.js     ← scaffold agent (post-engagement signup popup; makes NO network call)
+  js/core/signup.js     ← scaffold agent (post-engagement signup popup; POSTs the captured email to /api/signup-lead)
   js/robots/index.js    ← scaffold agent (registry; imports the four robot defs; registerRobot() for generated ones)
   js/robots/generated.js ← scaffold agent (fetch + gate + compose a g-<slug> def.json into a RobotDefinition)
   js/robots/gen-fixture/ ← DEV FIXTURE. A hand-written def.json + harness.mjs that proves interpreter
@@ -524,16 +545,52 @@ and for everything operational (deploy, the facts freshness gate, which states a
 ## Signup popup (`core/signup.js`)
 
 What replaced the lead form. It sells the product instead of the demo: after a visitor has
-MEANINGFULLY engaged with a dataset, one modal drives straight to signup. No form, no email field,
-no network call of any kind.
+MEANINGFULLY engaged with a dataset, one modal drives straight to signup. It CAPTURES the address
+in the dialog rather than handing the visitor off to another page: an email field, a submit, and a
+confirmed pane in the same card. **There is no redirect anywhere in this flow**, and the earlier
+"no form, no email field, no network call of any kind" description is superseded by this section.
+The one call it makes is `POST /api/signup-lead` (surface 6 in the non-negotiables).
 
 **Copy** (no em dashes): headline "Let's analyse your robot data now", body "Sign up and get 100GB
-free. First 100 users only.", primary CTA "Start streaming free", secondary "Keep exploring" plus a
-close X.
+free. First 100 users only.", field placeholder "Work email", submit "Claim 100GB free", and a
+close X (no secondary dismiss button). Confirmed pane: heading "You're in.", body "We'll set
+you up and email your access shortly." Inline errors: "That email doesn't look right." under the
+input for a rejected address, "Something broke. Try again." for a failed round trip.
 
-**CTA.** The boot-computed `setupHref` (the same `SETUP_URL` constant and `?src=` forwarding the
-header CTA uses) with `utm_content=<src>-demo-popup`, or bare `utm_content=demo-popup` with no
-`?src`, so PostHog can separate popup clicks from header-CTA clicks. Opens in a new tab.
+**Submit.** The client validates non-empty plus a deliberately loose email pattern BEFORE posting
+(the server is the authority; a client regex that argues with a real address is a lost lead), then
+disables the control into a `sending` state and posts
+`{ email, hp, dwell_ms, robot, src }` as JSON, same origin.
+
+- `202` swaps the card to the confirmed pane. It is the ONLY success the client admits to, and it
+  deliberately covers the server's silent drops (honeypot, per-IP cap, duplicate), because
+  distinguishing them here would leak on the client what the endpoint refuses to leak on the wire.
+- `400` with `reason: 'bad_email'` shows the inline hint under the input and refocuses it. The
+  typed value is preserved.
+- Anything else, including a transport failure, shows the generic inline error. The typed value is
+  preserved, and the visitor can submit again.
+
+`hp` is the honeypot: a hidden field a human never fills, sent as the empty string. `dwell_ms` is
+time since the dialog opened. `robot` is the demo being viewed (`getRobot()`, a `g-<slug>` demo
+included) and `src` is the boot `?src=` attribution the header CTA already forwards, so a lead can
+be traced to the campaign that produced it without a redirect carrying UTM parameters.
+
+**Size.** Near fullscreen, not a card. Desktop is a `min(1560px, 100vw - 64px)` by `88dvh` panel
+(uncapped heights and the wide max so it still covers >=80% of a 1920px monitor) with the copy
+block vertically centred (auto margins, so an overflowing card can still scroll to its top) and
+hero-scale type: headline
+`clamp(34px, 4.6vw, 62px)`, body `clamp(16px, 1.5vw, 22px)`, buttons up to 18px. At 899px and below
+(`@media (max-width: 899px)`, the same breakpoint the chart drawer and the demo shell use) it is
+a `100dvh` takeover with safe-area padding on all four sides, no radius and no border, actions
+stacked full width. Same colours, blur and rounding language as the rest of the demo, just at
+panel scale. Zero horizontal scroll at 390px.
+
+**Dismissal.** Explicit controls only: the close X and Escape, in every state including mid-send.
+Clicking or tapping the scrim does NOT dismiss, deliberately: at this size the scrim is a
+thin margin around the panel and a mis-click there would throw away the session's single ask. The
+focus trap (Tab/Shift-Tab cycling inside the card, focus restored to the previously focused node on
+close) and the space-key stopPropagation that keeps the demo from pausing under the dialog are
+unchanged.
 
 **Trigger.** An explicit `idle -> armed -> timerPending -> shown` machine owned by the module and
 wired in `buildDemo`/`teardownDemo`. Arming signals are USER-ORIGINATED events only, never
@@ -580,7 +637,9 @@ listeners on persistent mounts, not only WebGL contexts.
 **Generated demos.** It shows on `g-<slug>` demos too. `def.generated` suppresses nothing.
 
 **Analytics.** `data-analytics-todo` markers only, per Out of scope: `signup_popup_shown`,
-`signup_popup_clicked`, `signup_popup_dismissed`.
+`signup_popup_submitted`, `signup_popup_failed`, `signup_popup_dismissed`. The old
+`signup_popup_clicked` is gone with the CTA link it named: the conversion event is now a submit
+that the server accepted, not a click that left the page.
 
 ## Out of scope
 

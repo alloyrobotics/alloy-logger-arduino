@@ -5,7 +5,7 @@
 // or an evidence chip, typing a question), it waits for that action to END, waits out a 6 s quiet
 // period, and only then puts one dialog over the still-running demo.
 //
-//   const popup = createSignupPopup(document.body, { href: setupPopupHref });
+//   const popup = createSignupPopup(document.body, { getRobot: () => id, src: 'dm' });
 //   const triggers = createSignupTriggers({ host: demoScreen, popup, isDemoRoute, isStreaming });
 //   triggers.chatSettled();   // from createChat's onSettled hook
 //   triggers.dispose();       // teardownDemo: detaches every listener, closes an open popup
@@ -29,11 +29,26 @@ const QUIET_MS = 6000;
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([tabindex="-1"]), [tabindex="0"]';
 
+/** Same-origin capture endpoint. 202 is the only success it ever admits to. */
+const ENDPOINT = '/api/signup-lead';
+
+/**
+ * Deliberately loose. The server is the authority on what it will store, and a client regex that
+ * argues with a real address is a lost lead: this only catches the obvious typo before the round
+ * trip, and the 400 `bad_email` path repeats the same message for anything it lets through.
+ */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const COPY = {
   heading: "Let's analyse your robot data now",
   body: 'Sign up and get 100GB free. First 100 users only.',
-  cta: 'Start streaming free',
-  dismiss: 'Keep exploring',
+  placeholder: 'Work email',
+  submit: 'Claim 100GB free',
+  sending: 'Sending',
+  emailHint: "That email doesn't look right.",
+  error: 'Something broke. Try again.',
+  confirmedHeading: "You're in.",
+  confirmedBody: "We'll set you up and email your access shortly.",
 };
 
 /**
@@ -70,53 +85,119 @@ function setGate() {
 }
 
 /**
- * The dialog itself. Built once at boot and reused across routes, like the header CTAs: it reads
- * its href at open time, so nothing here has to be rebuilt when the demo is.
+ * The dialog itself. Built once at boot and reused across routes: it reads the current robot at
+ * submit time, so nothing here has to be rebuilt when the demo is.
+ *
+ * It captures the email in place rather than linking out. A link-out spends the session's one ask
+ * on a tab switch and loses everyone whose browser eats the popup or who never finishes the signup
+ * form on the far side; a single field posts the lead the moment it is typed and leaves the demo
+ * running underneath.
+ *
+ * Dismissal is explicit only: the X or Escape, in every state. Clicking the scrim does nothing,
+ * because the card is near fullscreen and a mis-click on the sliver of scrim around it would throw
+ * away that single ask.
  *
  * @param {HTMLElement} host node the scrim is appended to (the scrim is position:fixed, so this
  *   only decides document order)
- * @param {{ href?: string, getHref?: () => string }} ctx
- * @returns {{ open:(trigger?:string)=>boolean, close:(reason?:string)=>void, dispose:()=>void, shown:boolean }}
+ * @param {{ endpoint?: string, getRobot?: () => (string|null), src?: string|null }} ctx
+ *   `getRobot` is read at submit time (the visitor may have walked several demos); `src` is the
+ *   channel tag the visitor arrived on, fixed for the page load.
+ * @returns {{ open:(trigger?:string)=>boolean, close:(reason?:string)=>void, dispose:()=>void, shown:boolean, state:string }}
  */
 export function createSignupPopup(host, ctx = {}) {
-  const getHref = typeof ctx.getHref === 'function' ? ctx.getHref : () => ctx.href || '#';
+  const endpoint = ctx.endpoint || ENDPOINT;
+  const getRobot = typeof ctx.getRobot === 'function' ? ctx.getRobot : () => null;
+  const src = ctx.src ? String(ctx.src) : null;
 
   const scrim = document.createElement('div');
   scrim.className = 'su-scrim';
   scrim.hidden = true;
   scrim.innerHTML = `
     <div class="su-card" role="dialog" aria-modal="true" aria-labelledby="su-heading"
-         aria-describedby="su-body" tabindex="-1">
+         aria-describedby="su-body" tabindex="-1" data-state="form">
       <button class="su-x" type="button" aria-label="Close">
         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
           <path d="M1 1l9 9M10 1l-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
       </button>
-      <h2 class="su-h" id="su-heading"></h2>
-      <p class="su-sub" id="su-body"></p>
-      <div class="su-actions">
-        <a class="btn su-cta" href="#" target="_blank" rel="noopener"></a>
-        <button class="btn ghost su-later" type="button"></button>
+
+      <div class="su-pane-form">
+        <h2 class="su-h" id="su-heading"></h2>
+        <p class="su-sub" id="su-body"></p>
+        <form class="su-form" novalidate>
+          <div class="su-hp" aria-hidden="true">
+            <label for="su-website">Website</label>
+            <input class="su-hp-input" type="text" id="su-website" name="website"
+                   tabindex="-1" autocomplete="off" />
+          </div>
+          <input class="su-email" id="su-email" name="email" type="email" inputmode="email"
+                 autocomplete="email" aria-label="Work email" />
+          <button class="btn su-submit" type="submit"></button>
+        </form>
+        <p class="su-err" role="alert" hidden></p>
+      </div>
+
+      <div class="su-pane-done" hidden>
+        <h2 class="su-h su-done-h" id="su-done-heading"></h2>
+        <p class="su-sub su-done-body" id="su-done-body"></p>
       </div>
     </div>`;
   (host || document.body).appendChild(scrim);
 
   const card = scrim.querySelector('.su-card');
-  const cta = scrim.querySelector('.su-cta');
-  const later = scrim.querySelector('.su-later');
   const closeX = scrim.querySelector('.su-x');
+  const paneForm = scrim.querySelector('.su-pane-form');
+  const paneDone = scrim.querySelector('.su-pane-done');
+  const form = paneForm.querySelector('.su-form');
+  const emailInput = paneForm.querySelector('.su-email');
+  const honeypot = paneForm.querySelector('.su-hp-input');
+  const submitBtn = paneForm.querySelector('.su-submit');
+  const errEl = paneForm.querySelector('.su-err');
 
   // textContent, never innerHTML: none of this copy is markup and none of it should ever be
   // parsed as any.
-  scrim.querySelector('.su-h').textContent = COPY.heading;
-  scrim.querySelector('.su-sub').textContent = COPY.body;
-  cta.textContent = COPY.cta;
-  later.textContent = COPY.dismiss;
+  paneForm.querySelector('.su-h').textContent = COPY.heading;
+  paneForm.querySelector('.su-sub').textContent = COPY.body;
+  paneDone.querySelector('.su-done-h').textContent = COPY.confirmedHeading;
+  paneDone.querySelector('.su-done-body').textContent = COPY.confirmedBody;
+  submitBtn.textContent = COPY.submit;
+  emailInput.placeholder = COPY.placeholder;
 
   let isOpen = false;
   let openTrigger = null;
   let restoreFocus = null;
   let disposed = false;
+  /** 'form' | 'sending' | 'confirmed' | 'error'. Mirrored onto card.dataset.state for QA and CSS. */
+  let state = 'form';
+  /** Wall clock at open, for the dwell the server uses to score the lead. */
+  let openedAt = 0;
+
+  // ---------------------------------------------------------------- state
+  function setState(next) {
+    state = next;
+    card.dataset.state = next;
+    const done = next === 'confirmed';
+    paneForm.hidden = done;
+    paneDone.hidden = !done;
+    // The dialog's name and description must follow the pane that is actually on screen. Left
+    // pointing at the form's heading, a screen reader announces the confirmed dialog as the ask
+    // the visitor just answered, and the `hidden` pane it names is not exposed at all, so the
+    // dialog reads as unlabelled to some ATs and as stale to the rest.
+    card.setAttribute('aria-labelledby', done ? 'su-done-heading' : 'su-heading');
+    card.setAttribute('aria-describedby', done ? 'su-done-body' : 'su-body');
+    submitBtn.disabled = next === 'sending';
+    submitBtn.textContent = next === 'sending' ? COPY.sending : COPY.submit;
+  }
+
+  function showError(message) {
+    errEl.textContent = message;
+    errEl.hidden = false;
+  }
+
+  function clearError() {
+    errEl.hidden = true;
+    errEl.textContent = '';
+  }
 
   // ---------------------------------------------------------------- focus trap
   function focusables() {
@@ -161,6 +242,74 @@ export function createSignupPopup(host, ctx = {}) {
     }
   }
 
+  // ---------------------------------------------------------------- submit
+  /**
+   * One field, so validation is one rule. The value is never cleared on any failure path: the
+   * visitor re-submits the address already sitting in the box.
+   */
+  async function onSubmit(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (state === 'sending' || state === 'confirmed' || disposed) return;
+    clearError();
+
+    const email = String(emailInput.value || '').trim();
+    if (!email || !EMAIL_RE.test(email) || email.length > 254) {
+      setState('error');
+      showError(COPY.emailHint);
+      emailInput.focus();
+      return;
+    }
+
+    const payload = {
+      email,
+      hp: String(honeypot.value || ''),
+      dwell_ms: Math.max(0, Date.now() - openedAt),
+      robot: getRobot() || null,
+      src,
+    };
+
+    setState('sending');
+    let res = null;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      if (disposed) return;
+      setState('error');
+      showError(COPY.error);
+      return;
+    }
+    if (disposed) return;
+
+    // 202 is the only success the server ever admits to, and it deliberately covers the silent
+    // drops (honeypot, per-IP cap, duplicate). Every one of them is a send as far as this is
+    // concerned: the alternative leaks who is already on the list.
+    if (res.status === 202) {
+      setState('confirmed');
+      // data-analytics-todo: capture('signup_popup_submitted', { trigger: openTrigger, robot: payload.robot, src })
+      closeX.focus();
+      return;
+    }
+
+    let reason = '';
+    if (res.status === 400) {
+      try {
+        const body = await res.json();
+        reason = body && body.reason ? String(body.reason) : '';
+      } catch (err) {
+        reason = '';
+      }
+      if (disposed) return;
+    }
+    setState('error');
+    showError(reason === 'bad_email' ? COPY.emailHint : COPY.error);
+    if (reason === 'bad_email') emailInput.focus();
+    // data-analytics-todo: capture('signup_popup_failed', { trigger: openTrigger, status: res.status })
+  }
+
   // ---------------------------------------------------------------- open / close
   /**
    * @param {string} [trigger] which arming signal earned the impression, for analytics
@@ -170,17 +319,20 @@ export function createSignupPopup(host, ctx = {}) {
     if (isOpen || disposed) return false;
     isOpen = true;
     openTrigger = trigger || 'engagement';
+    openedAt = Date.now();
     restoreFocus = document.activeElement;
 
-    cta.href = getHref();
+    clearError();
+    setState('form');
     // Impression based: the gate is written the moment it goes up, so a visitor who never touches
     // the dialog still gets the quiet period, and a second tab sees the gate immediately.
     setGate();
 
     scrim.hidden = false;
     document.addEventListener('keydown', onKeydown, false);
-    // The card, not the CTA: an auto popup that focuses a link reads as a hijack, and on a phone
-    // focusing anything typable would throw up the keyboard over a demo nobody asked to leave.
+    // The card, never the email field: on a phone, focusing anything typable throws the keyboard
+    // up over a demo nobody asked to leave, and an auto popup that grabs the caret reads as a
+    // hijack. Only a deliberate tap lands in the input.
     card.focus();
 
     // data-analytics-todo: capture('signup_popup_shown', { trigger: openTrigger })
@@ -188,8 +340,10 @@ export function createSignupPopup(host, ctx = {}) {
   }
 
   /**
-   * @param {'dismiss'|'cta'|'quiet'} [reason] 'quiet' is teardown closing it behind the visitor's
-   *   back; the gate is already written by open() either way.
+   * @param {'dismiss'|'quiet'} [reason] 'quiet' is teardown closing it behind the visitor's back;
+   *   the gate is already written by open() either way. Closing is allowed in every state,
+   *   including mid-send: the request is already in flight and the server is the source of truth,
+   *   so nothing is lost by taking the card away.
    */
   function close(reason) {
     if (!isOpen) return;
@@ -207,25 +361,28 @@ export function createSignupPopup(host, ctx = {}) {
     restoreFocus = null;
   }
 
-  cta.addEventListener('click', () => {
-    // data-analytics-todo: capture('signup_popup_clicked', { trigger: openTrigger })
-    // The link opens in a new tab, so the demo is still there behind it: drop the dialog rather
-    // than leave it parked over a mission the visitor is coming back to.
-    close('cta');
+  form.addEventListener('submit', onSubmit);
+  // Typing again after a rejection clears the complaint, so the message never outlives the value
+  // it was about.
+  emailInput.addEventListener('input', () => {
+    if (state === 'error') {
+      setState('form');
+      clearError();
+    }
   });
-  later.addEventListener('click', () => close('dismiss'));
   closeX.addEventListener('click', () => close('dismiss'));
-  scrim.addEventListener('mousedown', (e) => {
-    // mousedown, not click: a drag that starts inside the card and ends on the scrim would
-    // otherwise count as a dismiss.
-    if (e.target === scrim) close('dismiss');
-  });
+  // Deliberately NO scrim click/mousedown dismissal. The card is near fullscreen, so a stray click
+  // anywhere off it would land on the scrim and close the one ask of the session by accident.
+  // Dismissal is explicit only: the X or Escape, in every state.
 
   return {
     open,
     close,
     get shown() {
       return isOpen;
+    },
+    get state() {
+      return state;
     },
     dispose() {
       if (disposed) return;

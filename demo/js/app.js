@@ -545,12 +545,13 @@ function boot() {
   // CTA hrefs. A ?src=<channel> tag on the demo URL (dm, dm_fu, bio) is forwarded into the
   // setup-org CTAs as utm_content "<channel>-demo", same idea as the landing page's passthrough,
   // so PostHog keeps channel attribution when the DM or bio points here instead of the landing.
-  const srcTag = (new URLSearchParams(location.search).get('src') || '').replace(/[^a-z0-9_-]/gi, '');
+  // Clamped to the server's 64-char tag limit: an oversized crafted ?src= must never bloat the
+  // signup-lead body toward its 8KB cap and sink an otherwise valid submission.
+  const srcTag = (new URLSearchParams(location.search).get('src') || '')
+    .replace(/[^a-z0-9_-]/gi, '')
+    .slice(0, 64);
   const contentTag = srcTag ? `${srcTag}-demo` : 'demo';
   const setupHref = SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${contentTag}`);
-  // The popup's own CTA carries a "-popup" suffix on the same tag, so PostHog can separate a
-  // popup signup from a header signup without losing the channel the visitor arrived on.
-  const setupPopupHref = SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${contentTag}-popup`);
   document.querySelectorAll('[data-cta="github"]').forEach((a) => {
     a.href = GITHUB_URL;
   });
@@ -559,7 +560,14 @@ function boot() {
   });
 
   // Built once and reused across routes; buildDemo installs the trigger machine that opens it.
-  signupPopup = createSignupPopup(document.body, { href: setupPopupHref });
+  // The popup captures the email itself rather than linking out, so what it needs from here is
+  // attribution, not an href: `getRobot` is read at submit time (the visitor may have walked
+  // several demos before answering) and `src` is the raw channel tag off the URL, so a lead can be
+  // traced back to the DM or bio link that sent it without a utm round trip.
+  signupPopup = createSignupPopup(document.body, {
+    getRobot: () => (demo && demo.def ? demo.def.id : null),
+    src: srcTag || null,
+  });
 
   // ?robot=<id> deep link
   const q = new URLSearchParams(location.search);

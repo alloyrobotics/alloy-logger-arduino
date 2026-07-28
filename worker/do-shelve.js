@@ -1,16 +1,33 @@
-// do-shelve.js - the two shelve-time SQL helpers DemoGenDO delegates to.
+// do-shelve.js - the SQL helpers DemoGenDO delegates to so they can be tested.
 //
 // They live outside do.js for one reason: do.js imports `DurableObject` from "cloudflare:workers",
 // which only exists inside workerd, so nothing in that file can be driven from a plain-node test.
-// These two functions are the whole of the new behaviour, they touch nothing but the `sql` handle
-// they are handed, and worker/demo-gen.unit.test.mjs runs them against the REAL schema on
+// Each function here is the whole of one piece of new behaviour, touches nothing but the `sql`
+// handle it is handed, and worker/demo-gen.unit.test.mjs runs it against the REAL schema on
 // node:sqlite. The DO keeps ownership of what they are called with: the state enum, the review
-// states and the purgeable states are all passed in from do.js, which stays the single source of
-// truth for the machine's shape.
+// states, the purgeable states and the lead caps are all passed in from do.js, which stays the
+// single source of truth for the machine's shape.
+//
+// The file is named for the shelve because that is what it was opened for; it is now simply where
+// a DO method's body goes when the method has to be provable outside workerd. The 2026-07-28 lead
+// capture is the second occupant (see applyLeadCapture / selectLeads at the bottom).
 //
 // `sql` is Cloudflare's SqlStorage: `exec(query, ...bindings)` returning a cursor with
 // `.toArray()` and `.one()`. Nothing here awaits, so each call stays atomic inside the DO's
 // input gate exactly like the rest of do.js.
+
+/**
+ * The UTC day a timestamp falls in, byte for byte what do.js's own `dayOf` returns. Every daily
+ * counter in this Worker is a UTC day, so the lead caps below use the same key the job cap does
+ * and a day boundary means one thing across the whole machine.
+ */
+function dayOf(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** Event kinds the lead capture appends. Counted per UTC day; never updated in place. */
+const LEAD_EVENT = "signup_lead";
+const LEAD_NOTIFY_EVENT = "signup_lead_notified";
 
 /**
  * Read-only drain visibility for the shelve (GET /api/demo-gen/runner/state).
@@ -142,4 +159,155 @@ export function applyShelvePurge(sql, { allowSlugs = [], purgeableStates = [] } 
     refused,
     not_found: notFound,
   };
+}
+
+/**
+ * Signup-popup lead capture (POST /api/signup-lead). One statement per branch, no awaits, so the
+ * whole read-modify-write stays atomic inside the DO's input gate: two visitors submitting the same
+ * address in the same instant cannot both come out as `new` and both trigger a notification.
+ *
+ * Four outcomes, and the Worker answers 202 to all of them. The status is for the log and for
+ * "does this deserve an email", never for the response body:
+ *   new          a row was inserted. The only status that can earn a notification.
+ *   duplicate    the address is already on the list. `last_seen` is bumped so a returning lead is
+ *                visible in the export, and nothing else about the row is rewritten: the first
+ *                capture's robot, src and dwell are the ones that describe how they arrived.
+ *   capped       this IP has already created `ipCap` NEW leads inside `windowMs`. No row, no mail.
+ *   daily_capped the whole route has already created `dailyCap` NEW leads this UTC day, from any
+ *                IP at all. No row, no mail. This is the ceiling the per-IP cap cannot enforce: a
+ *                flood spread across enough addresses never trips a single-IP window, and without
+ *                this the table, the export and Hugh's inbox all grow without a bound.
+ *
+ * `notify` rides alongside, and it is decided HERE rather than in the Worker for the same reason
+ * the dedupe is: the read and the write have to be one atomic step. `notifyBudget` notifications
+ * per UTC day, counted off the same append-only events table the job cap uses. Past the budget a
+ * lead is still inserted and still exported, and only the mail is skipped, so the budget can never
+ * cost a lead. The budget is spent at the moment the decision is made, not when Resend answers: a
+ * send that fails must not hand its slot back and turn a provider outage into a retry storm.
+ *
+ * Dedupe is checked BEFORE either cap on purpose. An address already on the list costs nothing to
+ * re-see, and letting a cap swallow it would mean a lead who submits twice from an office NAT
+ * silently stops updating.
+ *
+ * The caps count rows, not attempts: a duplicate does not consume budget, and neither does a
+ * capped attempt (there is no row to count). So `ipCap` is exactly "new leads per IP per window"
+ * and `dailyCap` is exactly "new leads per UTC day".
+ *
+ * `ipHash` is a keyed digest computed by the Worker. The raw IP never reaches this table.
+ *
+ * @param {object} sql
+ * @param {object} opts
+ * @param {string} opts.email     already lowercased and trimmed by the Worker
+ * @param {string|null} opts.robot
+ * @param {string|null} opts.src
+ * @param {number|null} opts.dwellMs
+ * @param {string} opts.ipHash
+ * @param {number} opts.now       epoch ms
+ * @param {number} opts.ipCap
+ * @param {number} opts.windowMs
+ * @param {number} opts.dailyCap      new leads this UTC day, across every IP
+ * @param {number} opts.notifyBudget  notification emails this UTC day
+ */
+export function applyLeadCapture(
+  sql,
+  { email, robot, src, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget },
+) {
+  const existing = sql.exec("SELECT email FROM leads WHERE email = ?", email).toArray()[0];
+  if (existing) {
+    sql.exec("UPDATE leads SET last_seen = ? WHERE email = ?", now, email);
+    return { ok: true, status: "duplicate", notify: false };
+  }
+
+  const recent = Number(
+    sql.exec("SELECT COUNT(*) AS n FROM leads WHERE ip_hash = ? AND created_at >= ?", ipHash, now - windowMs).one().n,
+  );
+  if (recent >= ipCap) return { ok: true, status: "capped", notify: false };
+
+  // Counted off `events` rather than off `leads`, and that is deliberate: the events table is the
+  // append-only ledger every other daily counter in this DO is derived from, it is indexed on
+  // (day, kind), and a row deleted out of `leads` must not hand the day's budget back.
+  const day = dayOf(now);
+  const today = Number(
+    sql.exec("SELECT COUNT(*) AS n FROM events WHERE kind = ? AND day = ?", LEAD_EVENT, day).one().n,
+  );
+  if (today >= dailyCap) return { ok: true, status: "daily_capped", notify: false };
+
+  sql.exec(
+    `INSERT INTO leads(email, robot, src, dwell_ms, ip_hash, created_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    email,
+    robot ?? null,
+    src ?? null,
+    dwellMs ?? null,
+    ipHash,
+    now,
+    now,
+  );
+  sql.exec("INSERT INTO events(day, kind, job_id, at) VALUES (?, ?, NULL, ?)", day, LEAD_EVENT, now);
+
+  const notified = Number(
+    sql.exec("SELECT COUNT(*) AS n FROM events WHERE kind = ? AND day = ?", LEAD_NOTIFY_EVENT, day).one().n,
+  );
+  const notify = notified < notifyBudget;
+  if (notify) {
+    sql.exec("INSERT INTO events(day, kind, job_id, at) VALUES (?, ?, NULL, ?)", day, LEAD_NOTIFY_EVENT, now);
+  }
+
+  return { ok: true, status: "new", notify };
+}
+
+/**
+ * The export path (GET /api/signup-lead/list). Newest first, so the top of the list is the reason
+ * Hugh opened it.
+ *
+ * `(before, beforeEmail)` is a COMPOUND cursor over the total ordering (created_at DESC, email
+ * DESC). Email is unique in this table (dedupe collapses repeats), so the ordering has no ties and
+ * the page after one ending at (T, E) starts exactly at the next row and can neither repeat nor
+ * skip. A timestamp-only cursor cannot do this: two leads sharing a millisecond across a page
+ * boundary would leave the second one unreachable forever. It is the ordering key itself rather
+ * than an offset, because an offset over a table that grows at the top would re-serve rows every
+ * time a new lead landed mid-page.
+ *
+ * `ip_hash` is deliberately NOT projected. It is a rate-limit bucket, not a fact about the lead,
+ * and an export that carries it is an export that has to be handled like one that carries IPs.
+ * Timestamps go out as ISO strings, the same convention `review()` and `approvalView()` use.
+ */
+export function selectLeads(sql, { limit = 1000, before = null, beforeEmail = null } = {}) {
+  const rows =
+    before == null
+      ? sql
+          .exec(
+            `SELECT email, robot, src, dwell_ms, created_at, last_seen
+             FROM leads ORDER BY created_at DESC, email DESC LIMIT ?`,
+            limit,
+          )
+          .toArray()
+      : beforeEmail == null
+        ? sql
+            .exec(
+              `SELECT email, robot, src, dwell_ms, created_at, last_seen
+               FROM leads WHERE created_at < ? ORDER BY created_at DESC, email DESC LIMIT ?`,
+              before,
+              limit,
+            )
+            .toArray()
+        : sql
+            .exec(
+              `SELECT email, robot, src, dwell_ms, created_at, last_seen
+               FROM leads WHERE created_at < ? OR (created_at = ? AND email < ?)
+               ORDER BY created_at DESC, email DESC LIMIT ?`,
+              before,
+              before,
+              beforeEmail,
+              limit,
+            )
+            .toArray();
+  return rows.map((r) => ({
+    email: r.email,
+    robot: r.robot,
+    src: r.src,
+    dwell_ms: r.dwell_ms == null ? null : Number(r.dwell_ms),
+    created_at: new Date(Number(r.created_at)).toISOString(),
+    last_seen: new Date(Number(r.last_seen)).toISOString(),
+  }));
 }
