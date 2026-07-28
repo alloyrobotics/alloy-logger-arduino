@@ -3,8 +3,8 @@
 A try.usealloy.ai-style interactive demo, fully static, served from this repo at `/demo/`.
 The pitch: pick a robot → watch its telemetry "ingest" → an AI analyst answers "why did my robot
 fail?" → **the answer drives a synchronized 3D replay + chart to the exact failure window**, with
-the failing part highlighted. Mobile-first (IG traffic lands on phones). Static front end, four
-narrow backend surfaces (see the non-negotiables).
+the failing part highlighted. Mobile-first (IG traffic lands on phones). Static front end, a short
+listed set of narrow backend surfaces (see the non-negotiables).
 
 This file is the single source of truth. Do not invent interfaces not specified here.
 If something is ambiguous, pick the simplest thing consistent with this doc and note it in your report.
@@ -14,20 +14,37 @@ If something is ambiguous, pick the simplest thing consistent with this doc and 
 - **Pure static ES modules. No build step, no framework, no CDN at runtime** except the Google Fonts
   link already used by the landing page (`Geist` + `Geist Mono`). Three.js is VENDORED into
   `demo/vendor/` (pin `three@0.166.1`, module build + `OrbitControls`, wired via an import map).
-- **Exactly four network surfaces, all same-origin, all listed here.** The demo page itself is still
-  static files; these are the only requests it makes that a Worker answers, and adding a fifth is a
-  design change, not an implementation detail:
+- **A fixed, listed set of network surfaces, all same-origin, all listed here.** The demo page
+  itself is still static files, and adding a surface is a design change, not an implementation
+  detail. The page calls exactly TWO of the list below (1 and 4); everything else is entered from
+  an email link or by the runner. The old "exactly four" wording is superseded by this list, which
+  now states which of them are live and which the 2026-07-28 shelve closed.
   1. `POST /demo/api/chat` (`worker/chat.js`) the live analyst. Streams a Claude answer grounded in
      a facts pack; rate limited by the `CHAT_RL_*` bindings and fails closed (503) without them.
-  2. `POST /api/demo-gen/submit` (`worker/demo-gen.js`) the lead form. Always answers 202 from the
-     visitor's side, including the honeypot, dwell and suppression paths.
-  3. `GET /api/demo-gen/{verify,unsubscribe,approve,reject}` signed-link pages. Self-contained dark
-     HTML, inline styles, no fonts and no script, so they work from a phone with nothing loaded.
-  4. `GET /demo/js/robots/g-<slug>/def.json` the one servable file of a generated bundle.
+     LIVE, for canned and generated demos alike.
+  2. `POST /api/demo-gen/submit` (`worker/demo-gen.js`) was the lead form. **SHELVED 2026-07-28**:
+     a `410` tombstone with `Cache-Control: no-store`, returned before the content-type check, any
+     body read, any DO lookup and any `ctx.waitUntil`, so it has zero side effects and sends no
+     mail. Nothing in the demo posts to it any more; the tombstone is for whatever still does.
+  3. `GET|POST /api/demo-gen/verify` **PAUSED 2026-07-28**: renders a "demo generation is paused"
+     page and performs NO state transition, so an old verification link sitting in an inbox cannot
+     move a job `unverified -> pending` and promise a build that no runner will claim.
+     `GET|POST /api/demo-gen/{unsubscribe,approve,reject}` are UNCHANGED and live. All of these are
+     self-contained dark HTML, inline styles, no fonts, so they work from a phone with nothing
+     loaded.
+  4. `GET /demo/js/robots/g-<slug>/def.json` the one servable file of a generated bundle. LIVE:
+     every personalized link already sent keeps working, which is the point of shelving the entry
+     rather than the whole feature.
+  5. `/api/demo-gen/runner/*`, bearer `DEMOGEN_TOKEN`, never called by the page: `queue`, `claim`,
+     `publish`, `status`, `review`, `debug`, plus two shelve-era routes. `GET runner/state` is
+     read-only drain visibility (one count per state in the DO's enum, `review_total`,
+     `next_claim_expiry_s`; no PII, and it deliberately neither reclaims an expired lease nor
+     records `runner_seen`). `POST runner/shelf-purge` EXISTS only while `DEMOGEN_SHELF_PURGE=1`
+     is set for the shelve deploy and 404s without it, so there is no standing bulk-delete surface.
   No third-party script is loaded at runtime, ever. **Turnstile is the one sanctioned escalation**:
-  if the honeypot + dwell + per-IP/email limits stop holding and real spam appears, adding
-  Cloudflare Turnstile to the lead form is pre-approved, and it is the only external script that may
-  be added without revisiting this list.
+  if the generator is un-shelved and the honeypot + dwell + per-IP/email limits stop holding,
+  adding Cloudflare Turnstile to the entry form is pre-approved, and it is the only external script
+  that may be added without revisiting this list.
 - **The generated-demo contract is a PUBLISHED API.** `core/prng.js`'s exports, the interpreter
   behavior of `core/gendata.js` and `core/genscene.js`, and the RobotDefinition interface below are
   not internal. Every emailed demo link is a bare `def.json` on a Worker plus whatever these modules
@@ -81,7 +98,7 @@ demo/
   js/core/matcher.js    ← scaffold agent (pure matchEntry(entries, text); chat.js AND the runner's validator consume it)
   js/core/gendata.js    ← scaffold agent (GENSPEC data_spec interpreter; isomorphic, no DOM; PUBLISHED API)
   js/core/genscene.js   ← scaffold agent (GENSPEC scene_spec interpreter; PUBLISHED API)
-  js/core/leadform.js   ← scaffold agent (lead-capture modal; posts /api/demo-gen/submit)
+  js/core/signup.js     ← scaffold agent (post-engagement signup popup; makes NO network call)
   js/robots/index.js    ← scaffold agent (registry; imports the four robot defs; registerRobot() for generated ones)
   js/robots/generated.js ← scaffold agent (fetch + gate + compose a g-<slug> def.json into a RobotDefinition)
   js/robots/gen-fixture/ ← DEV FIXTURE. A hand-written def.json + harness.mjs that proves interpreter
@@ -120,10 +137,12 @@ export default {
                                    // from the visitor's own description. ingest.js is unrouted, so
                                    // this field is currently plumbing, kept because it is the only
                                    // slug-free identifier a def has.
-  generated: false,                // OPTIONAL, true only on a g-<slug> demo. Suppresses the lead
-                                   // form (both the header button and the one-shot popup): a
-                                   // visitor already looking at their own demo has nothing to ask
-                                   // for. Nothing else branches on it.
+  generated: false,                // OPTIONAL, true only on a g-<slug> demo. It suppresses
+                                   // NOTHING as of 2026-07-28. It used to hide the lead form, and
+                                   // the lead form is gone; the signup popup deliberately DOES
+                                   // show on a generated demo, because a visitor looking at a demo
+                                   // built for their own robot is the warmest lead there is.
+                                   // Kept as the flag `generated.js` sets and the loader reads.
   name: 'Self-balancing robot',
   device: 'ESP32 · BNO055 IMU · 2x stepper',
   tagline: 'PID balancer, 73 s mission',   // picker card copy
@@ -195,14 +214,27 @@ reset-view, and the scrubber with finding markers (colored ticks; hover shows ti
 `chart.js` — `createChart(mount, robotDef, timeline)`; renders the active channel's selected
 fields; channel/field chips above; crosshair on hover with mono value readout; playhead synced from
 timeline; `focus(finding)` animates x-domain to the finding window (with ~15% padding) and shades
-the window; a "reset zoom" affordance appears when zoomed.
+the window; a "reset zoom" affordance appears when zoomed. A click seeks only when it lands inside
+the plot area; one in the padded axis gutters is ignored. The seek path raises a `chart:seek`
+`CustomEvent` on the canvas after seeking, which is what the signup popup arms off: a bare canvas
+click would also fire for gutter clicks the chart itself dropped. Nothing in `chart.js` listens to
+it and seek behaviour is unchanged by it.
 
-`chat.js` — `createChat(mount, robotDef, { onEvidence })`; renders history, streams answers
-(typewriter, ~3 chars per frame, instant-finish on click), parses the markdown subset, renders
-evidence chips (`Geist Mono`, `▸ 51.7 s · Fall` style). Matching: lowercase the user input, score
-each script entry by matcher hits, best score wins, tie → first; zero hits → canned fallback that
-lists the suggested questions. When an answer containing evidence finishes streaming, auto-fire
-`onEvidence(finding)` for the FIRST evidence item (chips re-fire it on click).
+`chat.js` — `createChat(mount, robotDef, { onEvidence, onSettled })`; renders history, streams
+answers (typewriter, ~3 chars per frame, instant-finish on click), parses the markdown subset,
+renders evidence chips (`Geist Mono`, `▸ 51.7 s · Fall` style). Matching: lowercase the user input,
+score each script entry by matcher hits, best score wins, tie → first; zero hits → canned fallback
+that lists the suggested questions. When an answer containing evidence finishes streaming,
+auto-fire `onEvidence(finding)` for the FIRST evidence item (chips re-fire it on click).
+
+`onSettled()` fires when an answer is fully rendered (typewriter complete), with EXACTLY-ONCE
+semantics per logical answer, keyed by request identity. It fires on every true terminal path
+(evidence, no-evidence, scripted fallback, partial error, pre-token error) and NOT on the
+intermediate `discard()` when a no-token live failure hands off to the scripted fallback (one
+settle, on the fallback's completion), NOT for an answer that was superseded by a newer question,
+and never after `dispose()`. It exists because the signup popup's quiet timer must start when the
+visitor's action has ENDED: the SSE `done` frame is too early (the typewriter is still running) and
+`onEvidence` only ever covers evidence-bearing answers.
 
 **`onEvidence(finding)` in app.js is the money interaction, in this exact order:**
 1. viewer scrubber flashes the finding marker; timeline `setLoop(finding.window, {speed: finding.slowmo ? 0.4 : 1})` and `seek(window[0])`, `play()`.
@@ -435,32 +467,41 @@ is not available. It may have expired." rather than bouncing to the picker: a vi
 personal link deserves to be told the link is dead. In-flight and navigated-away guards both apply.
 The def contract, including what the interpreters guarantee, is `demo/GENSPEC.md`.
 
-**Lead form** (`core/leadform.js`). Two ways in: the permanent `[data-cta="mydemo"]` header button,
-and one popup 6 s after the first evidence lands, which is the moment the demo has just proved its
-point. The popup is one-shot per page session. The localStorage gate (`alloy_leadform_seen`, 7 day
-cooldown) is set on DISMISS or SUBMIT, never on open, and only the popup respects it: a visitor who
-deliberately clicks the header button is asking for the form. Both are suppressed entirely when
-`def.generated`. Posts `{use_case, email, robot_seen, website, dwell_ms}`; 202 is always success from
-the client's side.
+**Entry: SHELVED 2026-07-28.** The lead-form module, its header button and the
+`POST /api/demo-gen/submit` call are all deleted from this app (git history has them). Nothing in
+the demo asks a visitor for a demo any more. What is described below the fold here still serves
+every link already sent.
 
 **State machine** (owned by `DemoGenDO`, `worker/do.js`; the runner drives only the transitions it
-is allowed to):
+is allowed to). The machine itself is UNCHANGED by the shelve. What changed is that the two things
+that drive it are off: no new job can enter, and the LaunchAgent that walked jobs along it is
+disabled, so every edge marked PAUSED only moves under a supervised manual runner tick.
 
 ```
-unverified --(visitor clicks the verify link)--> pending
-pending    --(runner claim, 30 min lease)-----> claimed
-claimed    --(generate, validate, smoke, publish)--> generated
-generated  --(Hugh taps the signed approve link)--> approved
-generated  --(AUTO_APPROVE_AFTER_H, ships unset)--> approved
-approved   --(runner review sweep sends the ready mail)--> emailed
+unverified --(visitor clicks the verify link)--> pending      CLOSED: verify renders a paused page
+pending    --(runner claim, 30 min lease)-----> claimed       PAUSED: manual tick only
+claimed    --(generate, validate, smoke, publish)--> generated PAUSED: manual tick only
+generated  --(Hugh taps the signed approve link)--> approved  LIVE
+generated  --(AUTO_APPROVE_AFTER_H, ships unset)--> approved  PAUSED: no timer runs
+approved   --(runner review sweep sends the ready mail)--> emailed  PAUSED: manual tick only
 
 terminals
-  refused          model returned the refusal shape -> refusal email
-  error            3 failed attempts, or publish failed -> apology email
-  delivery_failed  the mailer rejected the address
-  expired          unverified 7 d, or generated and stale 48 h -> apology email
-  rejected         Hugh tapped reject; the bundle is deleted and the origin 404s
+  refused          model returned the refusal shape -> refusal email (PAUSED)
+  error            3 failed attempts, or publish failed -> apology email (PAUSED)
+  delivery_failed  the mailer rejected the address. Retryable: the runner records the mail KIND in
+                   a persisted intent marker that survives the failure, so a retry makes a real
+                   second provider call (see worker/runner-patches/)
+  expired          unverified 7 d, or generated and stale 48 h -> apology email (PAUSED)
+  rejected         Hugh tapped reject; the bundle is deleted and the origin 404s. LIVE
 ```
+
+Draining that queue at shelve time is what `GET /api/demo-gen/runner/state` exists for: it reports
+one count per state above (plus `unknown`), `review_total` and `next_claim_expiry_s`. The queue is
+drained when `pending`, `claimed`, `generated`, `approved`, `delivery_failed`, `unknown` and
+`review_total` are all zero and `next_claim_expiry_s` is `null`; terminal `emailed`/`rejected`
+rows remain by design, and `unverified` rows are removed by the one-time shelf purge afterwards. A `pending` or `delivery_failed` job Hugh declines to finish is ended with
+the allowlisted `POST /api/demo-gen/runner/shelf-purge`, per job, because the machine has no
+`pending -> rejected` edge and `delivery_failed` can only ever go to `emailed`.
 
 No cache purge is implemented. The def.json response carries `Cache-Tag: demogen-<slug>` so
 one can be wired later, but nothing calls the purge API today: rejecting a demo that was
@@ -480,9 +521,70 @@ the def; `chat.js` fetches it per request out of the DO by slug. `def.chat.scrip
 bundle as the offline fallback and is still fully validated. See `worker/README.md` for that path
 and for everything operational (deploy, the facts freshness gate, which states answer).
 
+## Signup popup (`core/signup.js`)
+
+What replaced the lead form. It sells the product instead of the demo: after a visitor has
+MEANINGFULLY engaged with a dataset, one modal drives straight to signup. No form, no email field,
+no network call of any kind.
+
+**Copy** (no em dashes): headline "Let's analyse your robot data now", body "Sign up and get 100GB
+free. First 100 users only.", primary CTA "Start streaming free", secondary "Keep exploring" plus a
+close X.
+
+**CTA.** The boot-computed `setupHref` (the same `SETUP_URL` constant and `?src=` forwarding the
+header CTA uses) with `utm_content=<src>-demo-popup`, or bare `utm_content=demo-popup` with no
+`?src`, so PostHog can separate popup clicks from header-CTA clicks. Opens in a new tab.
+
+**Trigger.** An explicit `idle -> armed -> timerPending -> shown` machine owned by the module and
+wired in `buildDemo`/`teardownDemo`. Arming signals are USER-ORIGINATED events only, never
+`timeline.onChange` (autoplay and programmatic seeks fire it) and never `chat.onAsk` (the
+auto-opener fires it): pointer/touch on the 3D viewer's actual render surface (the canvas, not all
+of `#viewer-mount`), viewer wheel zoom, keyboard arrow scrub, pointer/touch on the scrub UI
+controls (not wheel over `.v-scrub`, which does nothing and would arm on ordinary page scrolling),
+chart seeks (the `chart:seek` event, not a bare canvas click, so a click in the chart's padded
+gutters that the chart itself ignored does not arm), evidence and suggestion chip clicks, and a
+composer submit that is both `isTrusted` and carries a non-empty captured value.
+
+**Quiet period.** A 6 s timer that starts only once the arming action has ENDED and resets on any
+further activity: a pointer interaction counts as active until `pointerup`/`pointercancel` (a held
+10 s orbit never fires mid-drag), and composer focus with text, a keystroke inside the window or an
+open IME composition (`compositionstart` until `compositionend`/blur) all suppress.
+
+A typed question is a HOLD, not a restart. A qualifying submit raises a pending-answer hold before
+it arms, so the timer does not merely start again from the submit, it does not run at all until
+`chat.onSettled` says that answer is on screen. `isStreaming()` alone cannot cover this: when a
+live answer dies before its first token, `chat.js` discards the shell (clearing `streaming`) and
+only then schedules the scripted fallback on a 220 ms think beat, so for 220 ms the panel reads as
+idle with the visitor's answer unwritten, and a timer expiring in that gap would open the dialog
+mid handoff. One settle drops the hold entirely rather than decrementing it, because a superseded
+answer never settles (see the core interfaces) and a per-settle decrement would strand the hold the
+first time a visitor asked twice in a row. A settle with no hold outstanding (the auto-opener's) is
+a no-op, never an underflow.
+
+Fire-time guards: `currentRoute.name === 'demo'`, no pending answer, not streaming, no pointer
+down, no active composition, and the storage gate re-checked immediately before opening.
+
+**Gating.** localStorage `alloy_signup_seen` is written ON OPEN (impression-based), 7 day cooldown,
+re-checked immediately before open, with a `storage` listener that disarms when another tab shows
+it first. An impression requires visibility: never open while `document.visibilityState ===
+'hidden'`, hold until visible, so a background tab cannot silently consume the cooldown. A
+module-scope `everShown` flag makes it one-shot per page load and `teardownDemo()` NEVER resets it
+(distinct from the resettable trigger machine), so a browser with localStorage unavailable still
+sees it at most once. The old lead form's set-on-SCHEDULE bug is explicitly not copied: clearing a
+pending timer re-arms.
+
+**Teardown.** `teardownDemo()` closes an open popup, cancels timers, resets the machine to `idle`
+(but not `everShown`) and removes every listener it installed. Route churn is QA'd by counting
+listeners on persistent mounts, not only WebGL contexts.
+
+**Generated demos.** It shows on `g-<slug>` demos too. `def.generated` suppresses nothing.
+
+**Analytics.** `data-analytics-todo` markers only, per Out of scope: `signup_popup_shown`,
+`signup_popup_clicked`, `signup_popup_dismissed`.
+
 ## Out of scope
 
 Real auth, PostHog wiring (add a `data-analytics-todo` comment where events would go), deploy (Hugh
 gates), changes to landing `index.html`, service workers. There is no user auth and there are no
-accounts; the only backend surfaces are exactly the four listed in the non-negotiables, and a
-generated demo's slug is the entire access-control story.
+accounts; the only backend surfaces are the ones listed in the non-negotiables, and a generated
+demo's slug is the entire access-control story.

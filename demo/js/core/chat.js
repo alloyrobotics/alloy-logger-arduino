@@ -1,6 +1,9 @@
 // chat.js - the analyst panel. Renders history, streams answers with a typewriter, parses the
 // markdown subset, hydrates evidence chips, and hands the first evidence item of a finished
 // answer to onEvidence(). Chips re-fire on click.
+//
+// onSettled() fires once per logical answer, when its typewriter has finished, whichever terminal
+// path that answer took. It is the "the reader is free again" signal the signup popup waits on.
 
 import { renderMarkdown } from './markdown.js';
 import { matchEntry as matchEntryIn } from './matcher.js';
@@ -17,7 +20,11 @@ const MAX_LIVE_FAILURES = 2;
 /**
  * @param {HTMLElement} mount
  * @param {object} robotDef
- * @param {{ onEvidence?: (finding:object)=>void, onAsk?: (q:string)=>void }} hooks
+ * @param {{
+ *   onEvidence?: (finding:object)=>void,
+ *   onAsk?: (q:string)=>void,
+ *   onSettled?: (info:{id:number})=>void,
+ * }} hooks
  * @returns {{
  *   el:HTMLElement,
  *   ask:(text:string)=>void, askFirstQuestion:()=>void,
@@ -29,6 +36,7 @@ const MAX_LIVE_FAILURES = 2;
 export function createChat(mount, robotDef, hooks = {}) {
   const onEvidence = hooks.onEvidence || (() => {});
   const onAsk = hooks.onAsk || (() => {});
+  const onSettled = hooks.onSettled || (() => {});
   const findingById = new Map((robotDef.findings || []).map((f) => [f.id, f]));
 
   const el = document.createElement('div');
@@ -61,6 +69,24 @@ export function createChat(mount, robotDef, hooks = {}) {
   /** AbortController for the in-flight answer, so a new question cancels the old one. */
   let inflight = null;
   let liveFailures = 0;
+
+  // ---------- settled answers ----------
+  // One question is one LOGICAL answer, whatever route it takes to the screen: a live stream, a
+  // scripted answer, or a live attempt that dies before its first token and hands off to the
+  // scripted one. Each gets a monotonic id at ask() time, and onSettled fires at most once for it,
+  // when its typewriter has actually finished. Callers use this as "the reader is done reading":
+  // the SSE `done` frame is too early (the text is still being typed out) and onEvidence only ever
+  // covers evidence-bearing answers.
+  let reqSeq = 0;
+  /** Highest id already settled. Ids are monotonic, so this is the exactly-once guard. */
+  let lastSettled = 0;
+
+  function settleRequest(reqId) {
+    if (disposed) return;
+    if (!reqId || reqId <= lastSettled) return;
+    lastSettled = reqId;
+    onSettled({ id: reqId });
+  }
 
   // ---------- suggested chips ----------
   (robotDef.suggested || []).forEach((q) => {
@@ -201,9 +227,10 @@ export function createChat(mount, robotDef, hooks = {}) {
    * so the walker parks on the caret when it catches up instead of finishing, and only finishes
    * once close() says no more text is coming.
    *
+   * @param {number} [reqId] the logical answer this stream is rendering, for onSettled
    * @returns {{push:(t:string)=>void, close:(entry?:object)=>void, get length():number}}
    */
-  function startStream() {
+  function startStream(reqId) {
     const row = addAssistantShell();
     const body = row.querySelector('.bot-body');
     let src = '';
@@ -226,10 +253,13 @@ export function createChat(mount, robotDef, hooks = {}) {
       hydrate(row, entry);
       addCopyButtons(row);
       scrollDown(true);
+      // fireEvidence === false is a SUPERSEDED answer, abandoned mid-flight because the reader
+      // asked something else. It never settles: the answer they are waiting for is the next one.
       if (fireEvidence === false) return;
       const first = entry && entry.evidence && entry.evidence[0];
       const f = first ? findingById.get(first) : null;
       if (f) onEvidence(f);
+      settleRequest(reqId);
     };
 
     // A skip while the network is still delivering can only skip what has arrived; the walker
@@ -280,7 +310,11 @@ export function createChat(mount, robotDef, hooks = {}) {
         entry = e || null;
         closed = true;
       },
-      /** Tear the shell back down — used when a live answer dies before producing any text. */
+      /**
+       * Tear the shell back down, used when a live answer dies before producing any text. This is
+       * an INTERMEDIATE step, not a terminal one: the same reqId is about to be answered from the
+       * script, so nothing settles here.
+       */
       discard() {
         streaming = false;
         el.classList.remove('is-streaming');
@@ -314,7 +348,7 @@ export function createChat(mount, robotDef, hooks = {}) {
    * `store:false` keeps the exchange out of the transcript — used when the server rejected the
    * question (a 400 stored here would ride along on every later request and 400 those too).
    */
-  function answerScripted(q, opts) {
+  function answerScripted(q, opts, reqId) {
     const store = !opts || opts.store !== false;
     const entry = matchEntry(q);
     const body = entry ? entry.answer : fallbackText();
@@ -322,7 +356,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     pendingTimer = window.setTimeout(() => {
       pendingTimer = 0;
       if (disposed) return;
-      const s = startStream();
+      const s = startStream(reqId);
       s.push(body);
       s.close(entry);
       if (store) remember(q, body);
@@ -334,10 +368,10 @@ export function createChat(mount, robotDef, hooks = {}) {
    * spinner while the model warms up. Any failure before the first token falls back to the
    * scripted answer, so the panel is never dead — the demo still works with the endpoint down.
    */
-  async function answerLive(q) {
+  async function answerLive(q, reqId) {
     const ctrl = new AbortController();
     inflight = ctrl;
-    const s = startStream();
+    const s = startStream(reqId);
     let answer = '';
     let entry = null;
     let failure = null;
@@ -417,7 +451,8 @@ export function createChat(mount, robotDef, hooks = {}) {
         s.close(null);
       } else {
         s.discard();
-        answerScripted(q, { store: !badRequest });
+        // same reqId: one question, one settle, on the fallback's completion
+        answerScripted(q, { store: !badRequest }, reqId);
       }
     } finally {
       if (inflight === ctrl) inflight = null;
@@ -453,9 +488,10 @@ export function createChat(mount, robotDef, hooks = {}) {
     onAsk(q);
     addUser(q);
 
+    const reqId = ++reqSeq;
     const live = (!opts || opts.live !== false) && liveFailures < MAX_LIVE_FAILURES;
-    if (live) answerLive(q);
-    else answerScripted(q);
+    if (live) answerLive(q, reqId);
+    else answerScripted(q, null, reqId);
   }
 
   function askFirstQuestion() {

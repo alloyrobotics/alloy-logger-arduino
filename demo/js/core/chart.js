@@ -540,6 +540,11 @@ export function createChart(mount, robotDef, timeline) {
     const px = (e.changedTouches ? e.changedTouches[0].clientX : e.clientX) - r.left;
     if (px < padL || px > w - padR) return;
     timeline.seek(clamp(px2x(px), 0, duration));
+    // Raised only on the path that really seeks, i.e. never for a click in the padded axis
+    // gutters, which the guard above drops. signup.js listens for this instead of a bare canvas
+    // click so it cannot arm off a click the chart itself ignored. Seek behaviour is unchanged:
+    // this is a notification after the fact and nothing in this module listens to it.
+    canvas.dispatchEvent(new CustomEvent('chart:seek'));
   }
 
   canvas.addEventListener('pointermove', onMove);

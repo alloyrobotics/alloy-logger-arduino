@@ -1,0 +1,78 @@
+--- a/runner.mjs
++++ b/runner.mjs
+@@ -385,6 +385,32 @@
+  */
+ function sentMarker(jobDir, kind) {
+   return join(jobDir, `sent-${String(kind).replace(/[^a-z_-]/gi, '')}.marker`);
++}
++
++/**
++ * The INTENT marker for one (job, mail kind) pair, and a strictly separate thing from the sent
++ * marker above.
++ *
++ *   sent-<kind>.marker    "a real email left this machine". Written before the send, taken BACK
++ *                         when the send did not land. Presence means skip the send. Untouched.
++ *   intent-<kind>.marker  "this job's delivery is the <kind> mail". Written when the intent is
++ *                         known, and NEVER removed.
++ *
++ * Two markers because the two questions are different, and conflating them lost real leads. A
++ * failed send takes its sent marker back (correct: nothing was delivered, so the retry must
++ * really send) and the job transitions to `delivery_failed`. But `delivery_failed` does not record
++ * which of the three mails failed, the state it failed FROM is gone by then, and the only thing
++ * that ever knew the kind was the marker that was just deleted. So the sweep found a markerless
++ * `delivery_failed` job, said "nothing to retry", and skipped it on every tick forever: a
++ * permanently stuck lead, silently.
++ *
++ * The intent marker survives the failure and answers only the kind question, so the retry
++ * re-enters the same branch it failed in and makes a REAL second provider call. The sent marker's
++ * dedupe contract is not involved and does not change: it is still absent after a failed send, so
++ * the retry still sends, and still present after a successful one, so a mail never goes out twice.
++ */
++function intentMarker(jobDir, kind) {
++  return join(jobDir, `intent-${String(kind).replace(/[^a-z_-]/gi, '')}.marker`);
+ }
+
+ /**
+@@ -398,6 +424,18 @@
+  */
+ async function deliver(cfg, api, log, job, jobDir, kind, vars) {
+   const marker = sentMarker(jobDir, kind);
++
++  // Record WHICH mail this job's delivery is, before anything can fail, and for dry sends too: a
++  // dry send that fails its template check posts `delivery_failed` just like a real one, and the
++  // retry needs the kind either way. Written every pass and never removed, so it is idempotent and
++  // survives the failure the sent marker cannot.
++  try {
++    writeFileSync(intentMarker(jobDir, kind), `${JSON.stringify({ at: new Date().toISOString(), kind, state: job.state })}\n`);
++  } catch (e) {
++    // A retry that cannot be classified later is worse than noisy, but it is not worth losing the
++    // send over: carry on and say so.
++    log('mail.intent_unwritable', { job_id: job.id, kind, error: String(e?.message ?? e).slice(0, 200) });
++  }
+   // A dry write never leaves the machine, so there is nothing to dedupe and no marker: writing one
+   // would make the eventual switch to a real mailer skip the whole backlog it exists to send.
+   const wantsDelivery = !String(cfg.mailer).includes('dry');
+@@ -480,11 +518,21 @@
+   // `delivery_failed` is a RETRY state, not a terminal one: the mail was composed and did not
+   // land. Which mail to retry is recorded by the marker files, so the retry re-enters the same
+   // branch it failed in rather than guessing from the state alone.
++  //
++  // The INTENT marker is what normally answers here, because the send that failed took its own
++  // sent marker back on the way out (see deliver()). The sent marker is still checked first, for
++  // the rarer case where the mail really did leave and only the status post failed: then the kind
++  // is the same either way, and deliver() skips the send and retries the status alone.
+   const retrying = job.state === 'delivery_failed';
++  const KINDS = ['ready', 'refusal', 'apology'];
+   const retryKind = retrying
+-    ? ['ready', 'refusal', 'apology'].find((k) => existsSync(sentMarker(jobDir, k))) ?? null
++    ? KINDS.find((k) => existsSync(sentMarker(jobDir, k)))
++      ?? KINDS.find((k) => existsSync(intentMarker(jobDir, k)))
++      ?? null
+     : null;
+   if (retrying && !retryKind) {
+-    log('review.skip', { job_id: job.id, state: job.state, reason: 'delivery_failed with no send marker, nothing to retry' });
++    // No marker of either kind: the job dir was swept, or this row predates the intent marker.
++    // Nothing here knows which mail to send, and guessing would mail a stranger the wrong thing.
++    log('review.skip', { job_id: job.id, state: job.state, reason: 'delivery_failed with no send or intent marker, nothing to retry' });
+     return;
+   }

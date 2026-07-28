@@ -16,6 +16,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 
+import { applyShelvePurge, computeStateSnapshot } from "./do-shelve.js";
+
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 /** A generation job that has not published inside the lease is dead and goes back in the
@@ -50,6 +52,16 @@ const LEGAL_TRANSITIONS = {
   emailed: [],
   rejected: [],
 };
+
+/**
+ * The machine's full state enum, derived from the transition table above so the two can never
+ * drift. This is what `runnerState()` reports one count per, and the drain gate for the shelve
+ * reads those counts directly, so a state missing from here would read as an empty queue.
+ */
+const ALL_STATES = Object.keys(LEGAL_TRANSITIONS);
+
+/** States an explicitly allowlisted slug may be deleted from by the one-time shelve purge. */
+const SHELF_PURGEABLE_STATES = ["pending", "delivery_failed"];
 
 /** States a job can be in and still be worth talking about in the queue counters. */
 const OPEN_STATES = ["unverified", "pending", "claimed", "generated", "approved"];
@@ -599,6 +611,35 @@ export class DemoGenDO extends DurableObject {
   slugFor(jobId) {
     const row = this.sql.exec("SELECT slug FROM jobs WHERE id = ?", jobId).toArray()[0];
     return row ? row.slug : null;
+  }
+
+  // ------------------------------------------------------------------ shelve
+
+  /**
+   * Counts per state plus the earliest reclaimable lease, for the drain gate the shelve runs
+   * against (`GET /api/demo-gen/runner/state`). READ ONLY, and that is the whole point: unlike
+   * `queue()` and `review()` it does not call `reclaimExpired()` and does not emit `runner_seen`,
+   * so polling it while the queue drains cannot itself move a job or restart the staleness clock.
+   */
+  runnerState(now) {
+    return computeStateSnapshot(this.sql, {
+      now: now ?? Date.now(),
+      states: ALL_STATES,
+      reviewStates: REVIEW_STATES,
+    });
+  }
+
+  /**
+   * The one-time shelve purge. Deletes every `unverified` row, plus `pending` and
+   * `delivery_failed` jobs whose slug Hugh put on the allowlist, and nothing else. Scope,
+   * refusals and idempotence all live in do-shelve.js. The route in front of this only exists
+   * while `DEMOGEN_SHELF_PURGE=1` is set, so there is no standing bulk-delete surface.
+   */
+  shelvePurge({ allowSlugs = [], now } = {}) {
+    const at = now ?? Date.now();
+    const res = applyShelvePurge(this.sql, { allowSlugs, purgeableStates: SHELF_PURGEABLE_STATES });
+    this.emit("shelf_purge", null, at);
+    return res;
   }
 
   /** Read-only introspection for the curl matrix and the funnel digest. */

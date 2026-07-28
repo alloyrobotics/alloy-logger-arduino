@@ -11,22 +11,25 @@
 //
 // All state lives in DemoGenDO (worker/do.js). This file validates, hashes, signs, renders
 // and never keeps anything.
+//
+// SHELVED 2026-07-28. New demos are no longer taken: `submit` is a 410 tombstone and `verify`
+// renders a paused page instead of confirming anything, so no new job can enter the machine and
+// no old verification link can promise a build that no runner will claim. Everything that SERVES
+// an already-published demo stays live and untouched: def.json for a g-slug, the live analyst in
+// worker/chat.js, approve, reject, unsubscribe and the whole runner API. Un-shelving is reverting
+// the two tombstones; the pipeline they replaced is in git history at 9054aad.
 
 const DO_NAME = "main";
 
 const MAX_BODY_BYTES = 4 * 1024;
 const MAX_DEF_BYTES = 128 * 1024;
 const MAX_FACTS_BYTES = 256 * 1024;
-const MIN_DWELL_MS = 2500;
-const VERIFY_TTL_MS = 7 * 86_400_000;
 const APPROVE_TTL_MS = 7 * 86_400_000;
+/** Cap on how many slugs one shelve-purge call may name. Hugh approves each one by hand. */
+const MAX_PURGE_SLUGS = 100;
 
 const SLUG_RE = /^[a-z2-7]{20}$/;
 const JOB_ID_RE = /^[a-z2-7]{22}$/;
-// Conservative on purpose: a rejected odd-but-real address costs one lead, an accepted
-// garbage address costs an Opus job and a deliverability hit.
-const EMAIL_RE = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+$/;
-const ROBOTS_SEEN = new Set(["sbr", "arm6", "drone", "rescue"]);
 const DEVICE_ID_RE = /^[a-z0-9][a-z0-9-]{1,22}$/;
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
 const CHANNEL_PATH_RE = /^\/[a-z][a-z0-9_]{0,15}$/;
@@ -188,197 +191,46 @@ function stub(env) {
   return env.DEMOGEN_DO.get(env.DEMOGEN_DO.idFromName(DO_NAME));
 }
 
-/** Strip C0/C1 controls but keep newline and tab, then collapse the runs of blank space. */
-function cleanUseCase(raw) {
-  return String(raw ?? "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-}
-
-function normalizeForDedupe(useCase) {
-  return useCase.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-// ------------------------------------------------------------------ email
+// ------------------------------------------------------------------ public: submit (SHELVED)
 
 /**
- * The only email this Worker sends. Everything else (ready / apology / refusal) is the
- * runner's mailer, because those need job artifacts this Worker never sees.
- * The body is fixed code; the only interpolations are the visitor's own words and a
- * server-constructed link.
+ * Tombstone. The entry point to the generator is closed, so this answers 410 and does nothing
+ * else, whatever the method, the content type or the body.
+ *
+ * The zero-side-effect part is the requirement, not a nicety. A submit that still read the body
+ * would still spend a body read on every bot that keeps posting; one that still reached the DO
+ * would keep creating rows the shelve purge then has to clean up; one that still scheduled
+ * `ctx.waitUntil` would keep sending verification mail for demos nobody will build. So this
+ * returns BEFORE the content-type check, before `request.text()`, before `stub(env)` and before
+ * any `ctx.waitUntil`, and worker/demo-gen.unit.test.mjs drives it with a request whose `text()`,
+ * DO getter, `waitUntil` and `fetch` all throw if they are touched.
+ *
+ * 410 rather than 404: the surface existed, it is gone on purpose, and a caller that caches the
+ * answer is welcome to. `no-store` still rides along so a shelved response can never be the thing
+ * an un-shelved deploy keeps serving.
+ *
+ * It takes no arguments on purpose. A handler that cannot see the request cannot grow a side
+ * effect back by accident.
  */
-async function sendVerificationEmail(env, { to, useCase, link }) {
-  const subject = "Confirm your Alloy demo build";
-  const body = `You asked for a personalized demo of Alloy for:
-
-  "${useCase.slice(0, 120)}"
-
-Click to confirm and we start building:
-${link}
-
-We only use your email to send you this demo. If this wasn't you, ignore this and nothing happens.
-`;
-
-  if (env.DEMOGEN_DEV_NO_EMAIL === "1" || !env.DEMOGEN_RESEND_KEY) {
-    // Local dev and any misconfigured deploy: log instead of dropping silently, so the
-    // verify link is still reachable from the wrangler dev console.
-    console.log(`[demo-gen] verification email suppressed to=${to} link=${link}`);
-    return { ok: true, suppressed: true };
-  }
-
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.DEMOGEN_RESEND_KEY}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        from: env.DEMOGEN_FROM || FALLBACK_FROM,
-        to: [to],
-        reply_to: "hugh@usealloy.ai",
-        subject,
-        text: body,
-      }),
-      // A Resend call that never answers would hold the waitUntil open until the runtime
-      // kills it, and the job would sit in `unverified` with no event either way. Fail fast
-      // and record the failure instead.
-      signal: AbortSignal.timeout(10_000),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.log(`[demo-gen] resend ${res.status}: ${JSON.stringify(payload).slice(0, 300)}`);
-      return { ok: false, error: `resend ${res.status}` };
-    }
-    return { ok: true, id: payload.id };
-  } catch (err) {
-    console.log(`[demo-gen] resend threw: ${String(err?.message ?? err)}`);
-    return { ok: false, error: String(err?.message ?? err) };
-  }
+function handleSubmit() {
+  return json({ ok: false, reason: "gone", error: "demo generation is paused" }, 410);
 }
 
-// ------------------------------------------------------------------ public: submit
+// ------------------------------------------------------------------ public: verify (PAUSED)
 
-async function handleSubmit(request, env, ctx) {
-  const ct = request.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) return json({ ok: false, reason: "invalid" }, 415);
-
-  const declared = Number(request.headers.get("content-length") || "0");
-  if (declared > MAX_BODY_BYTES) return json({ ok: false, reason: "invalid" }, 413);
-
-  const raw = await request.text();
-  if (enc.encode(raw).byteLength > MAX_BODY_BYTES) return json({ ok: false, reason: "invalid" }, 413);
-
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    return json({ ok: false, reason: "invalid" }, 400);
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return json({ ok: false, reason: "invalid" }, 400);
-
-  const do_ = stub(env);
-
-  // Bot front line. Both answer exactly like a success so a scripted submitter learns
-  // nothing from the response, and neither creates a job row.
-  if (typeof body.website === "string" && body.website.trim().length > 0) {
-    ctx.waitUntil(do_.note("honeypot"));
-    return json({ ok: true }, 202);
-  }
-  const dwell = Number(body.dwell_ms);
-  if (!Number.isFinite(dwell) || dwell < MIN_DWELL_MS) {
-    ctx.waitUntil(do_.note("dwell_block"));
-    return json({ ok: true }, 202);
-  }
-
-  const email = String(body.email ?? "").trim().toLowerCase();
-  if (email.length === 0 || email.length > 254 || !EMAIL_RE.test(email)) {
-    return json({ ok: false, reason: "invalid" }, 400);
-  }
-
-  const useCase = cleanUseCase(body.use_case);
-  if (useCase.length < 40 || useCase.length > 600) return json({ ok: false, reason: "invalid" }, 400);
-  if (useCase.split(/\s+/).filter(Boolean).length < 5) return json({ ok: false, reason: "invalid" }, 400);
-
-  const robotSeen = body.robot_seen == null || body.robot_seen === "" ? null : String(body.robot_seen);
-  if (robotSeen !== null && !ROBOTS_SEEN.has(robotSeen)) return json({ ok: false, reason: "invalid" }, 400);
-
-  const ip = request.headers.get("cf-connecting-ip") || "0.0.0.0";
-  // The raw IP is never stored: the DO only ever sees this hash, and the hash is keyed so
-  // it is not reversible by rainbow table over the v4 space.
-  const ipHash = (await sha256Hex(`${ip}${signingKey(env)}`)).slice(0, 32);
-  const emailHash = (await sha256Hex(`${email}${signingKey(env)}`)).slice(0, 32);
-  const dedupeKey = await sha256Hex(`${email}|${normalizeForDedupe(useCase)}`);
-  const ua = (request.headers.get("user-agent") || "").slice(0, 200);
-
-  const result = await do_.submit({
-    email,
-    emailHash,
-    useCase,
-    robotSeen,
-    ipHash,
-    ua,
-    dedupeKey,
-    now: Date.now(),
-  });
-
-  if (result.ok === false && result.reason === "rate") return json({ ok: false, reason: "rate" }, 429);
-  if (result.suppressed) return json({ ok: true }, 202); // silent: an unsubscribe stays honoured
-  if (result.duplicate) return json({ ok: true, duplicate: true }, 202);
-
-  const token = await makeToken(env, "verify", result.job.id, VERIFY_TTL_MS);
-  const link = `${originOf(env)}/api/demo-gen/verify?t=${token}`;
-  // Sent after the response, so a slow Resend never becomes a slow form. The outcome is
-  // still counted: verify_mail_failed is the alarm for "leads captured, nothing delivered".
-  ctx.waitUntil(
-    sendVerificationEmail(env, { to: email, useCase, link }).then((mail) =>
-      // Fresh stub: the one above was handed out before the send and does not need to
-      // survive it.
-      stub(env).note(mail.ok ? "verify_mail_sent" : "verify_mail_failed", result.job.id),
-    ),
-  );
-
-  // 202 either way: the job exists and the address is captured, and telling a visitor that
-  // our mail provider is unhappy helps nobody.
-  return json({ ok: true }, 202);
-}
-
-// ------------------------------------------------------------------ public: verify
-
-async function handleVerify(request, env, url) {
-  const token = url.searchParams.get("t") || "";
-  const claim = await readToken(env, "verify", token);
-  if (!claim || !JOB_ID_RE.test(claim.subject)) {
-    return page("Link not valid", "That link is not valid", p("It may have expired, or been copied incompletely. Ask for a demo again and we will send a fresh one."), 400);
-  }
-
-  // The GET only renders. A mail scanner that follows the link without running JS confirms
-  // nothing, which matters because a scanner-confirmed address is a lead we would build a demo
-  // for that no human ever asked to confirm.
-  if (request.method === "GET") {
-    return confirmPage(
-      "Confirm your demo",
-      "One tap to confirm",
-      "Confirm this is you and we start building your demo.",
-      "Yes, build my demo",
-      `/api/demo-gen/verify?t=${token}`,
-    );
-  }
-
-  const res = await stub(env).verify(claim.subject, Date.now());
-  if (res.status === "unknown") {
-    return page("Link not valid", "That link is not valid", p("We have no record of that request. Ask for a demo again and we will send a fresh one."), 400);
-  }
-  if (res.status === "already") {
-    return page("Already confirmed", "Already confirmed", p("You have confirmed this one. The link lands in your inbox when the demo is built."));
-  }
+/**
+ * Paused page. The old flow moved a job `unverified -> pending` and told the visitor a build had
+ * started, which is now a promise nothing keeps: no runner claims the queue. So this renders and
+ * ONLY renders, on both GET and POST, without reading the token or touching the DO, which is the
+ * only way to be certain no state moves. An old verification link in someone's inbox therefore
+ * lands on an honest page instead of a lie.
+ */
+function handleVerify() {
   return page(
-    "Confirmed",
-    "You're confirmed",
-    p("We're building your demo now. The link lands in your inbox, usually within a few hours."),
+    "Demo generation is paused",
+    "Demo generation is paused",
+    `${p("We are not building new personalized demos at the moment, so this link does not start anything.")}
+${p("Nothing else happens with your address. The live demo is still up, and you can ask the analyst your own questions about any of the four missions in it.")}`,
   );
 }
 
@@ -548,7 +400,14 @@ async function handleApproval(request, env, url, kind) {
   }
 
   return kind === "approve"
-    ? page("Approved", "Approved", p("The runner picks this up on its next tick and emails the link. Nothing else to do."))
+    ? page(
+        "Approved",
+        "Approved",
+        // Deliberately promises nothing about delivery. The runner is off for the shelve, so the
+        // old "picks this up on its next tick and emails the link" was a promise that a supervised
+        // manual tick, or nothing at all, has to keep.
+        p("The demo link serves from now on. Sending it is a separate step and does not happen on its own while the runner is paused."),
+      )
     : page("Rejected", "Rejected", p("The bundle is deleted and the demo URL now returns 404. No email goes out."));
 }
 
@@ -891,6 +750,50 @@ async function handleRunner(request, env, url, tail) {
     return json(await do_.queue(Date.now()));
   }
 
+  // Drain visibility for the shelve. One count per state in the DO's full enum, plus the review
+  // total and the wait on the earliest claimed lease, and nothing else: no email, no use case, no
+  // slug, no claim token, so a leaked bearer buys the size of the queue and nothing about the
+  // people in it. READ ONLY by contract - unlike `queue` and `review` it neither reclaims an
+  // expired lease nor records `runner_seen`, because the shutdown loop polls it until every count
+  // is zero and a gate that mutates what it measures is not a gate.
+  if (tail === "state" && request.method === "GET") {
+    return json(await do_.runnerState(Date.now()));
+  }
+
+  // One-time shelve purge. The route EXISTS only while DEMOGEN_SHELF_PURGE=1 is set for the
+  // shelve deploy and is gone (404) the moment the flag is removed, so this Worker carries no
+  // standing bulk-delete surface. Every `unverified` row goes; a `pending` or `delivery_failed`
+  // job goes only if Hugh named its slug in the body. See DemoGenDO.shelvePurge.
+  if (tail === "shelf-purge" && request.method === "POST" && env.DEMOGEN_SHELF_PURGE === "1") {
+    const body = await readJsonBody(request, MAX_BODY_BYTES * 4);
+    if (body.tooLarge) return json({ ok: false, error: "body_too_large" }, 413);
+    if (body.bad || !body.value || typeof body.value !== "object" || Array.isArray(body.value)) {
+      return json({ ok: false, error: "bad_json" }, 400);
+    }
+    const raw = body.value.allow_slugs ?? [];
+    if (!Array.isArray(raw) || raw.length > MAX_PURGE_SLUGS) {
+      return json({ ok: false, error: `allow_slugs must be an array of at most ${MAX_PURGE_SLUGS} slugs` }, 400);
+    }
+    // Shape-checked here so a typo can never reach the DELETE as a wildcard-looking string.
+    const allowSlugs = [...new Set(raw.map((s) => String(s)))];
+    const invalid = allowSlugs.filter((s) => !SLUG_RE.test(s));
+    if (invalid.length > 0) {
+      return json({ ok: false, error: "allow_slugs contains a value that is not a slug", invalid: invalid.slice(0, 5) }, 400);
+    }
+
+    const res = await do_.shelvePurge({ allowSlugs, now: Date.now() });
+    // Logged with slugs and counts: this is a destructive one-off and the log line is the record
+    // of what it took. Slugs only, never the addresses that went with them.
+    console.log(
+      `[demo-gen] shelf purge unverified=${res.unverified_deleted} allowlisted=${res.allowlisted_deleted}` +
+        ` bundles=${res.bundles_deleted}` +
+        ` deleted=${res.deleted.map((d) => `${d.slug}:${d.state}`).join(",") || "-"}` +
+        ` refused=${res.refused.map((d) => `${d.slug}:${d.state}`).join(",") || "-"}` +
+        ` not_found=${res.not_found.join(",") || "-"}`,
+    );
+    return json(res);
+  }
+
   if (tail === "review" && request.method === "GET") {
     const res = await do_.review(Date.now());
     const origin = originOf(env);
@@ -1038,6 +941,12 @@ export default async function handleDemoGen(request, env, ctx, url) {
   try {
     const path = url.pathname;
 
+    // SHELVED, and deliberately the FIRST branch in the file: nothing above it can read a body,
+    // resolve the DO or schedule work, so the tombstone is unconditionally free of side effects.
+    // Any method gets it, so a stale form post, a retrying bot and a link scanner's GET all get
+    // the same honest answer.
+    if (path === "/api/demo-gen/submit") return handleSubmit();
+
     if (path.startsWith("/demo/js/robots/g-")) {
       if (request.method !== "GET" && request.method !== "HEAD") return textResponse("method not allowed", 405);
       const rest = path.slice("/demo/js/robots/g-".length);
@@ -1051,14 +960,11 @@ export default async function handleDemoGen(request, env, ctx, url) {
       return await handleRunner(request, env, url, path.slice("/api/demo-gen/runner/".length));
     }
 
-    if (path === "/api/demo-gen/submit") {
-      if (request.method !== "POST") return json({ ok: false, reason: "invalid" }, 405);
-      return await handleSubmit(request, env, ctx);
-    }
     if (path === "/api/demo-gen/verify") {
-      // GET renders the confirm page, POST commits. See confirmPage().
+      // PAUSED. Both verbs render the same page and neither moves a job. The method check stays
+      // so the route's shape is unchanged for anything that probes it.
       if (request.method !== "GET" && request.method !== "POST") return textResponse("method not allowed", 405);
-      return await handleVerify(request, env, url);
+      return handleVerify();
     }
     if (path === "/api/demo-gen/unsubscribe") {
       if (request.method !== "GET" && request.method !== "POST") return textResponse("method not allowed", 405);

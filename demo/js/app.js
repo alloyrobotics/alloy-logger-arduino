@@ -14,7 +14,7 @@ import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
 import { createContext, GENERIC_ICON } from './core/context.js';
-import { createLeadForm, leadFormGated } from './core/leadform.js';
+import { createSignupPopup, createSignupTriggers } from './core/signup.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
@@ -162,42 +162,25 @@ function takeHeroHandoff(id) {
   return h;
 }
 
-// ---------------------------------------------------------------------------- lead form
-// Two ways in: the permanent header button, and one unmissable popup 6 s after the first piece
-// of evidence lands, which is the exact moment the demo has just proved its point. It is a
-// one-shot for the whole page session, it never fires on a generated demo (that visitor already
-// has their own demo), and dismissing it buys a 7 day quiet period.
+// ---------------------------------------------------------------------------- signup popup
+// The dialog is built once at boot and reused across routes; the trigger machine that decides
+// when it opens is installed per demo build and torn down with the demo (core/signup.js).
 
-let leadForm = null;
-/** Pending 6 s popup timer, so teardown and the next question can both cancel it. */
-let leadTimer = 0;
-/** The popup gets one chance per page session, armed by the first evidence and never rearmed. */
-let leadPopupUsed = false;
-
-function clearLeadTimer() {
-  if (!leadTimer) return;
-  window.clearTimeout(leadTimer);
-  leadTimer = 0;
-}
-
-function scheduleLeadForm(def) {
-  if (!leadForm || leadPopupUsed || leadTimer) return;
-  if (def.generated || leadFormGated()) return;
-  leadPopupUsed = true;
-  leadTimer = window.setTimeout(() => {
-    leadTimer = 0;
-    // the demo may have been left, replaced or swapped for a generated one in those 6 s
-    if (currentRoute.name !== 'demo' || !demo || demo.def.generated) return;
-    leadForm.open('evidence');
-  }, 6000);
-}
+let signupPopup = null;
+let signupTriggers = null;
 
 // ---------------------------------------------------------------------------- demo
 let demo = null;
 
 function teardownDemo() {
+  // Ahead of the `demo` guard: the triggers own window level listeners and a pending timer, and
+  // leaving either behind would let a torn-down demo open a popup over the picker.
+  if (signupTriggers) {
+    signupTriggers.dispose();
+    signupTriggers = null;
+    delete window.__signup;
+  }
   if (!demo) return;
-  clearLeadTimer();
   // #chart-toggle is a persistent node: its handler closes over this demo's chart/viewer/timeline,
   // so leaving it attached pins the whole torn-down three.js scene graph in memory.
   const toggle = screens.demo.querySelector('#chart-toggle');
@@ -217,10 +200,6 @@ function buildDemo(def) {
   const host = screens.demo;
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
-  // A visitor already looking at their own generated demo has nothing to ask for here.
-  host.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
-    b.hidden = Boolean(def.generated);
-  });
 
   const viewerMount = host.querySelector('#viewer-mount');
   const chartMount = host.querySelector('#chart-mount');
@@ -286,9 +265,6 @@ function buildDemo(def) {
     // 4
     viewer.showBanner(finding, clearEvidence);
 
-    // 5. the demo has just made its case, so the lead form gets its one shot 6 s later
-    scheduleLeadForm(def);
-
     // data-analytics-todo: capture('demo_evidence_fired', { robot: def.id, finding: finding.id })
   }
 
@@ -296,8 +272,11 @@ function buildDemo(def) {
     onEvidence,
     onAsk: () => {
       clearEvidence();
-      // a visitor mid-conversation is engaged, not idle: do not interrupt them with the popup
-      clearLeadTimer();
+    },
+    // The answer is fully typed out, so a visitor who asked a question is free again: this is the
+    // only chat signal the signup popup's quiet period listens to.
+    onSettled: () => {
+      if (signupTriggers) signupTriggers.chatSettled();
     },
   });
 
@@ -323,6 +302,19 @@ function buildDemo(def) {
   demo = { def, timeline, viewer, chart, chat, onEvidence, clearEvidence, setChartOpen };
   // exposed for QA/integration assertions (page state, not pixels)
   window.__demo = demo;
+
+  // Installed here, after the viewer/chart/chat nodes exist, because the machine arms off THEIR
+  // surfaces (the render canvas, the scrubber, the chart, the chips, the composer) and off nothing
+  // programmatic. Generated demos get it too: that visitor is the warmest lead on the page.
+  if (signupPopup) {
+    signupTriggers = createSignupTriggers({
+      host,
+      popup: signupPopup,
+      isDemoRoute: () => currentRoute.name === 'demo',
+      isStreaming: () => chat.streaming,
+    });
+    window.__signup = signupTriggers;
+  }
 
   timeline.play();
   window.setTimeout(() => {
@@ -554,9 +546,11 @@ function boot() {
   // setup-org CTAs as utm_content "<channel>-demo", same idea as the landing page's passthrough,
   // so PostHog keeps channel attribution when the DM or bio points here instead of the landing.
   const srcTag = (new URLSearchParams(location.search).get('src') || '').replace(/[^a-z0-9_-]/gi, '');
-  const setupHref = srcTag
-    ? SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${srcTag}-demo`)
-    : SETUP_URL;
+  const contentTag = srcTag ? `${srcTag}-demo` : 'demo';
+  const setupHref = SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${contentTag}`);
+  // The popup's own CTA carries a "-popup" suffix on the same tag, so PostHog can separate a
+  // popup signup from a header signup without losing the channel the visitor arrived on.
+  const setupPopupHref = SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${contentTag}-popup`);
   document.querySelectorAll('[data-cta="github"]').forEach((a) => {
     a.href = GITHUB_URL;
   });
@@ -564,16 +558,8 @@ function boot() {
     a.href = setupHref;
   });
 
-  // The lead form is built once and reused: it reads the CURRENT robot at submit time rather
-  // than being handed a def, so it survives every route change without being rebuilt.
-  leadForm = createLeadForm(document.body, { getDef: () => (demo ? demo.def : null) });
-  document.querySelectorAll('[data-cta="mydemo"]').forEach((b) => {
-    b.addEventListener('click', () => {
-      if (demo && demo.def.generated) return;
-      clearLeadTimer(); // the button beat the popup to it
-      leadForm.open('header');
-    });
-  });
+  // Built once and reused across routes; buildDemo installs the trigger machine that opens it.
+  signupPopup = createSignupPopup(document.body, { href: setupPopupHref });
 
   // ?robot=<id> deep link
   const q = new URLSearchParams(location.search);

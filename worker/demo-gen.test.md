@@ -10,8 +10,30 @@ responses from that run are also what `~/.local/bin/alloylogger-demo-runner/fixt
 now contains, byte for byte: the runner's offline transport replays real worker output rather
 than a hand-written guess at it.
 
-There is no automated test runner for the site Worker (the repo has no test harness outside
-`cloud/`), so this file is the contract.
+**(2026-07-28, shelve.)** The generator's ENTRY is closed and its serving path is not. `submit` is
+a `410` tombstone, `verify` renders a paused page and transitions nothing, and two runner routes
+were added for the shutdown: read-only `GET runner/state` and the flag-gated `POST
+runner/shelf-purge`. Everything that serves an already-published demo (def.json for a `g-` slug,
+`/demo/api/chat`, approve, reject, unsubscribe, claim, publish, status, review) is unchanged and
+still live. The rows below are marked where the shelve changed the observed answer; the historical
+rows are kept, because un-shelving is reverting the tombstones and this is the matrix that then
+has to pass again.
+
+There is no full automated test runner for the site Worker (the repo has no test harness outside
+`cloud/`), so this file is the contract for everything that needs a live `wrangler dev`. The parts
+that do NOT need one are executable and must stay green:
+
+```sh
+node --test worker/demo-gen.unit.test.mjs     # 19 tests, no network, no wrangler
+```
+
+`worker/demo-gen.unit.test.mjs` drives `handleDemoGen()` directly under Node. It owns the
+assertions a curl matrix cannot make: the submit tombstone driven with a request whose `text()`,
+DO getter, `ctx.waitUntil` and `fetch` all throw if touched (that is how "zero side effects" is
+proved rather than eyeballed), the paused verify asserted against a DO stub that WOULD have moved
+the row, and the two new runner routes' auth, exact field contract, read-only-ness, purge scope,
+refusals and idempotence. It reads the state enum, the review states and the schema out of
+`worker/do.js` itself, so it fails if the machine's shape drifts from what it asserts.
 
 ## Running it
 
@@ -43,8 +65,10 @@ npx wrangler dev --port 8788 --ip 127.0.0.1 --persist-to /tmp/wstate8788 \
 
 - `DEMOGEN_ORIGIN` makes every generated link point at localhost. Production leaves it
   unset and the code falls back to `https://alloylogger.com`.
-- `DEMOGEN_DEV_NO_EMAIL:1` short circuits the Resend call, logs the verification link and
-  records a `verify_mail_sent` event. See "Email in dev" below.
+- `DEMOGEN_DEV_NO_EMAIL:1` is INERT since the 2026-07-28 shelve. It gated the verification
+  mail on the submit path, and that path is a 410 tombstone with no mail code behind it. It is
+  kept in the line above only so a copy-pasted dev command still matches what was run before.
+  See "Email in dev" below.
 - `DEMOGEN_LEASE_MS` (Phase B only) shortens the 30 minute claim lease so the reclaim path
   is testable in seconds. Never set it in production.
 - `DEMOGEN_MAX_JOBS_PER_DAY` overrides the `vars` default of 8. **(2026-07-27 pass 2)** `0` now
@@ -80,43 +104,56 @@ The `site-worker.js` diff is additive: one import, one `export { DemoGenDO }`, a
 parameter and one `if` block before `env.ASSETS.fetch`. The www redirect and the
 `/demo/api/chat` branch are byte-identical.
 
-### POST /api/demo-gen/submit
+### POST /api/demo-gen/submit: SHELVED, a 410 tombstone
+
+**(2026-07-28.)** The entry is closed. `handleSubmit()` takes no arguments and returns one
+response, and the route is the FIRST branch in `handleDemoGen()`, so the tombstone is reached
+before anything can read a body, resolve the DO or schedule background work.
 
 ```sh
 UC='2v2 RoboCup open-league soccer sim, 4 agents on ROS 2, we keep losing the ball on defensive clears'
-curl -X POST localhost:8787/api/demo-gen/submit -H 'content-type: application/json' \
+curl -i -X POST localhost:8787/api/demo-gen/submit -H 'content-type: application/json' \
   -H 'CF-Connecting-IP: 198.51.100.1' \
   -d "{\"email\":\"lead1@example.com\",\"use_case\":\"$UC\",\"dwell_ms\":9000,\"robot_seen\":\"sbr\",\"website\":\"\"}"
 ```
 
 | case | body sent | observed | job row |
 | --- | --- | --- | --- |
-| happy path | above | `202 {"ok":true}` | created, state `unverified` |
-| honeypot | `"website":"http://spam"` | `202 {"ok":true}` | none, event `honeypot` |
-| dwell too short | `"dwell_ms":400` | `202 {"ok":true}` | none, event `dwell_block` |
-| dwell absent | no `dwell_ms` | `202 {"ok":true}` | none, event `dwell_block` |
-| bad email | `"email":"not-an-email"` | `400 {"ok":false,"reason":"invalid"}` | none |
-| no dot in domain | `"email":"a@localhost"` | `400 {"ok":false,"reason":"invalid"}` | none |
-| use_case under 40 chars | `"use_case":"too short here"` | `400 {"ok":false,"reason":"invalid"}` | none |
-| use_case under 5 tokens | 48 chars, 2 tokens | `400 {"ok":false,"reason":"invalid"}` | none |
-| robot_seen not in the four ids | `"robot_seen":"pirate"` | `400 {"ok":false,"reason":"invalid"}` | none |
-| malformed JSON | `{oops` | `400 {"ok":false,"reason":"invalid"}` | none |
-| wrong content-type | `content-type: text/plain` | `415 {"ok":false,"reason":"invalid"}` | none |
-| body over 4KB | 6000 char use_case | `413 {"ok":false,"reason":"invalid"}` | none |
-| GET instead of POST | | `405 {"ok":false,"reason":"invalid"}` | none |
+| former happy path | above | `410 {"ok":false,"reason":"gone","error":"demo generation is paused"}` | none |
+| malformed JSON | `{oops` | `410`, same body | none |
+| wrong content-type | `content-type: text/plain` | `410`, same body | none |
+| body over 4KB | 6000 char use_case | `410`, same body, body never read | none |
+| honeypot / short dwell | `"website":"http://spam"` / `"dwell_ms":400` | `410`, same body | none, and NO `honeypot` or `dwell_block` event either |
+| GET, PUT, DELETE instead of POST | | `410`, same body (no 405: the resource is gone for every verb) | none |
 
 Every response carries `Cache-Control: no-store` and no CORS headers.
 
-### Rate windows, dedupe, suppression
+Assert the side-effect absence, not just the status. Before and after the whole block above,
+`GET /api/demo-gen/runner/debug` must show the same job rows, the same event counters (no
+`submit`, `honeypot`, `dwell_block`, `rate_block_*`, `submit_dedupe`, and no mail counter of any
+kind) and the same suppression list. The executable version of this is in
+`worker/demo-gen.unit.test.mjs`, which drives the handler with a request that throws from
+`text()`, `json()` and `body`, an `env` that throws on every property access, a `ctx.waitUntil`
+that throws and a `fetch` that throws.
+
+Zero Resend sends by construction: the Worker has no code that calls a mail provider at all any
+more. The function that did, and the `verify_mail_sent` / `verify_mail_failed` counters it wrote,
+were deleted with the submit path. Git history is the record if the entry is ever reopened.
+
+### Rate windows, dedupe, suppression: HISTORICAL
+
+**(2026-07-28.)** Unreachable while `submit` is shelved, because nothing creates a job row any
+more. `DemoGenDO.submit()` still implements all of it and none of it was changed, so these rows are
+what must pass again if the entry is ever reopened.
 
 Four submits from `CF-Connecting-IP: 203.0.113.77`, four different emails and use cases:
 
-| submit | observed |
+| submit | observed (2026-07-27, pre-shelve) |
 | --- | --- |
 | 1, 2, 3 | `202 {"ok":true}` |
 | 4 | `429 {"ok":false,"reason":"rate"}`, event `rate_block_ip` |
 
-| case | observed |
+| case | observed (2026-07-27, pre-shelve) |
 | --- | --- |
 | resubmit an identical (email, use_case) pair from a different IP | `202 {"ok":true,"duplicate":true}`, event `submit_dedupe`, no second job row |
 | third submit for the same email inside 24h (different use case, fresh IP) | `429 {"ok":false,"reason":"rate"}`, event `rate_block_email` |
@@ -125,30 +162,47 @@ Four submits from `CF-Connecting-IP: 203.0.113.77`, four different emails and us
 The dedupe hit still writes `submit_ip:` and `submit_email:` events, so repeating the same
 submission cannot be used to probe the dedupe window for free.
 
-`ip_hash` is `sha256(CF-Connecting-IP + DEMOGEN_SIGNING_KEY)` truncated to 32 hex chars. The
+`ip_hash` was `sha256(CF-Connecting-IP + DEMOGEN_SIGNING_KEY)` truncated to 32 hex chars. The
 raw IP is never passed to the DO and never stored.
 
-### GET /api/demo-gen/verify
+### GET|POST /api/demo-gen/verify: PAUSED, one page, no transition
+
+**(2026-07-28.)** `handleVerify()` takes no arguments. It does not read the token, does not call
+the DO and renders the same page for both verbs. That is the only way to be certain no state
+moves: a verification link that still confirmed would move a job `unverified -> pending` and tell
+the visitor a build had started, which is a promise nothing keeps while the runner is off.
+
+Verification links have a 7 day TTL, so real ones are in real inboxes right now. They land on an
+honest page instead of a lie.
 
 ```sh
 T=$(node tok.mjs verify <job_id>)
 curl -i "localhost:8787/api/demo-gen/verify?t=$T"
 ```
 
-**(2026-07-27 pass 2)** Verify is now a GET/POST pair, like approve and reject already were. The
-GET only renders; the POST commits. A mail provider or chat client that prefetches the link
-"clicks" the GET before the human does, and a scanner-confirmed address is a lead we would build
-a demo for that nobody asked to confirm. The rendered page auto-submits its own form via a
-four-word inline script, so a real browser confirms in one frame and the visitor sees only the
-result, while a scanner that does not run JS commits nothing. The visible button is the no-JS
-path. Same treatment for unsubscribe, where the failure mode is a robot unsubscribing a visitor.
-
 | case | observed |
 | --- | --- |
-| `GET /verify?t=` **(pass 2)** | `200`, page headed "One tap to confirm", `<form method="POST" action="/api/demo-gen/verify?t=...">` plus one auto-submitting inline script. Job row **still `unverified`** after the GET (confirmed via `runner/debug`) |
-| `POST /verify?t=` **(pass 2)** | `200`, page headed "You're confirmed", job goes `unverified` to `pending` |
-| `PUT /verify?t=` | `405 method not allowed` |
-| second POST with the same token | `200`, page headed "Already confirmed", state unchanged |
+| `GET /verify?t=<valid>` | `200`, page headed "Demo generation is paused". No form and no script on the page. Job row **unchanged** (assert via `runner/debug` before and after) |
+| `POST /verify?t=<valid>` | `200`, same page. Job row **unchanged**: no `unverified -> pending` |
+| `GET|POST /verify` with a junk, expired, or wrong-purpose token | `200`, same page. Nothing distinguishes them any more, because nothing reads the token |
+| `PUT /verify?t=` | `405 method not allowed` (the route's shape is deliberately unchanged) |
+
+Every response carries `Cache-Control: no-store`. The page carries no em dash, en dash or
+horizontal bar, asserted in `worker/demo-gen.unit.test.mjs`.
+
+The historical behaviour, for un-shelving: verify was a GET/POST pair, like approve and reject.
+The GET only rendered; the POST committed. A mail provider or chat client that prefetches the link
+"clicks" the GET before the human does, and a scanner-confirmed address is a lead we would build a
+demo for that nobody asked to confirm. The rendered page auto-submitted its own form via a
+four-word inline script, so a real browser confirmed in one frame and the visitor saw only the
+result, while a scanner that does not run JS committed nothing. The visible button was the no-JS
+path. Unsubscribe still works exactly that way and is UNCHANGED.
+
+| historical case (2026-07-27) | observed then |
+| --- | --- |
+| `GET /verify?t=` | `200`, "One tap to confirm", POST form plus auto-submit script, row still `unverified` |
+| `POST /verify?t=` | `200`, "You're confirmed", job goes `unverified` to `pending` |
+| second POST with the same token | `200`, "Already confirmed", state unchanged |
 | token with two characters appended | `400`, "That link is not valid" |
 | a valid `approve` token replayed on `/verify` | `400`, "That link is not valid" (the purpose is inside the HMAC) |
 | a correctly signed token whose expiry is in the past | `400`, "That link is not valid" |
@@ -175,6 +229,89 @@ constant-time compare.
 | no `Authorization` header | `401 {"ok":false,"error":"unauthorized"}` |
 | `Bearer nope` | `401 {"ok":false,"error":"unauthorized"}` |
 | `GET queue` with the right bearer | `200 {"open":4,"claimable":1,"approved_unsent":0,"pending":1,"oldest_age_s":0,"claimed_today":0}` |
+
+#### GET runner/state (new 2026-07-28): the drain gate
+
+Read-only visibility for the shelve shutdown, which polls it until the queue is empty. One count
+per state in the DO's FULL enum (`LEGAL_TRANSITIONS` in `do.js` is normative), plus `unknown`,
+`review_total` and `next_claim_expiry_s`. Nothing else, and deliberately no derived "undelivered
+and ready" field: `delivery_failed` does not record which mail kind failed (that lives only in the
+runner's marker files), so the gate reads the counts directly and investigates `delivery_failed`
+on the Mac.
+
+The field set is fixed by the enum and never by the data. A job row whose `state` is not in the
+enum (a legacy value from an older schema, or a corrupt write) is counted under `unknown` rather
+than under a key named after itself: dropping it would let the drain gate read zero while work was
+still queued, and naming a key after it would let a database row invent a field in a contract that
+is machine-read below. `unknown > 0` means go and look at the table by hand; it is not a state the
+runner can drain.
+
+```sh
+curl -s -H "Authorization: Bearer $DEMOGEN_TOKEN" localhost:8788/api/demo-gen/runner/state
+```
+
+```json
+{"unverified":2,"pending":1,"claimed":0,"generated":1,"approved":1,"refused":0,"error":0,
+ "expired":0,"delivery_failed":1,"emailed":1,"rejected":0,"unknown":0,
+ "review_total":3,"next_claim_expiry_s":null}
+```
+
+| case | observed |
+| --- | --- |
+| no `Authorization`, `Bearer nope`, or the token plus one character | `401 {"ok":false,"error":"unauthorized"}` |
+| right bearer | `200`, `Cache-Control: no-store`, exactly the field set above |
+| response content | counts only. No email, no use case, no slug, no job id, no claim token. A leaked bearer buys the size of the queue and nothing about the people in it |
+| with one claimed job, lease 2 min out | `next_claim_expiry_s` counts down toward it; with two claims it reports the EARLIEST |
+| with no claimed job at all | `next_claim_expiry_s: null`, not `0` |
+| with a claimed job whose lease has ALREADY expired | `claimed` still 1, `pending` still 0, `next_claim_expiry_s: 0`. **Observing an expired lease must not reclaim it**, and no `runner_seen` event is written: `queue` and `review` both do those things, this route does neither, because a gate that mutates what it measures is not a gate |
+| `POST runner/state` | `404` (GET only) |
+| a job row seeded with a state outside the enum | counted in `unknown`, field set otherwise unchanged: no key is named after the offending value. Covered by `worker/demo-gen.unit.test.mjs`, which writes the illegal value straight into sqlite because `transition()` would refuse it |
+
+The drain is complete when `pending`, `claimed`, `generated`, `approved`, `delivery_failed` and
+`review_total` are all `0`. `unverified` is drained by the purge below, not by ticks. `unknown`
+must also be `0`; it is not drainable by a tick, so anything there is a manual look at the table.
+
+#### POST runner/shelf-purge (new 2026-07-28): flag-gated, one-time
+
+Exists ONLY while `DEMOGEN_SHELF_PURGE=1` is set on the deploy (`wrangler deploy --var
+DEMOGEN_SHELF_PURGE:1`, never in `wrangler.jsonc`), and is removed by redeploying without it. That
+is the whole reason it is safe: this Worker carries no standing bulk-delete surface.
+
+Scope: every `unverified` row always, plus `pending` and `delivery_failed` jobs whose slug is in
+the request's allowlist and nothing else. The allowlist is the executable disposition for the two
+otherwise-undrainable cases, since the machine has no `pending -> rejected` edge and
+`delivery_failed` can only ever go to `emailed`. Each slug is a per-job call of Hugh's.
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $DEMOGEN_TOKEN" -H 'content-type: application/json' \
+  -d '{"allow_slugs":["lvcvdgyf42x7i5eqrkwu"]}' \
+  localhost:8788/api/demo-gen/runner/shelf-purge
+```
+
+```json
+{"ok":true,"unverified_deleted":2,"allowlisted_deleted":1,"bundles_deleted":1,
+ "deleted":[{"slug":"...","state":"unverified"},{"slug":"lvcvdgyf42x7i5eqrkwu","state":"pending"}],
+ "refused":[],"not_found":[]}
+```
+
+| case | observed |
+| --- | --- |
+| flag unset, or set to anything but `1` | `404`, and the DO is never called |
+| no bearer / wrong bearer, flag set | `401 {"ok":false,"error":"unauthorized"}` |
+| `GET` with the flag set | `404`: POST only |
+| `allow_slugs` not an array, an entry failing `^[a-z2-7]{20}$`, or more than 100 entries | `400`, nothing deleted |
+| no body, or a body that is not a JSON object | `400 {"ok":false,"error":"bad_json"}` |
+| `{}` or `{"allow_slugs":[]}` | purges `unverified` rows only |
+| an allowlisted slug in `approved` (or any state but `pending`/`delivery_failed`) | refused by name in `refused: [{slug, state}]`, and that job is untouched |
+| an allowlisted slug the DO does not know, or already purged | listed in `not_found`, not an error |
+| running it twice with the same body | idempotent: second call returns all-zero counts, `deleted: []`, and the slugs under `not_found` |
+| what survives | every job row not in scope, every bundle whose job survives, every suppression row, and the whole append-only `events` table. One `shelf_purge` event is added |
+| the bundle of a job that IS deleted | deleted with it, exactly as `reject()` does it. `bundle()` resolves a slug through the jobs table first, so it could never be served again anyway, and leaving it keeps the visitor's own description on disk with nothing pointing at it |
+
+Logged server-side as one line: counts plus the slugs deleted, refused and not found. Slugs only,
+never the addresses that went with them.
+
+Post-shelve check, after redeploying WITHOUT the flag: the same POST returns `404`.
 
 `POST claim` **(2026-07-27 pass 2, captured verbatim as the runner's `fixtures/api/claim.json`)**:
 
@@ -334,7 +471,7 @@ and a link scanner cannot commit anything.
 | case | observed |
 | --- | --- |
 | `GET /api/demo-gen/approve?t=` | `200` confirm page: robot name, email summary, use case, destination address, bundle size and sha, a preview link, a raw def.json link, and a single button in a `method="POST"` form |
-| `POST /api/demo-gen/approve?t=` | `200` "Approved", state `generated` to `approved` |
+| `POST /api/demo-gen/approve?t=` | `200` "Approved", state `generated` to `approved`. **(2026-07-28)** the body no longer says "the runner picks this up on its next tick and emails the link": the runner is off, so it promises only that the link serves and states that sending is a separate step |
 | `POST` the same link again | `409` "Already handled" |
 | a correctly signed approve token whose expiry has passed | `400` "That link is not valid" |
 | `GET /api/demo-gen/reject?t=` **(pass 2)** | `200` confirm page, and `def.json?preview=` still `200` afterwards: the GET renders and commits nothing |
@@ -374,28 +511,26 @@ survives a `wrangler dev` restart (`.wrangler/state`), so the day's claim count 
 
 Event counters after the phase: `claimed` 5, `lease_reclaimed` 1.
 
-## Email in dev
+## Email in dev: HISTORICAL
 
-`DEMOGEN_DEV_NO_EMAIL:1` is the documented local path: `sendVerificationEmail` logs
-`[demo-gen] verification email suppressed to=<addr> link=<verify link>` and returns ok, so
-the DO records `verify_mail_sent` and the verify link is reconstructible. The matrix above
-mints its own tokens with `tok.mjs` rather than depending on that log line.
+**(2026-07-28.)** The Worker sends no email. The verification mail was the only mail it ever
+sent, and it went with the submit path when the entry was shelved: there is no mail function, no
+mail counters and no Resend call left in `worker/`, which is why the unit test can assert zero
+sends simply by handing the handler a `fetch` that throws. Visitor delivery and Hugh's approval
+notice are the RUNNER's job (`mailer.mjs`, `notify.mjs`, keyed by `RESEND_API_KEY` out of `pass`),
+not the Worker's, and the runner is off for the shelve.
 
-**The live Resend leg could not be exercised locally.** With a real
-`DEMOGEN_RESEND_KEY` set, the `fetch` to `https://api.resend.com/emails` kills the local
-`workerd` process: the awaited version returns `503 Your worker restarted mid-request` after
-~180ms, and the `ctx.waitUntil` version returns `202` promptly but never records either
-`verify_mail_sent` or `verify_mail_failed`. The same request from `curl` on the same machine
-returns `401` from Resend as expected, and the crash reproduces with the command sandbox
-disabled, so this is a local `wrangler dev` / `workerd` outbound-fetch limitation and not a
-code path. The same limitation is why `/demo/api/chat` answers `503` locally. What this
-means:
+`DEMOGEN_DEV_NO_EMAIL:1` in the `wrangler dev` command above is therefore inert. It is still
+listed there so a copy-pasted dev command matches what earlier sessions ran; it gates nothing.
 
-- the request construction (bearer, `from` from `DEMOGEN_FROM`, `reply_to`, plain-text body,
-  10s `AbortSignal.timeout`) is reviewed but not executed here;
-- `verify_mail_failed` as an alarm counter is unproven end to end;
-- both need re-checking against a deployed preview before the first real submission. That is
-  step 10 of the plan's Phase 5 anyway (production smoke with Hugh's own email).
+What was true before the shelve is kept here because it is the thing to re-read if the entry is
+ever reopened, and because it still describes this machine rather than that code path: with a real
+Resend key set, an outbound `fetch` to `https://api.resend.com/emails` kills the local `workerd`
+process (`503 Your worker restarted mid-request` after ~180 ms when awaited; a prompt `202` and no
+recorded outcome when deferred to `ctx.waitUntil`), while the same request from `curl` on the same
+machine gets Resend's expected `401`. That is a local `wrangler dev` outbound-fetch limitation, not
+a code path, and it is the same reason `/demo/api/chat` answers `503` locally. Any future mail leg
+in this Worker has to be proved against a deployed preview, never against `wrangler dev`.
 
 ## Runner response contract
 
@@ -424,9 +559,25 @@ Keep this in sync with `handleRunner()` in `demo-gen.js`. Adding a key means add
   ],
   "publish": ["ok", "slug", "sha256", "demo_url"],
   "status": ["ok", "state"],
+  "state": [
+    "unverified", "pending", "claimed", "generated", "approved", "refused", "error", "expired",
+    "delivery_failed", "emailed", "rejected", "unknown", "review_total", "next_claim_expiry_s"
+  ],
+  "shelf-purge": [
+    "ok", "unverified_deleted", "allowlisted_deleted", "bundles_deleted", "deleted", "refused",
+    "not_found"
+  ],
   "_fixture_only": ["_captured", "route", "note"]
 }
 ```
+
+`state` is one key per entry of `LEGAL_TRANSITIONS` in `worker/do.js`, plus the three extras
+(`unknown`, `review_total`, `next_claim_expiry_s`). That enum is normative: a state added to the
+machine and not added here is a count the shelve's drain gate would read as zero while work was
+still queued. A state NOT in the enum never becomes a key: it is counted under `unknown`, so this
+list is the complete field set no matter what is in the jobs table.
+`worker/demo-gen.unit.test.mjs` reads the enum out of `do.js` and asserts the response's key set
+against it, so the two cannot drift silently.
 
 `_fixture_only` is the annotation header the fixture files carry (which capture, from where, and
 what the fixture is for). The transport ignores those keys; they exist so nobody has to guess
@@ -441,3 +592,8 @@ whether a fixture is real.
   variance, matcher coverage) stays in the runner's `validate.mjs`. The Worker re-check is
   structural only, and is the backstop that a bundle cannot become servable without passing.
 - `cloud/` is untouched. `cd cloud && npm ci && npm test` still passes: 1 file, 5 tests.
+- The runner side of `delivery_failed` recoverability. The Worker's half is done (the state is
+  listed by `review` and the `delivery_failed -> emailed` edge exists); the half that decides WHICH
+  mail to retry lives on the Mac, and its fix is staged at `worker/runner-patches/` with its own
+  tests. It is installed by hand at shelve time, never by a deploy: see that directory's
+  `INSTALL.md`.
