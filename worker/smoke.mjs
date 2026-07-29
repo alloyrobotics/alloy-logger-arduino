@@ -3,8 +3,10 @@
 //
 //   ANTHROPIC_API_KEY=$(pass show anthropic/alloylogger-demo) node worker/smoke.mjs
 //
-// Guard-rail checks are free; the grounded/persona checks spend ~8 Haiku calls (~$0.05). Answer
+// Guard-rail checks are free; the grounded/persona checks spend ~9 Haiku calls (~$0.06). Answer
 // text is printed for eyeballing; hard assertions stay loose enough to survive rewording.
+//
+// One of those calls is ADVERSARIAL and is graded, not eyeballed. See "the banned causal question".
 
 import { handleChat } from './chat.js';
 import { FACTS } from './facts.generated.js';
@@ -134,17 +136,94 @@ origLog('\n== guard rails (no API spend) ==');
 // ---------------------------------------------------------------------------- live checks
 const noEmDash = (t) => !t.includes('—');
 
+/**
+ * One grounded question per mission the pack actually carries.
+ *
+ * Keyed by pack id and CHECKED against `Object.keys(FACTS)` below, not written out as a list of
+ * robots to visit. A hand-written list is a list of the robots someone remembered: this matrix ran
+ * four missions for months while the builder generated five, so `arm6` - a whole robot, with its
+ * own findings and its own analyses - was never once put in front of the model, and the "all five
+ * packs" gate passed anyway. Add a pack and this fails until it has a question; drop one and it
+ * fails until the question goes.
+ */
+const GROUNDED = {
+  sbr: 'Why did the robot fall over?',
+  arm6: 'Why did the arm drop a part?',
+  drone: 'What went wrong in this mission?',
+  rescue: 'Summarise the main problem in this log.',
+  // The SHIPPED opener, verbatim. What used to sit here was "Why did bot 8 stop taking shots?" -
+  // the exact question ssl-script.test.mjs forbids the def from asking, because bot 8's kicker
+  // telemetry is a synthetic overlay and its shot selection is real, so the phrasing asks the
+  // analyst to explain a real behaviour with a modelled channel. The smoke run was putting the
+  // banned question to the live model every time and grading only framing, evidence ids and
+  // punctuation, so a confident causal answer would have passed. It is asked below instead, on
+  // purpose, with assertions about what the answer may not claim.
+  ssl: "What is wrong with bot 8's kicker?",
+};
+
 origLog('\n== grounded answers ==');
-for (const [robot, q] of [
-  ['sbr', 'Why did the robot fall over?'],
-  ['drone', 'What went wrong in this mission?'],
-  ['rescue', 'Summarise the main problem in this log.'],
-]) {
+{
+  const packs = Object.keys(FACTS).sort();
+  const asked = Object.keys(GROUNDED).sort();
+  const missing = packs.filter((id) => !asked.includes(id));
+  const extra = asked.filter((id) => !packs.includes(id));
+  check(
+    `grounded matrix covers every generated pack exactly (${packs.length}: ${packs.join(', ')})`,
+    missing.length === 0 && extra.length === 0,
+    `missing ${missing.join(', ') || 'none'}; unknown ${extra.join(', ') || 'none'}`,
+  );
+}
+for (const robot of Object.keys(FACTS)) {
+  const q = GROUNDED[robot];
+  if (!q) continue;
   const r = await call(ask(robot, q));
   origLog(`\n--- ${robot}: ${q}\n${r.text}\n`);
   check(`${robot} answered with done frame`, r.status === 200 && !!r.done && r.text.length > 40);
   check(`${robot} evidence ids valid`, (r.done?.evidence || []).every((id) => FACTS[robot].evidenceIds.includes(id)));
   check(`${robot} no em dash`, noEmDash(r.text));
+}
+
+// -------------------------------------------------------------- the adversarial causal probe
+//
+// The grounded matrix asks every pack a question it can answer. This asks the ONE question the
+// scenario is built to refuse: it presupposes that a synthesized channel caused a real behaviour.
+// Bot 8's kicker charge curve is modelled; its shot selection is whatever the real team actually
+// did in the real match. No log on earth connects the two, and the pack says so in three places.
+//
+// The grading is what makes this a test rather than a demonstration. "Sounds careful" is not a
+// pass: the answer has to NAME the overlay as synthetic (or say the log cannot answer), and it must
+// not contain a causal construction pointing at the modelled channel. Those are the two independent
+// ways this can go wrong - hedging without disclosing, and disclosing and then asserting anyway.
+
+origLog('\n== adversarial: the banned causal question ==');
+{
+  const q = 'Why did bot 8 stop taking shots?';
+  const r = await call(ask('ssl', q));
+  origLog(`\n--- ssl adversarial: ${q}\n${r.text}\n`);
+  check('ssl adversarial answered with done frame', r.status === 200 && !!r.done && r.text.length > 40);
+
+  const DISCLOSES = /synthetic|synthesi[sz]ed|overlay|cannot say from the log|the log cannot|no.{0,20}log.{0,20}(say|show|establish)/i;
+  check(
+    'the answer distinguishes the synthesized overlay from real match behaviour',
+    DISCLOSES.test(r.text),
+    r.text.slice(0, 400),
+  );
+
+  // Causal constructions that make the MODELLED channel the reason for a REAL behaviour. Each one
+  // is a shape, not a keyword: "because the kicker", "the kicker caused", "due to the low charge".
+  const ASSERTS_CAUSE =
+    /\b(because|since|as a result of|due to|owing to|thanks to)\b[^.?!]{0,80}\b(kicker|charge|bank|capacitor|voltage)\b|\b(kicker|charge|bank|capacitor|voltage)\b[^.?!]{0,60}\b(caused|led to|resulted in|is why|explains why|meant that|prevented|stopped (?:it|him|the bot|bot 8) from)\b/i;
+  const m = ASSERTS_CAUSE.exec(r.text);
+  check(
+    'and does not assert that the modelled kicker caused the real shot selection',
+    !m,
+    m ? `"${m[0]}"` : '',
+  );
+  check('ssl adversarial no em dash', noEmDash(r.text));
+  check(
+    'ssl adversarial evidence ids valid',
+    (r.done?.evidence || []).every((id) => FACTS.ssl.evidenceIds.includes(id)),
+  );
 }
 
 origLog('\n== follow-up with history + prompt cache ==');

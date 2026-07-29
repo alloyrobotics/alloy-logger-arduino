@@ -1,7 +1,9 @@
 // build-facts.mjs - generates the grounding facts pack the /demo/api/chat endpoint feeds Claude.
 //
-// The demo's telemetry is synthesized deterministically in the browser from each robot's
-// data.js. This script runs those same generators in Node with the same seed app.js uses, then
+// The demo's telemetry is built deterministically in the browser from each robot's data.js
+// (synthesized for the four canned missions; the SSL mission mixes real tracker/vision channels
+// with synthesized overlays, per-field provenance tags tell them apart). This script runs those
+// same generators in Node with the same seed app.js uses, then
 // writes out what the model is allowed to know: mission metadata, per-field statistics,
 // downsampled series, a dense excerpt around every finding window, and the hand-verified
 // scripted analyses lifted verbatim out of script.js.
@@ -14,10 +16,10 @@
 //
 // Output: worker/facts.generated.js (committed - the Worker imports it at build time).
 //
-// Running this file builds the four canned robots. IMPORTING it gets the pure builders and
+// Running this file builds every canned robot in ROBOT_IDS. IMPORTING it gets the pure builders and
 // writes nothing: the demo generator's runner snapshots this module into its own runtime/ and
 // calls buildFacts() over a generated def, so a personalized mission is described to the
-// analyst in exactly the format the canned four are. One builder, one format, no second copy.
+// analyst in exactly the format every canned mission is. One builder, one format, no second copy.
 
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -25,7 +27,7 @@ import path from 'node:path';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ROBOTS_DIR = path.join(ROOT, 'demo', 'js', 'robots');
-export const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue'];
+export const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue', 'ssl'];
 
 /** How many points a whole-mission series is downsampled to. */
 export const SERIES_POINTS = 80;
@@ -74,6 +76,33 @@ export function fmt(v) {
 
 export const fmtT = (t) => `${t.toFixed(2)}s`;
 
+/** What a table cell says where a field has no reading. A word, never a number. */
+export const ABSENT = 'absent';
+
+/**
+ * A field's presence mask, if it declares one and its channel block carries it.
+ *
+ * `mask: '<key>'` on a field def names a 0/1 array on the same block saying which samples carry a
+ * reading; where it is 0 the stored value is filler an export wrote across an absence, and printing
+ * it as a number tells the analyst a measurement was taken that never was. Optional and inert: a
+ * def that declares none gets null here and its pack is byte-identical to before this existed.
+ *
+ * @param {object} block the channel's data block
+ * @param {object} f the field def
+ * @returns {ArrayLike<number>|null}
+ */
+export function maskFor(block, f) {
+  if (!block || !f || !f.mask) return null;
+  const m = block[f.mask];
+  return m && (Array.isArray(m) || ArrayBuffer.isView(m)) ? m : null;
+}
+
+/** One table cell: the formatted number, or `absent` where the mask says there is no reading. */
+const cell = (block, f, i) => {
+  const m = maskFor(block, f);
+  return m && !m[i] ? ABSENT : fmt(block[f.key][i]);
+};
+
 /** Evenly spaced indices across [lo, hi], inclusive of both ends. */
 export function pickIndices(lo, hi, count) {
   const span = hi - lo;
@@ -92,7 +121,14 @@ export function indexAt(times, s) {
 
 // ---------------------------------------------------------------------------- facts sections
 
-export function statsFor(series, times) {
+/**
+ * @param {ArrayLike<number>} series
+ * @param {ArrayLike<number>} times
+ * @param {ArrayLike<number>|null} [mask] optional presence mask. Samples whose mask entry is falsy
+ *   are EXCLUDED: a field that is zero-filled where its sensor had nothing to report has no
+ *   reading at those samples, and averaging the filler in states a measurement that was never made.
+ */
+export function statsFor(series, times, mask) {
   let min = Infinity;
   let max = -Infinity;
   let sum = 0;
@@ -101,6 +137,7 @@ export function statsFor(series, times) {
   let n = 0;
   for (let i = 0; i < series.length; i++) {
     const v = series[i];
+    if (mask && !mask[i]) continue;
     if (!Number.isFinite(v)) continue;
     if (v < min) {
       min = v;
@@ -114,15 +151,37 @@ export function statsFor(series, times) {
     n++;
   }
   if (!n) return null;
+  let iFirst = 0;
+  let iLast = series.length - 1;
+  if (mask) {
+    while (iFirst < series.length && !mask[iFirst]) iFirst++;
+    while (iLast >= 0 && !mask[iLast]) iLast--;
+  }
   return {
     min,
     max,
     mean: sum / n,
     minT: times[minI],
     maxT: times[maxI],
-    first: series[0],
-    last: series[series.length - 1],
+    first: series[iFirst],
+    last: series[iLast],
+    n,
+    total: series.length,
   };
+}
+
+/**
+ * A field's two-dimensional provenance, if its def declares one: `origin` says where the number
+ * came from (REAL_TRACKER, REAL_GAME_CONTROLLER, REAL_VISION, SYNTHETIC), `transform` says what was
+ * done to it (WIRE, FIRMWARE_FLAG_DECODE, DERIVED_<X>, NONE). It is emitted so the analyst can
+ * never present a synthesized channel as log ground truth. A def that declares none (the four
+ * hand-written robots, every generated mission) emits nothing at all.
+ */
+function provenanceLine(f) {
+  const p = f && f.provenance;
+  if (!p || !p.origin) return null;
+  const tail = p.note ? ` - ${p.note}` : '';
+  return `- \`${f.key}\`: ${p.origin} / ${p.transform || 'NONE'}${tail}`;
 }
 
 export function channelSection(def, data) {
@@ -135,35 +194,128 @@ export function channelSection(def, data) {
     lines.push('');
     lines.push('| field | unit | first | last | min (at) | max (at) | mean |');
     lines.push('| --- | --- | --- | --- | --- | --- | --- |');
+    /** Absence notes raised by a zero-filled field, emitted under the table. */
+    const absence = [];
     for (const f of ch.fields) {
-      const s = statsFor(block[f.key] || [], times);
+      // A masked field has no reading where its mask is 0. Its statistics are computed over the
+      // PRESENT samples only, and the absent fraction is stated on its own line rather than being
+      // averaged into the numbers. One declaration, `mask` on the field def, drives this, the
+      // series tables below and the chart - so the pack and the plot cannot disagree about which
+      // samples are readings.
+      const mask = maskFor(block, f);
+      const s = statsFor(block[f.key] || [], times, mask);
       if (!s) continue;
       lines.push(
         `| ${f.key} | ${f.unit || '-'} | ${fmt(s.first)} | ${fmt(s.last)} | ` +
           `${fmt(s.min)} (${fmtT(s.minT)}) | ${fmt(s.max)} (${fmtT(s.maxT)}) | ${fmt(s.mean)} |`,
       );
+      if (mask) {
+        const absent = s.total - s.n;
+        // WHY there is no reading comes from the field def (`maskNote`), because two masked fields
+        // on one channel can be absent for two different reasons - /bot13/vision's `visibility` is
+        // absent where the tracker had no frame, its `detections` where the cross-check holds no
+        // count for the bin - and a single sentence for both states one of them wrongly.
+        absence.push(
+          `\`${f.key}\` has NO READING for ${absent} of ${s.total} samples ` +
+            `(${fmt((100 * absent) / s.total)} % of the window): ` +
+            `${f.maskNote || 'nothing was measured there'}. The row above is computed over the ` +
+            `${s.n} samples that do carry a reading, and every table below writes \`${ABSENT}\` ` +
+            `for the rest. There is no measured value at those instants - not a zero, not a low ` +
+            `one - so do not quote the field's mean as a value over the whole window, and never ` +
+            `describe an absent sample as a reading of any size.`,
+        );
+      }
+    }
+    if (absence.length) {
+      lines.push('');
+      lines.push(...absence);
+    }
+    const prov = ch.fields.map(provenanceLine).filter(Boolean);
+    const cadence = def.rates && def.rates[ch.path] != null
+      ? `cadence: ${fmt(def.rates[ch.path])} Hz` +
+        (def.rateNotes && def.rateNotes[ch.path] ? ` (${def.rateNotes[ch.path]})` : '')
+      : null;
+    if (cadence || ch.note || prov.length) {
+      lines.push('');
+      if (cadence) lines.push(cadence);
+      if (ch.note) lines.push(ch.note);
+      if (prov.length) {
+        lines.push('provenance, per field (origin / transform):');
+        lines.push(...prov);
+      }
     }
     lines.push('');
   }
   return lines.join('\n');
 }
 
-/** A whole-mission table so the model can answer "what was X doing at t". */
+/**
+ * Where a mission's data came from, and which parts of it are synthesized. Emitted only for a def
+ * that carries `context.provenance`, which is the same sentence the brief screen renders, so the
+ * visitor and the analyst are told the same thing in the same words. Everything else, including all
+ * four hand-written robots, emits nothing and its pack is byte-identical to before this existed.
+ */
+export function provenanceSection(def) {
+  const p = def.context && def.context.provenance;
+  const health = (def.findings || []).filter((f) => f && (f.healthState || f.healthStateNote));
+  if (!p && !health.length) return '';
+  const lines = ['## Where this data comes from', ''];
+  if (p) {
+    lines.push(String(p).trim());
+    lines.push('');
+    lines.push(
+      'Say so when an answer leans on a synthesized channel. Never present one as something the ' +
+        'log recorded, and never attach a synthesized fault to a real team or a real outcome.',
+    );
+    lines.push('');
+  }
+  if (health.length) {
+    lines.push(
+      'Health state per finding. This is a demo-generated application-layer classification over ' +
+        'the synthesized telemetry (modelled on how SSL teams classify robot health); not output ' +
+        "from any real team's software.",
+    );
+    lines.push('');
+    for (const f of health) {
+      const note = f.healthStateNote ? ` (${f.healthStateNote})` : '';
+      lines.push(`- \`${f.id}\`: ${f.healthState || 'none'}${note}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * A whole-mission table so the model can answer "what was X doing at t".
+ *
+ * The row budget is shared across the mission's channels rather than granted per channel: the pack
+ * is a cached prompt prefix and this is its largest section, so a six-channel mission would
+ * otherwise spend half the budget on a table every finding already excerpts densely. Four channels
+ * or fewer keeps the full SERIES_POINTS, which is every mission that existed when this was written,
+ * so their packs are unchanged.
+ */
+function seriesPointsFor(def) {
+  const n = (def.channels || []).length || 1;
+  return Math.min(SERIES_POINTS, Math.max(40, Math.round(320 / n)));
+}
+
 export function seriesSection(def, data) {
   const lines = [];
+  const points = seriesPointsFor(def);
   for (const ch of def.channels) {
     const block = data[ch.path];
     if (!block) continue;
     const times = block.t;
-    const keys = ch.fields.map((f) => f.key).filter((k) => Array.isArray(block[k]) || ArrayBuffer.isView(block[k]));
-    if (!keys.length) continue;
-    const idx = pickIndices(0, times.length - 1, SERIES_POINTS);
+    const cols = ch.fields.filter((f) => Array.isArray(block[f.key]) || ArrayBuffer.isView(block[f.key]));
+    if (!cols.length) continue;
+    const keys = cols.map((f) => f.key);
+    const idx = pickIndices(0, times.length - 1, points);
     lines.push(`### ${ch.path} sampled every ~${fmt((times[times.length - 1] - times[0]) / (idx.length - 1))} s`);
     lines.push('');
     lines.push(`| t (s) | ${keys.join(' | ')} |`);
     lines.push(`| --- | ${keys.map(() => '---').join(' | ')} |`);
     for (const i of idx) {
-      lines.push(`| ${times[i].toFixed(1)} | ${keys.map((k) => fmt(block[k][i])).join(' | ')} |`);
+      lines.push(`| ${times[i].toFixed(1)} | ${cols.map((f) => cell(block, f, i)).join(' | ')} |`);
     }
     lines.push('');
   }
@@ -184,36 +336,45 @@ export function findingsSection(def, data) {
     lines.push('');
 
     const focus = f.focus;
+    const chDef = focus && (def.channels || []).find((c) => c.path === focus.channel);
     const block = focus && data[focus.channel];
     if (block) {
       const times = block.t;
       const lo = indexAt(times, w[0]);
       const hi = indexAt(times, w[1]);
-      const keys = (focus.fields || []).filter((k) => block[k]);
-      if (keys.length) {
+      const cols = (focus.fields || [])
+        .map((k) => (chDef && chDef.fields.find((x) => x.key === k)) || { key: k })
+        .filter((x) => block[x.key]);
+      if (cols.length) {
         // Uniform sampling can step right over the one sample the finding is about (the sbr I2C
         // spike is a single row). Union in the cited instant and each focused field's extremes
         // inside the window so the anomalous values are always in the table.
         const idx = new Set(pickIndices(lo, hi, WINDOW_POINTS));
         if (f.t != null) idx.add(indexAt(times, f.t));
-        for (const k of keys) {
-          let minI = lo;
-          let maxI = lo;
+        for (const col of cols) {
+          const arr = block[col.key];
+          // An absent sample is not a candidate extreme. The filler zero across a tracking loss
+          // was winning "min" outright and pulling the row into the table as evidence of a low
+          // reading, which is the opposite of what the absence means.
+          const mask = maskFor(block, col);
+          const usable = (i) => Number.isFinite(arr[i]) && (!mask || !!mask[i]);
+          let minI = -1;
+          let maxI = -1;
           for (let i = lo; i <= hi; i++) {
-            const v = block[k][i];
-            if (!Number.isFinite(v)) continue;
-            if (v < block[k][minI] || !Number.isFinite(block[k][minI])) minI = i;
-            if (v > block[k][maxI] || !Number.isFinite(block[k][maxI])) maxI = i;
+            if (!usable(i)) continue;
+            if (minI < 0 || arr[i] < arr[minI]) minI = i;
+            if (maxI < 0 || arr[i] > arr[maxI]) maxI = i;
           }
-          idx.add(minI);
-          idx.add(maxI);
+          if (minI >= 0) idx.add(minI);
+          if (maxI >= 0) idx.add(maxI);
         }
+        const keys = cols.map((c) => c.key);
         lines.push(`${focus.channel} across the window:`);
         lines.push('');
         lines.push(`| t (s) | ${keys.join(' | ')} |`);
         lines.push(`| --- | ${keys.map(() => '---').join(' | ')} |`);
         for (const i of [...idx].sort((a, b) => a - b)) {
-          lines.push(`| ${times[i].toFixed(2)} | ${keys.map((k) => fmt(block[k][i])).join(' | ')} |`);
+          lines.push(`| ${times[i].toFixed(2)} | ${cols.map((c) => cell(block, c, i)).join(' | ')} |`);
         }
         lines.push('');
       }
@@ -222,7 +383,13 @@ export function findingsSection(def, data) {
   return lines.join('\n');
 }
 
-/** The hand-verified answers, verbatim. These carry the analyst voice and the causal story. */
+/**
+ * The hand-verified answers, verbatim. These carry the analyst voice and the reasoning, which is
+ * NOT always a causal story: the SSL mission's fault channels are a synthetic overlay on a real
+ * match, so its answers state correlations by construction and say outright that the log cannot
+ * establish why anything on the pitch happened. Whatever an answer claims here is what the model
+ * is grounded on, so an answer that overclaimed would teach it to overclaim.
+ */
 export function analysesSection(def) {
   const lines = [];
   for (const entry of def.script || []) {
@@ -232,7 +399,8 @@ export function analysesSection(def) {
     lines.push(entry.answer.trim());
     lines.push('');
   }
-  return lines.join('\n');
+  // trailing blank line: this section is spliced straight in front of "## Findings"
+  return lines.join('\n') + '\n';
 }
 
 /**
@@ -248,7 +416,7 @@ The only product facts you may state; anything about Alloy this does not cover, 
 - Every power-on lands in Alloy as one replayable MCAP mission: replay it, scrub it, query it with SQL, ask about it the way this visitor is asking you.
 - Alloy is the robotics data platform by Alloy Robotics: usealloy.ai. The library and docs: github.com/alloyrobotics/alloy-logger-arduino, or the Get started section on alloylogger.com.
 - Pricing and accounts are not covered here: usealloy.ai.
-- This page's four missions are demo logs generated for the browser; no account or hardware is needed to explore them.
+- This page carries five missions: four are synthetic demo logs generated in the browser, and one is a replay of a real robot-soccer match. That replay carries three planted onboard faults synthesized on top of the real tracking data, plus one finding that is the log's own data and not planted at all: the shared vision losing an opponent robot. No account or hardware is needed to explore any of them.
 `;
 
 /** One line per sibling so "what about the drone?" gets a useful pointer, not a shrug. */
@@ -267,7 +435,7 @@ export function otherMissionsSection(def, all) {
  * The whole pack, in the order the analyst reads it.
  *
  * `opts` exists for the personalized demos the generator runner builds. Both fields default to
- * nothing, so the four canned robots produce byte-identical output to before it existed (the
+ * nothing, so the canned robots produce byte-identical output to before it existed (the
  * freshness gate in worker/README.md is what proves that).
  *
  * @param {object} def RobotDefinition, or the generated equivalent the runner assembles
@@ -281,15 +449,21 @@ export function otherMissionsSection(def, all) {
  */
 export function buildFacts(def, data, all, opts = {}) {
   const evidenceIds = def.findings.map((f) => f.id);
+  // A mixed-rate mission has no single Hz to quote, and quoting one is a false statement about
+  // every channel that does not run at it. Those defs carry `rates`, and their per-channel cadence
+  // (with its source) is emitted in the channel section instead.
+  const durationLine = def.rates
+    ? `- log duration: ${fmt(def.duration)} s, mixed cadence (per channel, see Channel statistics)`
+    : `- log duration: ${fmt(def.duration)} s at ${def.rate} Hz`;
   return `# Mission: ${def.name}
 
 - robot id: \`${def.id}\`
 - hardware: ${def.device}
 - one-line summary: ${def.tagline}
-- log duration: ${fmt(def.duration)} s at ${def.rate} Hz
+${durationLine}
 - valid evidence ids (the ONLY ids you may cite): ${evidenceIds.map((id) => `\`${id}\``).join(', ')}
 
-## Findings
+${provenanceSection(def)}## Findings
 
 ${findingsSection(def, data)}
 ## Channel statistics
@@ -300,8 +474,9 @@ ${channelSection(def, data)}
 ${seriesSection(def, data)}
 ## Verified analyses
 
-These were written and fact-checked against this exact log. When a visitor asks something one of
-them already answers, reuse its numbers and its conclusion. Rephrase freely; do not contradict.
+These were written and checked against this mission's own arrays: every number in them is a number
+this log holds. When a visitor asks something one of them already answers, reuse its numbers and
+its conclusion. Rephrase freely; do not contradict.
 
 ${analysesSection(def)}
 ${opts.analystContext ?? ''}${opts.otherMissions ?? otherMissionsSection(def, all)}
@@ -323,6 +498,9 @@ async function main() {
   const out = {};
   for (const def of defs) {
     const id = def.id;
+    // A def whose channels are derived from a lazily loaded scene payload cannot build them until
+    // that payload is in. Same ordering app.js's demo route uses, and the same tripwire guards it.
+    if (typeof def.loadSceneData === 'function') await def.loadSceneData();
     // Same call ensureData() makes in app.js: one seeded prng per robot id.
     const built = def.buildData(mulberry32(seedFor(id)));
     out[id] = {

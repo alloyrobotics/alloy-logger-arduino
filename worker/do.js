@@ -603,7 +603,7 @@ export class DemoGenDO extends DurableObject {
 
   /**
    * Chat path. The facts pack the runner published for this slug: `{ facts, evidenceIds, ... }`,
-   * the same shape worker/facts.generated.js holds for the four canned robots. Returns the
+   * the same shape worker/facts.generated.js holds for the canned robots. Returns the
    * parsed object so chat.js never handles the stored JSON itself.
    */
   factsPack(slug) {

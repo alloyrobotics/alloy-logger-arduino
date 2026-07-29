@@ -1,10 +1,11 @@
 // chat.js - POST /demo/api/chat. Turns the demo's analyst panel into a real one.
 //
-// The demo ships four synthetic missions whose telemetry is generated deterministically in the
-// browser. worker/build-facts.mjs runs those same generators and writes facts.generated.js: per
-// robot, the statistics, sampled series, per-finding excerpts and hand-verified analyses. That
-// pack is the ONLY thing the model is told about the mission, so every number it quotes is a
-// number the page is plotting.
+// The demo ships five canned missions. Four are synthetic and generated deterministically in the
+// browser; the fifth replays a real robot-soccer match and synthesizes the onboard telemetry over
+// it. worker/build-facts.mjs runs those same generators and writes facts.generated.js: per robot,
+// the statistics, sampled series, per-finding excerpts, per-field provenance and hand-verified
+// analyses. That pack is the ONLY thing the model is told about the mission, so every number it
+// quotes is a number the page is plotting, and every synthesized channel is labelled as one.
 //
 // The pack is the cached prefix (see PERSONA + facts below), so repeat questions on the same
 // robot read it back at ~1/10th the input price instead of re-paying for it every turn.
@@ -45,11 +46,11 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 // The persona is byte-stable and sits ahead of the facts, so it is part of the cached prefix.
-// Keep edits here deliberate: changing a character re-writes the cache for all four robots.
+// Keep edits here deliberate: changing a character re-writes the cache for every canned robot.
 const PERSONA = `You are the Alloy analyst: the assistant a robotics engineer talks to after uploading a log to Alloy. A visitor is looking at a replay of one mission and asking you about it.
 
 ## What you know
-Everything you know about this mission is in the MISSION DATA below, which was generated from the log itself. Treat it as ground truth.
+Everything you know about this mission is in the MISSION DATA below, generated from the mission's own arrays. Treat it as the truth about this log, and where it tells you a channel is synthesized rather than recorded, say so instead of presenting it as something the log measured.
 
 - Never invent a number. If a value is not in the mission data, say what you do have instead.
 - Questions about the product (AlloyLogger, Alloy, pricing, accounts, setup): answer ONLY from the "About the product" section of the mission data. If it does not cover the question, say so in one line and point at usealloy.ai. Never state a product fact from your own general knowledge.
@@ -121,9 +122,31 @@ async function underLimit(limiter, key) {
 }
 
 /**
+ * Published packs are built once, on the runner, and stored in the Durable Object forever: they
+ * are never rebuilt, so a sentence that COUNTS the public demo's missions is frozen at whatever
+ * the count was on the day that demo was generated. Adding a fifth mission made every such
+ * sentence false for every already-published demo.
+ *
+ * The count is therefore dropped at READ time, and only from DO-returned packs: a stored pack's
+ * bytes are left alone, the compiled-in packs never come through here, and the replacement is
+ * count-neutral so it can never go stale again. It rewrites the COUNTING PHRASE and nothing
+ * around it - a stored pack is bytes this deploy has never seen, and a sentence-level rewrite
+ * would have to guess where the sentence starts, which a URL's dot is enough to get wrong.
+ */
+const LEGACY_MISSION_COUNT_RE = /\b(?:four|4|five|5)\s+(?:more|other)\s+missions\b/gi;
+const MISSION_COUNT_NEUTRAL = 'additional missions';
+
+function normalizeLegacyPack(pack) {
+  const facts = pack.facts;
+  if (typeof facts !== 'string' || !LEGACY_MISSION_COUNT_RE.test(facts)) return pack;
+  LEGACY_MISSION_COUNT_RE.lastIndex = 0;
+  return { ...pack, facts: facts.replace(LEGACY_MISSION_COUNT_RE, MISSION_COUNT_NEUTRAL) };
+}
+
+/**
  * The mission pack for a robot id, or null if there is no mission we can answer for.
  *
- * The four canned robots are compiled in. A `g-<slug>` robot is a generated private mission: its
+ * The canned robots are compiled in. A `g-<slug>` robot is a generated private mission: its
  * pack was built by the same builder (worker/build-facts.mjs) on the runner and published into
  * the DO, so what comes back here is the identical `{ facts, evidenceIds }` shape and everything
  * downstream, including the cache breakpoint, is unchanged. Each generated pack is simply its own
@@ -146,7 +169,7 @@ async function resolveRobot(env, robotId) {
   const pack = res.pack;
   // Published bytes are trusted-but-checked: the two fields the request below actually reads.
   if (typeof pack?.facts !== 'string' || !Array.isArray(pack.evidenceIds)) return null;
-  return pack;
+  return normalizeLegacyPack(pack);
 }
 
 /** Validate the posted body. Returns {robot, messages} or throws a message string. */

@@ -9,7 +9,7 @@ Two kinds of mission reach it:
 
 | robot id | pack comes from | built by |
 | --- | --- | --- |
-| `sbr` `arm6` `drone` `rescue` | `facts.generated.js`, imported at build time | `build-facts.mjs`, run by hand, committed |
+| `sbr` `arm6` `drone` `rescue` `ssl` | `facts.generated.js`, imported at build time | `build-facts.mjs`, run by hand, committed |
 | `g-<20 char slug>` | the `DemoGenDO` bundle for that slug, fetched per request | the demo generator's runner, published alongside the def |
 
 ## Generated missions
@@ -24,7 +24,7 @@ pack is simply its own cache prefix.
 
 The runner builds those packs by importing THIS repo's `build-facts.mjs` out of a snapshot
 (`sync-template.sh` there), so a generated mission is described to the model in exactly the
-format the canned four are. Two sections differ, both because a private mission is not a canned
+format every canned mission is. Two sections differ, both because a private mission is not a canned
 one: `## Analyst context` carries the def's `facts_notes` (its numbers cross-checked against the
 built arrays by the runner's validator), and `## Other missions on this page` points at the
 public demo page instead of enumerating siblings.
@@ -58,7 +58,7 @@ node worker/build-facts.mjs && git diff --exit-code worker/facts.generated.js
 
 A dirty diff means the model was about to quote numbers the page no longer plots.
 
-Running `build-facts.mjs` writes the four canned robots. IMPORTING it writes nothing and touches
+Running `build-facts.mjs` writes every canned robot in its `ROBOT_IDS` list. IMPORTING it writes nothing and touches
 nothing under `demo/` - it just exports the builders, which is how the generator runner reuses
 them. Keep that split intact: any new top level side effect in that file would fire inside the
 runner too.
@@ -86,5 +86,5 @@ npx wrangler tail   # look for `chat usage ... cache_read=` lines
 
 `chat.js` fails closed (503) if the `ratelimits` bindings in `wrangler.jsonc` are missing.
 The PERSONA string in `chat.js` plus the facts pack is the prompt-cache prefix; edits to either
-are fine but rewrite the cache for all four robots (and for every generated demo, which each
+are fine but rewrite the cache for every canned robot (and for every generated demo, which each
 carry their own suffix).
