@@ -432,7 +432,7 @@ let genPending = null;
  * `.ctx-charge` and `.ctx-system` are used purely as the brief's two type sizes, bright line first.
  *
  * @param {{ line:string, cap:string, action?:{label:string, href:string}, progress?:boolean,
- *   icon?:string, accent?:string }} o `icon`/`accent` are for the states where the robot IS known
+ *   icon?:string, accent?:string, detail?:string }} o `icon`/`accent` are for the states where the robot IS known
  *   (a canned def waiting on its scene payload); without them the card stands in the generic
  *   machine, which is all a not-yet-fetched generated demo has.
  */
@@ -465,6 +465,16 @@ function renderGenCard(o) {
   el.querySelector('.ctx-system').textContent = o.cap;
 
   const copy = el.querySelector('.ctx-copy');
+  if (o.detail) {
+    // the raw failure, on the card itself: the visitor's screenshot then carries the diagnosis,
+    // instead of a console line nobody opened devtools to read
+    const det = document.createElement('p');
+    det.className = 'ctx-detail';
+    det.dataset.stage = '3';
+    det.style.setProperty('--d', '440ms');
+    det.textContent = o.detail;
+    copy.appendChild(det);
+  }
   if (o.progress) {
     // indeterminate on purpose: a percentage would be a lie, the fetch is one request
     const bar = document.createElement('div');
@@ -608,6 +618,13 @@ function renderSceneUnavailable(def, err) {
       err && err.retryable === false
         ? 'The replay module did not load. Reload the page to try again.'
         : 'The replay did not decode. Pick the mission again to retry, or choose another robot.',
+    // the deepest cause is the one that names the real failure; the wrappers above it are the
+    // sentences already on the card
+    detail: (() => {
+      let deepest = '';
+      for (let e = err; e; e = e.cause) if (e.message) deepest = e.message;
+      return deepest;
+    })(),
     action: { label: 'Back to the robots', href: '#/' },
   });
 }

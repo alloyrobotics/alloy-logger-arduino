@@ -253,6 +253,9 @@ input { font: inherit; color: inherit; }
 /* ---- brief copy: three short lines, then the question card that IS the CTA ---- */
 .ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .ctx-system, .ctx-volume { font-size: 14.5px; color: var(--tx-body); }
+/* the unavailable card's technical footnote: the underlying error, verbatim, so a failure
+   screenshot is a bug report. Mono and muted so it never competes with the human sentence. */
+.ctx-detail { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; color: var(--tx-mute); overflow-wrap: anywhere; }
 .ctx-charge { font-size: 14.5px; color: rgba(255,255,255,0.82); }
 /* where the mission's data actually comes from, and which parts of it are synthesized. Only a
    mission with something to disclose renders one, and it sits directly under the system line as
