@@ -90,7 +90,7 @@ non-emptiness in the loader. A dimensionless field states its unit as a word (`c
 
 ## 2. channels
 
-Same shape the 4 canned robots use (chart + ingest consume unchanged):
+Same shape the canned robots use (chart + ingest consume unchanged):
 
 ```jsonc
 { "path": "/drive",                      // ^/[a-z][a-z0-9_]{0,15}$, 1..6 channels
@@ -359,10 +359,10 @@ resolves; every finding reachable from ≥1 entry.
 
 - The runner's `facts-pack.mjs` does not reimplement the pack. It imports this repo's own
   `worker/build-facts.mjs` out of its `runtime/` snapshot (refreshed by `sync-template.sh`), so a
-  generated mission is described to the model in byte-compatible format with the canned four.
+  generated mission is described to the model in byte-compatible format with the canned missions.
 - `buildFacts(def, data, all, opts)` grew a third `opts` hook alongside `analystContext` and
   `otherMissions`: **`aboutProduct`**. It replaces the trailing product section per pack rather
-  than editing the shared `PERSONA` prefix, so correcting the "this page's four missions" line for
+  than editing the shared `PERSONA` prefix, so correcting the public demo's mission-count line for
   a private mission costs no prompt-cache hit on the canned robots. All three default to the canned
   behaviour, so `facts.generated.js` is unchanged byte for byte by their existence
   (`worker/build-facts.mjs` `buildFacts`, and the freshness gate in `worker/README.md` proves it).

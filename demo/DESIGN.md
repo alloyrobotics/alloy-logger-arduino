@@ -120,7 +120,7 @@ demo/
   js/core/gendata.js    ← scaffold agent (GENSPEC data_spec interpreter; isomorphic, no DOM; PUBLISHED API)
   js/core/genscene.js   ← scaffold agent (GENSPEC scene_spec interpreter; PUBLISHED API)
   js/core/signup.js     ← scaffold agent (post-engagement signup popup; POSTs the captured email to /api/signup-lead)
-  js/robots/index.js    ← scaffold agent (registry; imports the four robot defs; registerRobot() for generated ones)
+  js/robots/index.js    ← scaffold agent (registry; imports every canned robot def; registerRobot() for generated ones)
   js/robots/generated.js ← scaffold agent (fetch + gate + compose a g-<slug> def.json into a RobotDefinition)
   js/robots/gen-fixture/ ← DEV FIXTURE. A hand-written def.json + harness.mjs that proves interpreter
                            parity with the runner. Node-only, assetsignored, never registered.
@@ -133,12 +133,17 @@ demo/
   js/robots/arm6/{data.js,scene.js,script.js}    ← robot agent 2
   js/robots/drone/{data.js,scene.js,script.js}   ← robot agent 3
   js/robots/rescue/{data.js,scene.js,script.js}  ← robot agent 4
+  js/robots/ssl/{data.js,scene.js,script.js,      ← robot agent 5 (the SSL match replay)
+                 decode.js,patterns.js,            decode.js: int16 byte decoder + interpolation contract
+                 match-data.js,preview-data.js}    patterns.js: the 16 ssl-vision patterns
+                                                   match-data.js: GENERATED, ~700 KB, lazily imported
+                                                   preview-data.js: GENERATED, 5.9 s slice for the picker
   vendor/three.module.js, vendor/addons/OrbitControls.js  ← scaffold agent
 ```
 
 Each robot dir exports one default object from `data.js`'s sibling `index.js`? No — keep it simple:
 `script.js` is the robot's entry: `import` its own `data.js` + `scene.js` and
-`export default robotDef`. `js/robots/index.js` imports the four `script.js` entries.
+`export default robotDef`. `js/robots/index.js` imports every canned robot's `script.js`.
 
 ## RobotDefinition interface (exact)
 
@@ -184,14 +189,21 @@ export default {
       severity:'alert'|'warn',
       focus:{ channel:'/balance', fields:['pitch','output'] },
       highlight:'body',            // part id passed to scene.setHighlight
-      slowmo:true }                // play the window at 0.4x
+      slowmo:true,                 // play the window at 0.4x
+      healthState:'DEGRADED',      // OPTIONAL. A computed classification, never a wire field;
+      healthStateNote:'...' }      // emitted in the facts pack, with its note, when present
   ],
   context: {                       // OPTIONAL. Authored copy for the contextualization screen.
     system: 'One sentence on what the machine is and what it logs.',  // the only field RENDERED today
     mission: 'One sentence on what this mission was.',                // authored + derived, currently unrendered
     fault: 'One or two sentences on what went wrong, in field-engineer voice.',  // ditto
     label: 'stall',                // ditto
-    faultT: 48.4                   // ditto
+    faultT: 48.4,                  // ditto
+    provenance: '...'              // OPTIONAL, RENDERED under the system line as a quieter
+                                   // footnote (`.ctx-prov`), and emitted verbatim at the top of
+                                   // the facts pack. Where the mission's data came from and which
+                                   // parts of it are synthesized. No fallback is ever derived: an
+                                   // invented provenance line is worse than none.
   },
   // Every field above has a fallback derived from the def itself (device + channel paths + rate for
   // `system`, tagline + duration + row counts for `mission`, the first alert finding for `fault`,
@@ -210,8 +222,34 @@ export default {
     // { update(tSec, data),      ← pose everything from data at tSec (interpolate between samples)
     //   setHighlight(partIdOrNull), ← pulse the named part emissive alert-red; null clears
     //   dispose(),
-    //   cameraHome }              ← optional {position,target} for the reset-view button
-  }
+    //   cameraHome,              ← optional {position,target} for the reset-view button
+    //   cameraFocus(tSec?),      ← optional; where the machine is. No argument = the posed moment
+    //   followTuning,            ← optional {omega, lead, snap} for the viewer's follow spring
+    //   hudState(tSec),          ← optional; see "Scene HUD strip"
+    //   rendering }              ← optional {ground, grids, shadow, fog, anisotropy, env}
+  },
+
+  // ---- OPTIONAL: a scene payload that is not the telemetry (added for ssl) ----
+  previewData,                     // a small, always-loaded slice of the scene payload. Its
+                                   // presence is what tells the picker and the brief NOT to build
+                                   // this robot's telemetry at all.
+  loadSceneData() => Promise,      // cached, idempotent; a rejection with retryable:false means a
+                                   // module evaluation failed and only a reload can retry.
+                                   // EVERY route entry attaches its own generation-aware
+                                   // continuation to it; see "Lazy scene payloads" below
+  isSceneDataLoaded() => boolean,  // required alongside loadSceneData: app.js's ensureData
+                                   // tripwire throws if buildData is reached before this is true
+  getSceneData() => object,        // what update() gets as its 2nd argument: the full payload once
+                                   // loaded, else previewData. Same shape either way
+  heroTime() => seconds,           // optional; overrides stage3d's T_HERO table. For a def whose
+                                   // payload can be one of several, seconds mean different things
+                                   // in each, so the def resolves its own posed moment
+  preview: { focus, envCull,       // optional per-def overrides for the framing solve, used by
+             envRadius, distScale },// BOTH staged screens (picker card and brief hero)
+  rates: { '<channel>': hz },      // optional; a genuinely mixed-rate mission. `rate` stays as a
+  rateNotes: { '<channel>': str }, // summary, and the facts pack emits cadence per channel instead
+  chatProvenance: str,             // optional; a standing line chat.js renders above the composer.
+                                   // Client-written from the def, never from a model answer
 }
 ```
 
@@ -228,7 +266,23 @@ rAF-driven; `onTick(t)` fires every frame while playing and once on seek.
 `viewer.js` — `createViewer(mount, robotDef, timeline)`; owns renderer/camera/lights/ground.
 Scene chrome: dark ground with a subtle blueprint grid (GridHelper toned to `--line`), soft
 hemisphere + key light with shadows, black fog fading the horizon, OrbitControls (damped,
-zoom limits) with autorotate OFF. It subscribes to the timeline and calls `sceneApi.update(t, data)`.
+zoom limits) with autorotate OFF. It subscribes to the timeline and calls `sceneApi.update(t, data)`, where `data` is
+`def.getSceneData?.() ?? def.data`, resolved per call so a payload that lands after mount still
+reaches its scene.
+
+**Per-scene rendering treatment.** A scene may return `rendering: { ground, grids, shadow, fog,
+anisotropy, env }`. `ground:false` / `grids:false` drop the viewer's 80 m plane and its two 60 m
+grids (a scene with its own floor sits ON them otherwise); `shadow:false` disables the key light's
+shadow and the renderer's shadow map outright, which is the right answer whenever the subjects are
+smaller than a shadow texel; `shadow:{...}` retunes the frustum instead.
+
+**Scene HUD strip.** A scene may expose `hudState(tSec)` and get a compact fixed strip across the
+top of the stage: the scene returns STATE (`{version, clock, stage, state:{label,tone},
+teams:[{name,color,score,cards,reds,maxBots,keeper,timeouts}]}`)
+and never markup, the viewer writes it with `textContent`, and the DOM is touched only when
+`version` changes. It exists because a follow-cam on a 46 dvh phone panel cannot show a legible
+in-world scoreboard. The viewer marks itself `.has-shud` so the evidence banner opens BELOW the
+strip instead of on top of it.
 Exposes `setHighlight(partId)` pass-through and a small overlay HUD: play/pause, speed (0.4x/1x/2x),
 reset-view, and the scrubber with finding markers (colored ticks; hover shows title; click seeks).
 
@@ -272,7 +326,9 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
 ## Screens (hash-routed: `#/`, `#/connect/:id`, `#/demo/:id`)
 
 1. **Picker** `#/`: header (AlloyLogger wordmark linking to `/`, "Live demo" chip), headline
-   "Replay a real mission.", sub "Pick a robot. Ask it why it failed." Four cards: inline-SVG
+   "Replay a real mission.", sub "Pick a robot. Ask it why it failed." Five cards (`repeat(5)`
+   at >1000 px, `repeat(2)` below it with the odd last card centred at a normal card's width):
+   inline-SVG
    line-art schematic of each robot (brand-styled, stroke `--tx-mute`, accent stroke per robot),
    name, device line, tagline, mono stats row (duration · channels · Hz). Hover lifts card.
    Footer CTA row: "Get the library" → https://github.com/alloyrobotics/alloy-logger-arduino ·
@@ -299,7 +355,7 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
 
 The `?robot=<id>` query param on any load deep-links straight to `#/demo/<id>`.
 
-## The four robots (storylines are FIXED; hit these numbers)
+## The canned robots (storylines are FIXED; hit these numbers)
 
 Every robot: one headline failure with a beginning/failure/recovery arc, one systemic slow-burn
 finding, one root-cause that needs cross-channel reasoning, plus a "how do I log this from my own
@@ -371,6 +427,174 @@ Scene: tracked chassis with visible track loops + front/rear flipper arms, senso
 inclined rubble ramp (irregular scattered boxes); track surfaces scroll per vel, slip = tracks
 spinning without motion; slide-back; flippers articulate; highlight left track.
 
+### ssl (robot agent 5) - a real RoboCup Small Size League match, replayed
+
+The one mission on this page that is not synthetic all the way down, and the reason several of the
+contracts above exist. 110 s window, 19 tracked robots, mixed cadence (`rates`, not `rate`).
+
+**What is real.** Robot and ball tracks, yaw, the referee command timeline, the score, the cards,
+the kick attributions and the tracker's own `visibility` numbers are replayed sample for sample out
+of a professional SSL match log (2026 season). Field geometry, line set, goal dimensions and the
+centre-circle radius come from that log's own `SSL_GeometryData` packet, never from rulebook
+constants. The `/bot13/vision` channel and the whole `/match` channel are real data.
+
+**What is not, and why it cannot be.** An SSL log carries vision, referee and tracker streams and
+nothing else: no onboard packet, no radio statistic, no battery voltage has ever been in one. Every
+other channel is a SYNTHETIC COUNTERFACTUAL OVERLAY whose names, units and ranges are taken from
+the published TIGERs firmware, with faults invented for this demo. Fault timing is
+anchored to real events (kicks, referee commands, ball contact) because a fault that ignores what
+the robots were doing would be useless to reason about; that anchoring is correlation BY
+CONSTRUCTION, and no finding claims a synthesized fault caused anything in the real match. That
+holds in the COPY too, which is where it is easiest to lose: no answer says a modelled channel is
+why the fleet did something, the opener asks what is wrong with a synthesized channel rather than
+why a real behaviour happened, and the dribbler answer says outright that "the log alone cannot say
+why the ball got away". `ssl-script.test.mjs` bans the phrasings that broke this before.
+
+**De-identification.** Team display names, hull palette and the UI accent are fictional (Polaris
+Robotics, Ferrum SSL). The referee colours and robot ids are the real ones and are never altered:
+the vision-pattern centre dot stays blue or yellow. NOTHING in this repo or in anything it serves
+identifies the source: no archive URL, no log hash, no event, match or window identifier, no tracker
+`source_name` or producer UUID. The public metadata carries a dataset content hash, an opaque
+tracker label ("tracker source A") and the phrase "a professional SSL match, 2026 season". The
+identifying manifest lives only in the private clients/alloy scratch repo. Every planted fault is described
+publicly as a counterfactual overlay unrelated to any real team's hardware, and that disclosure
+appears in five places: the picker copy ("Four synthetic missions and one real match replay with
+planted fault overlays"), the card tagline ("A real match replay, three planted faults, one real
+tracking loss"), the brief's `context.provenance` line, the scripted first answer (which bypasses
+the facts pack entirely) and the facts pack's own preamble. A sixth is not copy at all:
+`def.chatProvenance` ("Real match motion. Three faults are synthetic overlays; the bot 13 tracking
+loss is real.") is rendered by `chat.js` as a standing line above the composer, so the disclosure
+is on screen before the first question and does not depend on the model complying with anything.
+
+**THREE planted, not four.** Of the four findings, `kicker-charge`, `radio-degraded` and
+`dribbler-overheat` are synthesized overlays; `vision-confidence` is the log's own data, the shared
+league vision losing an opponent robot, and calling it planted would be a false statement in the
+visitor's favour AND against the league's infrastructure. Every disclosure surface says three plus
+one, and `ssl-script.test.mjs` fails any surface that pairs "four" with "planted"/"synthetic". The
+picker footer is the one place that still says "four": it counts the four SYNTHETIC MISSIONS on the
+page, not four faults, and the fault overlays it names really are planted.
+
+The word "final" appears nowhere the site serves. The match is described as "a professional
+Division A match" (the division is derivable from the rendered field, the round is not).
+`demo/js/robots/gen-fixture/ssl-leak-check.mjs` is the gate, and four properties make it one:
+
+- **It names nothing itself.** Every match-identifying needle is derived from the private manifest
+  at run time. A de-identification checker with a list of real team names in it is a
+  de-identification failure with an explanation attached, and this file is going to be public.
+- **Default-forbid, on EXACT LEAVES.** `MANIFEST_SCHEMA` enumerates every leaf of the manifest by
+  its full path, with the kind it is, the type it has and - where a value can be checked at all - a
+  validator. A leaf that is not in it fails the run by name. There is no subtree wildcard: there
+  were five (`emitted.`, `source.renameMap.`, `exporter.config.teams.`, `exporter.config.vision.`,
+  `gates.`), and each certified as public not the leaves someone had read but every leaf that would
+  ever land underneath it, so an `emitted.sourceLog` or a `teams.blue.originalName` would have
+  arrived pre-cleared. The self-test plants an unknown leaf inside each of those five and requires
+  all five to come back unclassified. The validators cover the case a text scan structurally cannot:
+  the rename map has to carry the FICTIONAL names and never the real one, which is the whole
+  de-identification written as two strings. `REQUIRED_MANIFEST_PATHS` fails the run if an identifier
+  it derives from is renamed or dropped, so the forbidden list cannot shrink quietly. Whole values
+  catch anything; the paths whose values are identifying TEXT are tokenised as well, so a real team
+  name is caught inside a filename.
+- **Fail-closed.** No manifest, no gate: the default invocation - the one `npm test` runs - exits
+  non-zero when the manifest is not on disk. `--dev-partial` runs the generic rules alone, says so,
+  and certifies nothing.
+- **It scans what reaches a visitor, not what Cloudflare uploads.** Everything `.assetsignore`
+  allows, PLUS `worker/facts.generated.js` and `worker/chat.js`: the facts pack is not a static
+  asset, it is what the analyst is told, and a leak there is a leak on the page.
+
+Citations are approved as EXACT OCCURRENCES - file plus the SHA-256 of the text around the hit -
+never as keywords. Keyword allowlisting ("a line naming a team is fine if it also says kicker")
+forgives every future line that happens to mention a kicker. Change an approved sentence and its
+hash stops matching, so the approval is re-earned; the gate prints the hash of anything unapproved,
+so adding a legitimate citation is a copy-paste and a sentence of justification.
+
+**One definition of "ball in play".** `ssl/in-play.js` owns it and data.js, scene.js and the
+self-tests all import it. A restart command does not put the ball in play; 0.05 m of real ball
+travel off the restart point does, or the restart's own ceiling - ten seconds for a kick-off, five
+for a Division A free kick. This existed three times and disagreed with itself, which armed the
+synthesized kicker for seconds the renderer was still drawing a free-kick standoff over and put the
+difference into the copy as fact. A `heldFromBeforeWindow` command is resolved off the stage clock,
+never off the crop boundary: measuring 0.05 m from wherever the ball sat at t = 0 fabricates a
+restart the match never had, and a state the clock cannot establish is UNKNOWN (no ring, no
+countdown, no RUNNING). The dribbler is the one channel deliberately NOT gated on it - a dribbler
+runs whenever its robot is working the ball, including carrying it to a placement point, which is
+the same fact the placement corridor decal is drawn from.
+
+**Eager payload budget: 57 KB, enforced.** `ssl-eager-size.test.mjs` gzips the eager module graph -
+everything `script.js` imports STATICALLY, so the lazy match module drops out by construction - and
+fails over 58,368 bytes. FUTURE SSL PAYLOAD GROWTH MUST MOVE BEHIND THE LAZY MATCH-DATA BOUNDARY
+rather than raising that number: the eager half ships to every visitor who opens the picker.
+Ceiling raised 2026-07-29 for review-mandated honesty copy; any non-copy growth must still move
+behind the lazy match-data boundary.
+
+Channels: `/bot8/kicker`, `/bot8/power`, `/bot7/radio`, `/bot3/dribbler` (synthesized),
+`/bot13/vision`, `/match` (real). `/bot13/vision`'s `visibility` is REAL_TRACKER /
+DERIVED_ABSENCE_ZERO_FILL, not a raw wire value: the robot is in no tracked frame for 72.9 % of the
+window and the channel carries 0 there. Those zeros are an absence marker, so the facts pack
+computes the field's statistics over the PRESENT samples only and states the absent fraction on its
+own line - averaging the filler in would report a confidence nobody measured.
+
+`detections` on the same channel is masked too, by its own `detectionsPresent`, and for a sharper
+reason. The VISION_2014 cross-check used to be exported CROPPED to the neighbourhood of the
+visibility dip - a window that opens after the camera-0 stretch and after the two-camera overlap -
+and every bin outside the crop was zero-filled and plotted as a measured zero. The copy read the
+crop as the whole: "detected by ONE camera only for its whole life". The export now carries a
+flagged robot's whole tracked lifetime with a per-bin coverage mask, the mask says which bins the
+export holds a count for, and an uncovered bin reads `absent` rather than 0. Ferrum #13's real
+story is a HANDOFF: camera 0 alone for 76 bins, both cameras for 7, then camera 1 alone for 28
+while the rate falls from 18 to 19 per bin to single readings. 1887 detections across 111 covered
+bins.
+
+It does NOT fall to zero, and no surface may say it does. The covered camera-1 bins end at 1 and 2
+(bins 105 to 108 read 1, 2, 1, 2), bin 109 carries no count, bin 110 reads 1, bins 111 to 126 carry
+no count, bin 127 reads 1, and the evidence stops. "Decays to zero" and "decays to nothing" both
+read those gaps as measurements of zero, which is the exact thing the coverage mask exists to
+prevent, so the uncovered tail is described as unknown everywhere: the scripted answer, the finding
+note, the facts pack. `ssl-data.test.mjs` rejects `/to zero|to nothing/` in any masked-detection
+claim and pins that late chronology bin by bin.
+
+`ssl-data.test.mjs` checks the shipped bins against `ssl-vision-cache.fixture.json`, the exporter's
+own pre-publication extract, so a re-crop fails a test instead of rewriting a sentence.
+The per-camera frame totals (8058 / 8052) are window aggregates and never evidence that a camera
+was up at a given instant: no surface says "throughout".
+
+Every field carries two-dimensional provenance
+`{origin: REAL_TRACKER|REAL_GAME_CONTROLLER|REAL_VISION|SYNTHETIC, transform: WIRE|
+FIRMWARE_FLAG_DECODE|DERIVED_<X>|NONE}`, and both dimensions are emitted into the facts pack.
+Findings: `kicker-charge` (alert), `radio-degraded` (warn), `dribbler-overheat` (warn),
+`vision-confidence` (info, REAL). firstQuestion: "What is wrong with bot 8's kicker?"
+
+Scene: the field from the geometry packet, robots as 180 x 147 mm cylinders with the flat dribbler
+face and the correct 16 ssl-vision patterns, ball at true 43 mm. Cubic Hermite on exported tracker
+velocities, never across a presence gap; continuous yaw; tracking loss renders as a held ghost and
+never as a robot leaving the field. `rendering.shadow === false` (a 1024^2 map over an 18 m frustum
+is ~18 mm/texel, which on a 180 mm robot is a smear); grounding is baked contact discs. `hudState`
+drives the DOM strip, and derives RUNNING from the real ball track once a restart is in play.
+
+Referee state reaches the visitor two ways and only two. The DOM strip carries the TeamInfo
+semantics whole: names, score, stage, stage_time_left, yellow/red cards, max_allowed_bots, timeouts
+remaining, and the registered goalkeeper id as a `K<id>` chip beside its team. The keeper is a chip
+and NOT a decal on the robot, because a real SSL robot carries no keeper marking at all: the id is
+game-controller state, so painting it on a hull would be a fiction the league does not have. On the
+felt, three decals in the same honest-UI language as the ball marker (additive light, never
+leaving the ground plane), and each is the affordance its own command actually imposes:
+
+- the 0.5 m **ring on the ball**, under STOP and under a free kick until the ball is in play (the
+  in-play moment derived from the real ball track, not a fixed delay);
+- the 0.5 m **placement corridor**, a stadium from the LIVE ball to the command's
+  `designatedPosition`, rebuilt every frame as the placing robot dribbles the ball there, because
+  that is the shape the opponents owe the distance to during a ball placement;
+- the **placement target** at that `designatedPosition`.
+
+There is deliberately NO decal under HALT, under a timeout, or under kickoff/penalty preparation.
+HALT is "stop within 2 s", not a standoff; the two preparation commands have formation rules that
+are neither a ring nor a corridor. The HUD state chip carries all three.
+
+The strip never `display:none`s Tier S16 state. Below 1000 px it wraps into a compact second row
+(stage, stage clock, cards, timeouts) under the identity row (dots, names, keeper chips, score,
+state chip), and stays at two rows down to 360 px. `max_allowed_bots` is the one field that folds
+below 700 px, because it is the one field on the strip S16 does not require and it is a permitted
+maximum rather than an observed count.
+
 ## Chat scripts (per robot, 5-6 entries)
 
 1. The firstQuestion (the headline failure): a confident, numerate diagnosis. Structure: one-line
@@ -389,6 +613,62 @@ spinning without motion; slide-back; flippers articulate; highlight left track.
 Fallback: "I have this mission's data loaded. Try one of these:" + suggested chips.
 
 ## Verification bar (integration/QA phase)
+
+**The test run is `npm test`**, and it is the whole suite in dependency order:
+
+| # | script | what it holds |
+| --- | --- | --- |
+| 1 | `test:harness` | the two generated-demo interpreters, against the runner's own gendata |
+| 2 | `test:ssl-data` | the decoder, the provenance, the quoted values, the vision cross-check |
+| 3 | `test:ssl-script` | the def: matchers, house format, non-causality, keeper, decisive kick |
+| 4 | `test:ssl-eager-size` | the eager payload budget, so the match module stays lazy |
+| 5 | `test:ssl-leak:self` | the leak gate's own adversarial fixtures |
+| 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
+| 7 | `test:ssl-leak:repo` | de-identification over EVERY TRACKED FILE (`git ls-files`) |
+| 8 | `test:nav-race` | browser: the lazy-payload navigation race |
+| 9 | `test:preview-fallback` | browser: a preview slice that will not decode |
+| 10 | `test:preview-roster` | browser: a preview roster the scene cannot pose |
+| 11 | `test:chart-absence` | browser: a masked series draws a break, not a zero |
+| 12 | `test:corrupt-meta` | browser: five failure fixtures, below |
+| 13 | `facts:fresh` | `node worker/build-facts.mjs && git diff --exit-code worker/facts.generated.js` |
+
+FIVE browser tests, not three: rows 8 to 12. Both leak modes run, and 6 and 7 are not the same
+surface. 6 scans what Cloudflare uploads; 7 scans what anyone can clone, which is 196 files against
+48 and includes this document, the whole `gen-fixture/` directory and the worker. Both FAIL on a
+machine without the private manifest, by design.
+
+`test:corrupt-meta` drives five fixtures against the real app in Chromium. The first two are about
+a payload that will not build:
+
+- **A, pre-route.** `match-data.js` with the yellow-8 roster entry renumbered to yellow 88. The blob
+  is untouched, so it decodes perfectly and the robot the kicker finding is about is simply not
+  there; `validateSceneData()` rejects the LOAD rather than resolving into a doomed route.
+- **B, post-route.** `visionCrossCheck.robots.blue13.bins` replaced by a scalar. Everything
+  `validateSceneData()` inspects is intact, so the load RESOLVES and the throw happens inside
+  `buildData()`, inside the synchronous `route()` the load continuation calls.
+
+The other three are about a build that fails after resources exist, which is what A and B cannot
+reach (`ensureData()` runs first, so both throw before a single component is constructed):
+
+- **C.** `scene.js` patched to throw at the top of `buildScene()`, which `createViewer()` calls
+  twenty lines after it mounts the WebGL renderer.
+- **D.** `chart.js` patched to throw in `createChart()` for this def only, which is the line after
+  `createViewer()` returned.
+- **E.** a def whose `sceneApi.update()` throws on the first frame, the only point at which both
+  timeline subscriptions, the ResizeObserver, the animation frame and the renderer are all live.
+  Its timeline is a proxy counting subscribe against unsubscribe.
+
+C, D and E each repeat three times against a probe installed before any application code runs, and
+assert that the WebGL context count GROWS while the LIVE count does not, plus no leftover canvas or
+viewer DOM, no connected observer, no queued frame and no held subscription.
+
+The browser tests resolve playwright from an npx cache and SKIP loudly when there is none;
+everything else runs on a bare checkout. `worker/smoke.mjs` is separate because it spends API
+credit, and one of its calls is an ADVERSARIAL probe: it asks the causal question the def is
+forbidden to ask ("why did bot 8 stop taking shots"), and grades the answer for naming the overlay
+as synthetic and for containing no construction making the modelled kicker the reason for a real
+behaviour.
+
 
 Playwright against a local static server of the REPO ROOT (so `/demo/` paths match production).
 For each robot: picker → card click → connect finishes → auto-question streams → evidence fires →
@@ -427,7 +707,7 @@ opens its own.
 `null` before the card has been built and framed and while the context is down. The contextualization
 screen's hero uses it to open on the same shot the card was showing, so the hand-off does not jump.
 
-**The one-context rule.** There is exactly ONE `WebGLRenderer` for all four cards, never one per
+**The one-context rule.** There is exactly ONE `WebGLRenderer` for all the cards, never one per
 card. Its canvas is a transparent `position: fixed; inset: 0; pointer-events: none` overlay, and
 every rendered frame each card's `getBoundingClientRect()` becomes a `setViewport` + `setScissor`
 pair (`setScissorTest(true)`, `devicePixelRatio` capped at 1.5). That is the three.js
@@ -440,20 +720,53 @@ it is only faded out (400 ms opacity, `.rcard-art.preview-live`) once its robot 
 frame. `buildPicker()` still never calls `ensureData`; telemetry generation and scene construction
 happen after first paint, one robot at a time on `requestIdleCallback` (`setTimeout` fallback), and
 the renderer itself is created lazily inside that first idle slice. Measured cold boot: FCP 36 ms
-with all four SVG placeholders visible, first `buildData` at 59 ms, all four previews live at 109 ms.
+with all the SVG placeholders visible, first `buildData` at 59 ms, all previews live at 109 ms.
 
 **Framing.** Each preview scene gets its own hemisphere plus key and fill lights (brighter than the
 viewer's, since there is no lit ground plane behind a 92 px card), a transparent background and no
 ground grid. The model is posed ONCE at a healthy hero moment, never the failure:
-`{ sbr: 20, arm6: 30, drone: 30, rescue: 22 }` seconds, falling back to `duration * 0.3` (rescue is
-posed before its thermal build-up: its `update()` drives a heat glow, so a late pose reads as a red
-robot). Scenery
+`{ sbr: 20, arm6: 30, drone: 30, rescue: 22, ssl: 60.44 }` seconds, falling back to `duration * 0.3`
+(rescue is posed before its thermal build-up: its `update()` drives a heat glow, so a late pose
+reads as a red robot). A def may override the table with its own `heroTime()`, which is how ssl
+poses correctly against whichever payload is in hand: the preview slice's clock is its own, so the
+same instant is 60.44 s in the match export and 2.765 s in the slice.
+
+**Framing overrides.** `fitOrbit` takes optional `{ focus, envCull, envRadius, distScale }`, and a
+def supplies them once as `def.preview` for BOTH staged screens, so a card and the hero it flies
+into are culled and centred identically. Defaults are unchanged for a def that ships none. ssl needs
+them: the solve's defaults are tuned for a machine on a table and on a 12 x 9 m pitch they keep the
+carpet and lose the robots, so its block pulls the cull in to a cluster around the ball.
+
+**Neither staged screen builds telemetry for a def with a lazy scene payload.** `ensureData` is a
+tripwire for those defs (see the RobotDefinition interface): the picker and the brief run entirely
+off `previewData`, and only the demo route awaits `loadSceneData()`. The test is the CAPABILITY,
+never the payload - `previewData` is null whenever the preview slice failed to decode, and reading
+that null as "legacy robot, build its telemetry" walks straight into the tripwire on a route with
+no error handling. A def whose payload will not decode keeps its SVG line art on both staged
+screens, exactly like the no-WebGL and context-lost paths, and its demo route is unaffected.
+`ssl-preview-fallback.test.mjs` serves a mangled `preview-data.js` and drives all three screens.
+
+### Lazy scene payloads and the route
+
+`resolveSceneData()` in `app.js` parks a loading card, awaits the payload and hands the route back
+to `route()`. **Every entry into that route gets its own continuation**, even while an earlier load
+of the same robot is in flight: the LOAD is already deduplicated inside the def, so a second entry
+costs a `.then` and nothing else, while a second entry that returned early instead would leave the
+route with no continuation at all - and the first continuation, tied to a navigation generation two
+navigations old, correctly refuses to touch the screen. Nothing then renders, and the hash sits on
+`#/demo/<id>` over whatever screen happened to be showing, permanently. Ordinary browsing reaches
+it: demo -> back to the picker -> the same demo, and demo -> that robot's brief -> demo, both
+inside one load. Staleness is the generation captured at ENTRY; when it still holds, the route is
+re-entered against the CURRENT hash rather than the one that started the load.
+`ssl-nav-race.test.mjs` throttles the import and drives both sequences.
+
+Scenery
 markedly bigger than the shot or far from the machine (drone's survey field and flown track,
 rescue's rubble ramp and scattered debris) is hidden, then the camera orbits the remaining
 subject's centre at its `cameraHome` azimuth and elevation, 14 s per revolution, at a
 bounding-box fit distance capped at `0.9 x` the robot's own `cameraHome` distance.
 
-**Budget.** One rAF for all four previews, throttled to ~30 fps, cards outside the viewport skipped
+**Budget.** One rAF for all previews, throttled to ~30 fps, cards outside the viewport skipped
 via `IntersectionObserver`, and rendering stops entirely while `document.hidden`. Under
 `prefers-reduced-motion` each card renders a single static frame and only re-renders when a rect
 actually moves, so the 3D is still there but nothing orbits.
