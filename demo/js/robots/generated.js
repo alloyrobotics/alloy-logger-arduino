@@ -2,7 +2,7 @@
 //
 // A generated robot is not a directory of code. It is ONE JSON document (GENSPEC v1) fetched at
 // route time from `/demo/js/robots/g-<slug>/def.json` and turned into the exact same
-// RobotDefinition shape the four canned robots default-export, so viewer.js, chart.js, chat.js
+// RobotDefinition shape the canned robots default-export, so viewer.js, chart.js, chat.js
 // and context.js never learn that this robot arrived over the wire.
 //
 //   loadGeneratedRobot('g-abcdefghijklmnopqrst') -> RobotDefinition | null

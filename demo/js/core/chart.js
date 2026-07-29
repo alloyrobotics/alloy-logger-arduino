@@ -2,6 +2,13 @@
 // Channel + field chips above, min/max downsampled traces, crosshair readout, synced playhead,
 // finding-window shading, and an animated x-domain zoom via focus(finding).
 //
+// PRESENCE MASKS. A field def may carry `mask: '<key>'`, naming a 0/1 array on the same channel
+// block. Where the mask is 0 the field has NO READING and its stored value is filler, so the trace
+// breaks, the readout says "absent", and the sample is excluded from the y-range. The contract is
+// entirely opt-in: a channel block is data the def hands over, `mask` is a key the def writes, and
+// a def that writes neither is drawn byte-for-byte the way it was before this existed. See
+// maskFor() below and robots/ssl/data.js's /bot13/vision, the only channel that uses it today.
+//
 // NOTE: app.js attaches the built telemetry onto the robot def as `robotDef.data` before
 // constructing the chart (buildData is only called once, at load). See app.js.
 
@@ -71,6 +78,61 @@ export function createChart(mount, robotDef, timeline) {
 
   const chanDef = () => robotDef.channels.find((c) => c.path === channel) || robotDef.channels[0];
   const fieldDef = (key) => chanDef().fields.find((f) => f.key === key);
+
+  /**
+   * PRESENCE MASKS. A field may declare `mask: '<key>'`, naming a 0/1 array on its own channel
+   * block that says which samples carry a reading. Where the mask is 0 the field's value is filler
+   * - the zero an export writes where the subject was in no frame at all - and it is NOT a
+   * measurement of zero. A masked field is drawn as a BREAK in the trace, reads out as "absent",
+   * and takes no part in the y-range or in any extreme.
+   *
+   * Optional and inert: a field that declares no `mask`, or whose block does not carry the array it
+   * names, gets `null` here and every path below falls through to exactly what it did before. Every
+   * other robot on this page, and every generated def, is in that case.
+   *
+   * @param {string} key field key
+   * @returns {ArrayLike<number>|null}
+   */
+  function maskFor(key) {
+    const f = fieldDef(key);
+    if (!f || !f.mask) return null;
+    const ch = data[channel];
+    const m = ch && ch[f.mask];
+    return m && (Array.isArray(m) || ArrayBuffer.isView(m)) ? m : null;
+  }
+
+  /** True when sample `i` of `key` carries an actual reading. Always true for an unmasked field. */
+  const has = (mask, i) => !mask || !!mask[i];
+
+  /**
+   * Is there a reading to report at an arbitrary time `t`?
+   *
+   * `sampleAt` INTERPOLATES between the samples bracketing `t`, so a reading at `t` is only real if
+   * BOTH of them are. Testing only the sample at-or-before was enough to break the trace and to say
+   * "absent" deep inside a gap, and wrong at its edge: between bot 13's last tracked sample at
+   * 29.6999 s (3/255) and the first absent one at 29.77494 s the crosshair interpolated the
+   * measurement toward the absence marker and read out 1.5/255 - a confidence no camera ever
+   * reported, invented by averaging a number with a placeholder.
+   *
+   * This is the same rule FORMAT.md 4.1 already imposes on the scene ("if present[j] and
+   * present[j+1] are not both set, do not interpolate"); the readout is now held to it too.
+   *
+   * @param {ArrayLike<number>|null} mask
+   * @param {ArrayLike<number>} times monotonic time array
+   * @param {number} t query time
+   */
+  function absentAt(mask, times, t) {
+    if (!mask || !times || !times.length) return false;
+    const i = indexAt(times, t);
+    if (!has(mask, i)) return true;
+    // At or before the first sample, and at or past the last, sampleAt clamps to one sample and
+    // interpolates nothing - so that one sample is the whole answer.
+    if (t <= times[i] || i + 1 >= times.length) return false;
+    return !has(mask, i + 1);
+  }
+
+  /** The readout string for an absent sample. Not a number, and never formatted like one. */
+  const ABSENT = 'absent';
 
   // ---------- chips ----------
   function renderChanChips() {
@@ -244,9 +306,12 @@ export function createChart(mount, robotDef, timeline) {
         for (const key of g.keys) {
           const arr = ch[key];
           if (!arr) continue;
+          // An absent sample's filler zero would drag the axis down to it and squash the readings
+          // the plot is there to show, so the range is taken over the readings only.
+          const mask = maskFor(key);
           for (let i = i0; i <= i1 && i < arr.length; i++) {
             const v = arr[i];
-            if (!Number.isFinite(v)) continue;
+            if (!Number.isFinite(v) || !has(mask, i)) continue;
             if (v < g.lo) g.lo = v;
             if (v > g.hi) g.hi = v;
           }
@@ -387,12 +452,22 @@ export function createChart(mount, robotDef, timeline) {
         const i0 = indexAt(ch.t, domain[0]);
         const i1 = Math.min(indexAt(ch.t, domain[1]) + 1, arr.length - 1);
         const n = i1 - i0;
+        // An absent run is a GAP in the trace, not a line at zero: joining across it draws a
+        // measurement the log does not hold, and drawing it flat at zero states one it contradicts.
+        // `pen` is down only while the samples under it carry readings.
+        const mask = maskFor(key);
+        let pen = false;
         if (n <= plotW) {
           for (let i = i0; i <= i1; i++) {
+            if (!has(mask, i)) {
+              pen = false;
+              continue;
+            }
             const x = x2px(ch.t[i]);
             const y = yv(arr[i]);
-            if (i === i0) ctx.moveTo(x, y);
+            if (!pen) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
+            pen = true;
           }
         } else {
           const per = n / plotW;
@@ -402,15 +477,22 @@ export function createChart(mount, robotDef, timeline) {
             let mn = Infinity;
             let mx = -Infinity;
             for (let i = a; i <= b; i++) {
+              if (!has(mask, i)) continue;
               const v = arr[i];
               if (v < mn) mn = v;
               if (v > mx) mx = v;
             }
-            if (!Number.isFinite(mn)) continue;
+            // Either no sample in this column, or none of them a reading. Lift the pen: a column
+            // wholly inside an absence must leave the plot empty there.
+            if (!Number.isFinite(mn)) {
+              pen = false;
+              continue;
+            }
             const x = padL + px;
-            if (px === 0) ctx.moveTo(x, yv(mn));
+            if (!pen) ctx.moveTo(x, yv(mn));
             ctx.lineTo(x, yv(mn));
             ctx.lineTo(x, yv(mx));
+            pen = true;
           }
         }
         ctx.stroke();
@@ -464,7 +546,13 @@ export function createChart(mount, robotDef, timeline) {
         fields.forEach((key, si) => {
           const arr = ch[key];
           if (!arr) return;
-          const v = sampleAt(ch.t, arr, px2x(hoverX));
+          const t = px2x(hoverX);
+          // No dot inside an absence, and none in the interval that REACHES one: the crosshair
+          // marks where the trace is, the trace is broken across both, and a dot floating between
+          // the last reading and the absence marker states a measurement nobody made.
+          const mask = maskFor(key);
+          if (absentAt(mask, ch.t, t)) return;
+          const v = sampleAt(ch.t, arr, t);
           ctx.fillStyle = SERIES_COLORS[si % SERIES_COLORS.length];
           ctx.beginPath();
           ctx.arc(x, y2px(key, v), 2.6, 0, Math.PI * 2);
@@ -517,10 +605,15 @@ export function createChart(mount, robotDef, timeline) {
       row.appendChild(swatch);
       row.appendChild(document.createTextNode(`${fd.label || key} `));
       const val = document.createElement('b');
-      val.textContent = fmt(sampleAt(ch.t, arr, t));
+      // Absent reads as a word, not a number, and drops the unit with it: "0" and "0 V" both state
+      // a measurement, and the whole point of the mask is that no measurement was made here.
+      const mask = maskFor(key);
+      const absent = absentAt(mask, ch.t, t);
+      val.textContent = absent ? ABSENT : fmt(sampleAt(ch.t, arr, t));
+      if (absent) val.classList.add('ro-absent');
       row.appendChild(val);
       const em = document.createElement('em');
-      em.textContent = fd.unit || '';
+      em.textContent = absent ? '' : fd.unit || '';
       row.appendChild(em);
       readout.appendChild(row);
     });
@@ -568,6 +661,15 @@ export function createChart(mount, robotDef, timeline) {
     setChannel,
     get domain() {
       return [domain[0], domain[1]];
+    },
+    /**
+     * The plot rect inside the canvas, in CSS pixels. The gutters are MEASURED per frame off the
+     * real tick labels (a byte-count axis needs more room than a 52 px default), so nothing outside
+     * can convert a time to a pixel without them. Exposed for the same reason `domain` is: page
+     * state, for integration assertions.
+     */
+    get plot() {
+      return { left: padL, right: w - padR, top: PAD.t, bottom: PAD.t + (h - PAD.t - PAD.b) };
     },
     get targetDomain() {
       return [targetDomain[0], targetDomain[1]];

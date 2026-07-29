@@ -14,8 +14,11 @@ export const PICKER_ORBIT_MS = 14000; // one revolution
 
 /** Healthy hero moment per robot. Deliberately not the failure window, and for rescue also
  * before the thermal build-up: its update() drives a data-driven heat glow on the left track,
- * so a late-mission pose reads as a red robot. 22 s is the cool, clean traverse. */
-const T_HERO = { sbr: 20, arm6: 30, drone: 30, rescue: 22 };
+ * so a late-mission pose reads as a red robot. 22 s is the cool, clean traverse.
+ * ssl is the one whose hero moment is chosen from the DATA rather than from a fault: 60.44 s is
+ * the build-up to the window's one confirmed goal, both teams' fleets in the shot around the ball,
+ * which is the only frame in 110 s that reads as a match rather than as 19 dots on a carpet. */
+const T_HERO = { sbr: 20, arm6: 30, drone: 30, rescue: 22, ssl: 60.44 };
 const T_HERO_FALLBACK = 0.3; // fraction of duration
 
 // Cached and released immediately: the picker is mounted and disposed on every visit, and a probe
@@ -55,6 +58,13 @@ export function easeOutCubic(k) {
  * @returns {number} seconds into the mission
  */
 export function heroTime(def) {
+  // A def whose scene payload can be one of several - ssl poses against a small preview slice here
+  // and against the full match export on the demo route - resolves its own moment, because the
+  // same instant is a different number of seconds in each of them.
+  if (typeof def.heroTime === 'function') {
+    const t = def.heroTime();
+    if (Number.isFinite(t)) return t;
+  }
   if (T_HERO[def.id] != null) return T_HERO[def.id];
   let ws = Infinity;
   for (const f of def.findings || []) {
@@ -113,6 +123,9 @@ export function addStageLights(scene) {
  * @param {number} [opts.distScale] fallback distance, relative to the robot's own cameraHome
  * @param {number} [opts.envCull] hide scenery bigger than this many cameraHome distances
  * @param {number} [opts.envRadius] and scenery whose centre sits further than this from the machine
+ * @param {number[]|string} [opts.focus] override the point the cull and the framing centre on:
+ *   a world point `[x, y, z]`, or the name of an object in `mount`. Defaults to `cameraFocus()`
+ *   then `cameraHome.target`, which is what the four hand-written robots use.
  * @returns {{target:THREE.Vector3, dist:number, elev:number, az0:number}}
  */
 export function fitOrbit(opts) {
@@ -126,6 +139,7 @@ export function fitOrbit(opts) {
     distScale = 0.9,
     envCull = 1.5,
     envRadius = 0.28,
+    focus: focusIn = null,
   } = opts;
   const api = apiIn || {};
   const home = api.cameraHome;
@@ -150,6 +164,20 @@ export function fitOrbit(opts) {
   if (typeof api.cameraFocus === 'function') {
     const p = api.cameraFocus();
     if (p && Number.isFinite(p.x)) homeTarget = new THREE.Vector3(p.x, p.y, p.z);
+  }
+
+  // A per-def override wins over both: a scene whose world is much bigger than its machines (a
+  // 12 x 9 m pitch) may need the cull centred somewhere the camera contract does not point.
+  if (Array.isArray(focusIn) && focusIn.every((v) => Number.isFinite(v))) {
+    homeTarget = new THREE.Vector3(focusIn[0], focusIn[1] || 0, focusIn[2] || 0);
+  } else if (typeof focusIn === 'string' && focusIn) {
+    const node = mount.getObjectByName(focusIn);
+    if (node) {
+      const p = new THREE.Vector3();
+      node.updateWorldMatrix(true, false); // the mount-wide update below has not run yet
+      node.getWorldPosition(p);
+      homeTarget = p;
+    }
   }
 
   const focus = homeTarget || new THREE.Vector3(0, 0.4, 0);

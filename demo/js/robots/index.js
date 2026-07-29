@@ -4,9 +4,13 @@ import sbr from './sbr/script.js';
 import arm6 from './arm6/script.js';
 import drone from './drone/script.js';
 import rescue from './rescue/script.js';
+// ssl registers like any other robot, but its 3D replay is the one payload that does NOT ride this
+// static graph: `ssl/script.js` pulls channel metadata and a small preview slice, and the match
+// module itself arrives through `def.loadSceneData()` on the demo route only.
+import ssl from './ssl/script.js';
 
 /** Ordered registry. Picker card order === this order. */
-export const ROBOTS = [sbr, arm6, drone, rescue];
+export const ROBOTS = [sbr, arm6, drone, rescue, ssl];
 
 /** id -> RobotDefinition */
 export const ROBOTS_BY_ID = new Map(ROBOTS.map((r) => [r.id, r]));
@@ -19,7 +23,7 @@ export function getRobot(id) {
 /**
  * Add a robot that was not compiled in: a generated demo, fetched as one def.json at route time
  * and composed by robots/generated.js. Lookup only. ROBOTS is deliberately untouched, so the
- * picker stays the four canned cards and a personalized demo never leaks into a shared link.
+ * picker stays the canned cards in ROBOTS and a personalized demo never leaks into a shared link.
  *
  * @param {object} def a full RobotDefinition
  * @returns {object} the same def, for chaining
@@ -43,5 +47,10 @@ export const ROBOT_ICONS = {
 
   // track loop with road wheels and a ground run, hull, sensor mast with a camera head, and the
   // front flipper arm. The earlier version read as a bathtub.
+  // SSL robot from above: the Ø180 mm hull with its flat dribbler face on the right, the roller
+  // behind it, the four id dots of a vision pattern around the centre dot, and the golf ball on
+  // the face. Schematic line art in the house grammar, not a rendering of any team's pattern.
+  ssl: `<path d="M63.3 17.8A24 24 0 1 0 63.3 46.2Z"/><path d="M60 21.5v21"/><circle cx="55.8" cy="23.7" r="2.7"/><circle cx="55.8" cy="40.3" r="2.7"/><circle cx="32.2" cy="23.7" r="2.7"/><circle cx="32.2" cy="40.3" r="2.7"/><circle cx="44" cy="32" r="3.6" class="acc"/><circle cx="76" cy="32" r="3"/>`,
+
   rescue: `<rect x="15" y="33" width="50" height="19" rx="9.5"/><circle cx="25" cy="42.5" r="4.5"/><circle cx="55" cy="42.5" r="4.5"/><path d="M21 51.5h38" class="acc"/><rect x="23" y="20" width="34" height="13" rx="2"/><path d="M33 20v-6"/><rect x="27" y="6" width="13" height="8" rx="1.5" class="acc"/><path d="M62 38l15 9" class="acc"/><circle cx="78.5" cy="48" r="3.6" class="acc"/><path d="M6 59h84"/><rect x="68" y="54" width="9" height="5" rx="1"/>`,
 };

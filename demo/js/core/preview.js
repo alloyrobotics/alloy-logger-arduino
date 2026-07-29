@@ -18,11 +18,13 @@
 // the failure) and then orbited by the CAMERA. Nothing is animated per frame except the camera.
 
 import * as THREE from 'three';
-// Circular by module graph (app.js imports this file) but safe: ensureData is a hoisted function
+// Circular by module graph (app.js imports this file) but safe: sceneDataFor is a hoisted function
 // declaration, so its binding is initialised before any module in the cycle evaluates, and it is
 // only ever called later from the idle builder. Importing it rather than re-deriving the seed
-// keeps ONE data generator, which the deterministic-data rule depends on.
-import { ensureData } from '../app.js';
+// keeps ONE data generator, which the deterministic-data rule depends on. It also owns the rule
+// about WHICH data a scene gets: telemetry for the four hand-written robots, a def's own scene
+// payload where it has one (ssl's preview slice, never its 700 KB match module).
+import { sceneDataFor } from '../app.js';
 // The staging solve itself (WebGL probe, light rig, hero pose, orbit-safe fit) is shared with the
 // connect screen's hero, so it lives in stage3d.js. This module owns only the picker's one-canvas
 // scissor rig and its constants.
@@ -57,6 +59,10 @@ const FADE_CLASS = 'preview-live';
 export function createPickerPreviews(entries, host) {
   const recs = (entries || [])
     .filter((e) => e && e.el && e.def && typeof e.def.buildScene === 'function')
+    // A def whose scene runs off its own payload has nothing to draw if that payload failed to
+    // decode. Drop the card out of the preview set entirely and it keeps its SVG line art, the
+    // same fallback the no-WebGL and context-lost paths use.
+    .filter((e) => typeof e.def.getSceneData !== 'function' || !!e.def.getSceneData())
     .map((e) => ({
       el: e.el,
       def: e.def,
@@ -179,6 +185,10 @@ export function createPickerPreviews(entries, host) {
   // hero (stage3d.js); this adapter only feeds it the picker's constants and copies the result
   // onto the record the render loop reads.
   function frameRec(rec) {
+    // `def.preview` is the per-def escape hatch for the framing solve, applied by BOTH stages (the
+    // brief's hero passes the same block). Its keys default to the constants above, so a def that
+    // ships none frames byte-identically to before it existed.
+    const ov = rec.def.preview || {};
     const fit = fitOrbit({
       mount: rec.mount,
       api: rec.api,
@@ -186,9 +196,10 @@ export function createPickerPreviews(entries, host) {
       fill: SUBJECT_FILL,
       aspect: ASPECT_REF,
       samples: ORBIT_SAMPLES,
-      distScale: DIST_SCALE,
-      envCull: ENV_CULL,
-      envRadius: ENV_RADIUS,
+      distScale: Number.isFinite(ov.distScale) ? ov.distScale : DIST_SCALE,
+      envCull: Number.isFinite(ov.envCull) ? ov.envCull : ENV_CULL,
+      envRadius: Number.isFinite(ov.envRadius) ? ov.envRadius : ENV_RADIUS,
+      focus: ov.focus || null,
     });
     rec.target.copy(fit.target);
     rec.dist = fit.dist;
@@ -199,7 +210,7 @@ export function createPickerPreviews(entries, host) {
   function buildOne(rec) {
     if (disposed || rec.ready) return;
     const def = rec.def;
-    const data = ensureData(def);
+    const data = sceneDataFor(def);
 
     const scene = new THREE.Scene();
     scene.background = null; // transparent: the card's own panel is the backdrop

@@ -29,10 +29,41 @@ const screens = {
 /**
  * buildData is called exactly once per robot, at first use. The result is attached to the def as
  * `.data`; viewer.js, chart.js and ingest.js all read robotDef.data.
+ *
+ * TRIPWIRE. A def may declare `loadSceneData()`: its channels are DERIVED from a payload that
+ * loads lazily (the SSL match replay), so `buildData` before that payload exists is not a slow
+ * path, it is a wrong one. Such a def must also declare `isSceneDataLoaded()`, and calling this
+ * before that returns true is a routing bug in this file, never something to paper over: the
+ * picker and the brief read `def.previewData` and never come here at all, and the demo route
+ * awaits `loadSceneData()` first.
  */
 function ensureData(def) {
-  if (!def.data) def.data = def.buildData(mulberry32(seedFor(def.id)));
+  if (!def.data) {
+    if (typeof def.loadSceneData === 'function' && !(def.isSceneDataLoaded && def.isSceneDataLoaded())) {
+      throw new Error(
+        `ensureData(${def.id}): this robot's channels are derived from its scene payload. ` +
+          'await def.loadSceneData() before building its data.',
+      );
+    }
+    def.data = def.buildData(mulberry32(seedFor(def.id)));
+  }
   return def.data;
+}
+
+/**
+ * What a 3D scene gets handed as its second `update()` argument.
+ *
+ * `def.data` is chart and chat telemetry. A def whose scene is driven by something else says so
+ * with `getSceneData()`, and that def's scene payload is the only thing the picker and the brief
+ * ever need from it, so neither screen builds its telemetry. Defs without a `getSceneData` take
+ * the ensureData path exactly as before.
+ *
+ * @param {object} def
+ * @returns {object} scene data for `sceneApi.update(t, data)`
+ */
+function sceneDataFor(def) {
+  if (typeof def.getSceneData === 'function') return def.getSceneData() || {};
+  return ensureData(def);
 }
 
 // ---------------------------------------------------------------------------- picker
@@ -48,9 +79,9 @@ function buildPicker() {
   const grid = screens.picker.querySelector('#robot-grid');
   grid.innerHTML = '';
 
-  // NOTE: the cards are built from the DEFINITION only. Generating all four robots' telemetry
-  // here (four full physics passes) blocked the picker's first paint for output nothing on this
-  // screen reads; buildConnect and buildDemo already call ensureData for the one robot picked.
+  // NOTE: the cards are built from the DEFINITION only. Generating every robot's telemetry here
+  // (a full physics pass each) blocked the picker's first paint for output nothing on this screen
+  // reads; buildConnect and buildDemo already call ensureData for the one robot picked.
   ROBOTS.forEach((def) => {
     const a = document.createElement('a');
     a.className = 'rcard';
@@ -101,7 +132,13 @@ function buildConnect(def) {
   const mount = screens.connect.querySelector('#ingest-mount');
   if (ingestApi) ingestApi.dispose();
   mount.innerHTML = '';
-  ensureData(def);
+  // A def with a LAZY scene payload authors its whole brief itself, so the brief has nothing to
+  // read out of the telemetry and the telemetry is never built here. The test is the CAPABILITY
+  // (`loadSceneData`), not the payload: `previewData` is null whenever the preview slice failed to
+  // decode, and reading that null as "legacy robot, build its telemetry" walked straight into
+  // ensureData's tripwire and threw on a route with no error handling. A def that declares
+  // `loadSceneData` never comes here, decoded or not; the brief falls back to its SVG hero.
+  if (typeof def.loadSceneData !== 'function') ensureData(def);
   ingestApi = createContext(mount, def, {
     handoff: takeHeroHandoff(def.id),
     onDone: () => {
@@ -193,9 +230,61 @@ function teardownDemo() {
   delete window.__demo;
 }
 
+/**
+ * Build the demo, or leave nothing behind.
+ *
+ * `demo` is only assigned once every component exists, which is right - a half-built demo must
+ * never be reachable - but it made the FAILURE path a no-op: `renderSceneUnavailable()` calls
+ * `teardownDemo()`, and `teardownDemo()` returns immediately while `demo` is still null. So a throw
+ * in the chart or the chat, after the timeline and the viewer were already constructed, left a live
+ * WebGL context, a canvas in the DOM, an animation frame and two timeline subscriptions with
+ * nothing holding a reference to any of them. Retrying the mission built another set.
+ *
+ * So construction is transactional. The components are tracked LOCALLY as they are built, and a
+ * throw disposes them newest first before it propagates. `buildDemoInner` is the function this one
+ * used to be; the split exists to get a try block around a body whose closures reach thirty locals,
+ * and to keep the assignment of `demo` where it belongs, at the very end of a successful build.
+ */
 function buildDemo(def) {
   teardownDemo();
   ensureData(def);
+  const built = [];
+  try {
+    buildDemoInner(def, built);
+  } catch (err) {
+    // Same order and the same members teardownDemo() unwinds, minus the ones that were never
+    // reached. The signup triggers first, and unconditionally: they are installed near the end of
+    // the build, they own window level listeners and a pending quiet timer, and a build that threw
+    // after installing them would otherwise leave a torn-down demo able to open the popup over
+    // whatever screen the failure lands on. The toggle handler because it is a PERSISTENT node
+    // closing over components about to die.
+    if (signupTriggers) {
+      signupTriggers.dispose();
+      signupTriggers = null;
+      delete window.__signup;
+    }
+    const toggle = screens.demo.querySelector('#chart-toggle');
+    if (toggle) toggle.onclick = null;
+    while (built.length) {
+      const component = built.pop();
+      try {
+        component.dispose();
+      } catch (disposeErr) {
+        // The original failure is the one worth reporting; a teardown that also fails must not
+        // replace it, or the card would explain the wrong problem.
+        console.warn(`[demo] partial teardown: ${disposeErr && disposeErr.message}`);
+      }
+    }
+    throw err;
+  }
+}
+
+function buildDemoInner(def, built) {
+  /** Register a component the moment it exists, so the catch above can find it. */
+  const track = (component) => {
+    built.push(component);
+    return component;
+  };
 
   const host = screens.demo;
   host.querySelector('#demo-name').textContent = def.name;
@@ -208,9 +297,9 @@ function buildDemo(def) {
   chartMount.innerHTML = '';
   chatMount.innerHTML = '';
 
-  const timeline = createTimeline(def.duration);
-  const viewer = createViewer(viewerMount, def, timeline);
-  const chart = createChart(chartMount, def, timeline);
+  const timeline = track(createTimeline(def.duration));
+  const viewer = track(createViewer(viewerMount, def, timeline));
+  const chart = track(createChart(chartMount, def, timeline));
 
   let evidenceActive = null;
   let evidenceFull = false; // the active finding spans the whole mission, so it is not looping
@@ -268,7 +357,7 @@ function buildDemo(def) {
     // data-analytics-todo: capture('demo_evidence_fired', { robot: def.id, finding: finding.id })
   }
 
-  const chat = createChat(chatMount, def, {
+  const chat = track(createChat(chatMount, def, {
     onEvidence,
     onAsk: () => {
       clearEvidence();
@@ -278,7 +367,7 @@ function buildDemo(def) {
     onSettled: () => {
       if (signupTriggers) signupTriggers.chatSettled();
     },
-  });
+  }));
 
   // Scrubbing (marker click, drag, chart click) outside a running evidence loop drops the loop in
   // timeline.seek. That is the user leaving the evidence, so the banner, highlight and chart zoom
@@ -342,7 +431,10 @@ let genPending = null;
  *
  * `.ctx-charge` and `.ctx-system` are used purely as the brief's two type sizes, bright line first.
  *
- * @param {{ line:string, cap:string, action?:{label:string, href:string}, progress?:boolean }} o
+ * @param {{ line:string, cap:string, action?:{label:string, href:string}, progress?:boolean,
+ *   icon?:string, accent?:string }} o `icon`/`accent` are for the states where the robot IS known
+ *   (a canned def waiting on its scene payload); without them the card stands in the generic
+ *   machine, which is all a not-yet-fetched generated demo has.
  */
 function renderGenCard(o) {
   const section = screens.connect;
@@ -356,12 +448,12 @@ function renderGenCard(o) {
   // there is no def to take an accent off yet, and the panel's backdrop is a color-mix() on --acc:
   // leaving it unset makes that whole background shorthand invalid and the product shot loses its
   // texture entirely. The house blue is the same default the picker cards fall back to.
-  el.style.setProperty('--acc', '#2f78ff');
+  el.style.setProperty('--acc', o.accent || '#2f78ff');
   el.innerHTML = `
     <div class="ctx-stage">
       <div class="ctx-fly">
         <svg class="ctx-ghost" viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GENERIC_ICON}</svg>
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${o.icon || GENERIC_ICON}</svg>
       </div>
     </div>
     <div class="ctx-copy">
@@ -466,8 +558,156 @@ function resolveGenerated(next) {
   });
 }
 
+// ------------------------------------------------------------------- lazy scene payloads
+// A def may keep its 3D payload out of the boot graph and behind `loadSceneData()` (the SSL match
+// replay is ~700 KB, and four visitors in five never open it). The picker and the brief run off
+// `def.previewData`, so the wait happens exactly once, on the way into the demo screen.
+
+/**
+ * Robot ids with a load in flight. Diagnostic only, and exposed for QA: the LOAD is deduplicated
+ * inside the def (`loadSceneData()` is a cached idempotent promise), never here. Suppressing the
+ * ROUTE ENTRY on this set is what used to strand a visitor - see below.
+ */
+const scenePending = new Set();
+
+/**
+ * The ONE place a scene-backed mission's failure is rendered, whether the payload rejected, the
+ * route it unblocked threw, or a later entry into the same mission threw again. Nothing on this
+ * path may be left half-built: `currentRoute` goes back to the 'load' sentinel so the next pass
+ * treats the demo as a fresh entry rather than as a screen it is already on.
+ *
+ * Module scope, not a closure inside `resolveSceneData`, because the failure has TWO entry points.
+ * The first visit fails inside the load continuation; every visit after that finds the payload
+ * cached as loaded, skips `resolveSceneData` entirely and builds straight out of `route()`. A card
+ * that only existed inside the continuation left the second visit throwing out of the hashchange
+ * handler with the demo screen already shown.
+ *
+ * @param {object} def the robot whose mission could not be built
+ * @param {Error} err
+ */
+function renderSceneUnavailable(def, err) {
+  console.warn(`[scene] ${def.id}: ${err && err.message}`);
+  // A demo that threw mid-build is half-wired, so its own teardown can throw too. Failing to tear
+  // down must not stop the card from rendering: the card is what the visitor sees.
+  try {
+    teardownDemo();
+  } catch (teardownErr) {
+    console.warn(`[scene] ${def.id}: teardown after failure: ${teardownErr && teardownErr.message}`);
+    demo = null;
+  }
+  show('connect');
+  currentRoute = { name: 'load', id: null };
+  document.title = 'Mission unavailable · AlloyLogger';
+  renderGenCard({
+    icon: ROBOT_ICONS[def.id],
+    accent: def.accent,
+    line: 'This mission could not be loaded.',
+    // The two failures are not the same failure: a decode or a build can be retried in place, a
+    // module that failed to evaluate is cached as failed by specifier for the life of the document.
+    cap:
+      err && err.retryable === false
+        ? 'The replay module did not load. Reload the page to try again.'
+        : 'The replay did not decode. Pick the mission again to retry, or choose another robot.',
+    action: { label: 'Back to the robots', href: '#/' },
+  });
+}
+
+/**
+ * Park the loading card, await the payload, then hand the route back to route().
+ *
+ * EVERY entry into this route gets its own continuation, even while an earlier load of the same
+ * robot is still in flight. That is the whole correctness argument. The load itself is already
+ * deduplicated by `def.loadSceneData()`, which returns one cached promise, so a second entry costs
+ * a `.then` and nothing else; but a second entry that returned early instead would leave the route
+ * with no continuation at all, while the first continuation, tied to a generation that is now two
+ * navigations old, correctly refuses to touch the screen. The hash then says `#/demo/ssl` forever
+ * over whatever screen happened to be showing. The sequences that reach it are ordinary:
+ * demo -> back to picker -> the same demo again, and demo -> connect/<same id> -> demo.
+ *
+ * Staleness is checked on the generation captured at ENTRY. A newer pass owns the screen and this
+ * one must not touch it. If the generation still holds, the payload landed with this entry still
+ * current, and the route is re-entered against the CURRENT hash rather than against the one that
+ * started the load: within one generation the hash can only have moved to another screen of the
+ * same robot, and re-entering renders it instead of leaving it half-built.
+ *
+ * @param {{name:string, id:string}} next the route that asked for this robot
+ * @param {object} def
+ */
+function resolveSceneData(next, def) {
+  scenePending.add(next.id);
+  const gen = navGen;
+
+  // leave whatever screen we were on, same teardown order route() uses
+  if (currentRoute.name === 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'demo') teardownDemo();
+  if (ingestApi) {
+    ingestApi.dispose();
+    ingestApi = null;
+  }
+
+  // A sentinel, not the target route: the demo has not been built yet, and route() must treat the
+  // next pass as a fresh entry into it. 'load' parks its card in #ingest-mount, so it leaves the
+  // connect screen the same way a running brief does.
+  currentRoute = { name: 'load', id: next.id };
+  show('connect');
+  document.title = `Loading ${def.name} · AlloyLogger`;
+  renderGenCard({
+    line: 'Loading the match replay.',
+    cap: 'Every tracked robot, the ball and the referee timeline, decoded in your browser.',
+    progress: true,
+    icon: ROBOT_ICONS[def.id],
+    accent: def.accent,
+  });
+
+  /**
+   * True when a LATER routing pass has taken the screen, or when the hash has moved off this
+   * robot entirely (that move has its own pass; this one must not pre-empt it).
+   */
+  const stale = () => gen !== navGen || parseHash().id !== next.id;
+
+  const unavailable = (err) => renderSceneUnavailable(def, err);
+
+  def.loadSceneData().then(
+    () => {
+      scenePending.delete(next.id);
+      if (stale()) return;
+      // Re-enter for whatever the hash asks for NOW, which is this robot on this screen or on its
+      // brief. route() rebuilds from the hash, so either lands fully rendered.
+      //
+      // route() is SYNCHRONOUS and it builds the demo: chart, viewer, chat, all derived from the
+      // payload that just landed. A throw in there used to escape into this `.then` as an
+      // unhandled rejection, leaving the visitor on an exposed demo screen with no card and no
+      // message. The load succeeding is not the same thing as the mission working, so the
+      // continuation gets the same failure path the load itself has.
+      //
+      // The ERROR branch does NOT re-check stale(). It cannot: route() bumps navGen as its first
+      // act, so by the time anything inside it throws, the generation captured at entry is stale
+      // BY CONSTRUCTION and a `if (stale()) throw err` rethrows every single mid-build failure as
+      // the unhandled rejection this was written to stop. The generation check belongs to the
+      // ROUTING decision above - "may this continuation touch the screen at all" - and it has
+      // already said yes. Once route() has been entered, this pass owns the screen and owns
+      // whatever it broke, so the card is unconditional.
+      try {
+        route();
+      } catch (err) {
+        unavailable(err);
+      }
+    },
+    (err) => {
+      scenePending.delete(next.id);
+      if (stale()) return;
+      unavailable(err);
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------- router
 let currentRoute = { name: 'picker', id: null };
+/**
+ * Monotonic, bumped once per routing pass. Anything awaited across a route change compares the
+ * generation it captured against this before it touches the screen.
+ */
+let navGen = 0;
 
 function parseHash() {
   const h = (location.hash || '#/').replace(/^#/, '');
@@ -485,6 +725,7 @@ function show(name) {
 }
 
 function route() {
+  navGen++;
   const next = parseHash();
   const def = next.id ? getRobot(next.id) : null;
 
@@ -502,9 +743,13 @@ function route() {
   // leaving a screen
   if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
-  // 'gen' is the transient generated-robot resolve state; it parks its own card in #ingest-mount,
-  // so it leaves the connect screen the same way a running ingest does.
-  if ((currentRoute.name === 'connect' || currentRoute.name === 'gen') && next.name !== 'connect') {
+  // 'gen' and 'load' are the transient resolve states (a generated robot's def.json, a lazy scene
+  // payload); both park their own card in #ingest-mount, so they leave the connect screen the
+  // same way a running ingest does.
+  if (
+    (currentRoute.name === 'connect' || currentRoute.name === 'gen' || currentRoute.name === 'load') &&
+    next.name !== 'connect'
+  ) {
     if (ingestApi) {
       ingestApi.dispose();
       ingestApi = null;
@@ -534,9 +779,37 @@ function route() {
     return;
   }
 
-  // demo
+  // demo. A def whose scene payload is lazy cannot mount its viewer, chart or chat until that
+  // payload is in: its channels are derived from it. Wait on the loading card first, then this
+  // same function runs again with everything present.
+  if (
+    typeof def.loadSceneData === 'function' &&
+    !(def.isSceneDataLoaded && def.isSceneDataLoaded())
+  ) {
+    resolveSceneData(next, def);
+    return;
+  }
+  // show() FIRST, unchanged: the viewer and the chart size themselves off a real layout rect, and
+  // a canvas built against a hidden screen comes up 0 x 0.
   show('demo');
-  if (!(prev.name === 'demo' && prev.id === next.id)) buildDemo(def);
+  // The payload is in (or there was never one to wait for), so this is the SYNCHRONOUS build. A
+  // scene-backed mission that throws here has already been through resolveSceneData once and will
+  // never go through it again - the payload is cached as loaded - so this call site needs the same
+  // card the load continuation has, or the second visit to a mission that cannot build throws out
+  // of the hashchange handler onto an already-shown demo screen. renderSceneUnavailable() shows
+  // the connect screen, so the exposed demo does not survive the failure.
+  if (!(prev.name === 'demo' && prev.id === next.id)) {
+    if (typeof def.loadSceneData === 'function') {
+      try {
+        buildDemo(def);
+      } catch (err) {
+        renderSceneUnavailable(def, err);
+        return;
+      }
+    } else {
+      buildDemo(def);
+    }
+  }
   document.title = `${def.name} · AlloyLogger live demo`;
 }
 
@@ -596,4 +869,4 @@ function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
 
-export { boot, route, buildDemo, ensureData };
+export { boot, route, buildDemo, ensureData, sceneDataFor };

@@ -65,9 +65,20 @@ function sentence(s) {
   return /[.!?…]$/.test(head) ? head : head + '.';
 }
 
-/** Row counts read off the arrays the robot actually shipped, never asserted from `rate`. */
+/**
+ * Row counts read off the arrays the robot actually shipped, never asserted from `rate`.
+ *
+ * A def whose channels are derived from a LAZILY loaded scene payload counts nothing at all, and
+ * the rule is unconditional rather than "count whatever happens to be in `def.data`". The brief is
+ * the same screen wherever the visitor reaches it from, and `def.data` is a CACHE: it is empty on a
+ * cold entry (app.js's ensureData refuses to build it here) and populated after a visit to the
+ * demo, so counting it made the brief say "37,043 raw datapoints" or nothing at all depending on
+ * navigation history. Such a def authors its `context` in full, so the authored copy is the whole
+ * brief either way and nothing on screen goes missing.
+ */
 function statsOf(def) {
-  const data = def.data || {};
+  const lazy = typeof def.loadSceneData === 'function';
+  const data = lazy ? {} : def.data || {};
   const channels = Array.isArray(def.channels) ? def.channels : [];
   const paths = [];
   let samples = 0;
@@ -145,6 +156,10 @@ function briefOf(def) {
     dev: def.deviceId || def.id || 'device',
     name: def.name || 'Robot',
     system,
+    // OPTIONAL and never derived: where a mission's data comes from, and which parts of it are
+    // synthesized. Only a def that has something to disclose ships it, and it is rendered
+    // verbatim under the system line. No fallback: an invented provenance line is worse than none.
+    provenance: typeof ctx.provenance === 'string' ? ctx.provenance.trim() : '',
     mission,
     fault,
     faultT,
@@ -219,6 +234,7 @@ export function createContext(mount, robotDef, opts = {}) {
     </div>
     <div class="ctx-copy">
       <p class="ctx-system" data-stage="1"></p>
+      ${b.provenance ? '<p class="ctx-prov" data-stage="1"></p>' : ''}
       ${hasVolume ? '<p class="ctx-volume" data-stage="2"></p>' : ''}
       <p class="ctx-charge" data-stage="3">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
       ${
@@ -238,6 +254,7 @@ export function createContext(mount, robotDef, opts = {}) {
 
   const q = (sel) => el.querySelector(sel);
   q('.ctx-system').textContent = b.system;
+  if (b.provenance) q('.ctx-prov').textContent = b.provenance;
   if (hasVolume) {
     q('.ctx-volume').textContent =
       `${loc(b.values)} raw datapoints across ${loc(b.count)} channels. The answer is in there, ` +
@@ -419,7 +436,22 @@ export function createContext(mount, robotDef, opts = {}) {
   function refit(aspect) {
     if (!group) return;
     const a = aspect > 0 ? aspect : 1;
-    const next = fitOrbit({ mount: group, api, fov: HERO_FOV, fill: HERO_FILL, aspect: a });
+    // Same per-def framing overrides the picker cards use (`def.preview`), so a robot is culled
+    // and centred identically in both stages and the card-to-hero hand-off stays a pure scale.
+    // A def without the block gets fitOrbit's own defaults, which is what every def without a
+    // `previewData` payload has always been framed with.
+    const ov = def.preview || {};
+    const next = fitOrbit({
+      mount: group,
+      api,
+      fov: HERO_FOV,
+      fill: HERO_FILL,
+      aspect: a,
+      ...(Number.isFinite(ov.distScale) ? { distScale: ov.distScale } : {}),
+      ...(Number.isFinite(ov.envCull) ? { envCull: ov.envCull } : {}),
+      ...(Number.isFinite(ov.envRadius) ? { envRadius: ov.envRadius } : {}),
+      ...(ov.focus ? { focus: ov.focus } : {}),
+    });
     sizedAspect = a;
     if (!fit) fit = next;
     else {
@@ -520,6 +552,10 @@ export function createContext(mount, robotDef, opts = {}) {
    */
   function buildHero() {
     if (!webglAvailable() || typeof def.buildScene !== 'function') return false;
+    // Same rule as the picker: a scene driven by its own payload cannot be posed without one, and
+    // a decode failure leaves `getSceneData()` empty. Fall through to the SVG hero rather than
+    // mounting a rig with nothing in it.
+    if (typeof def.getSceneData === 'function' && !def.getSceneData()) return false;
     try {
       scene = new THREE.Scene();
       scene.background = null; // transparent: the panel's own backdrop shows through
@@ -528,7 +564,14 @@ export function createContext(mount, robotDef, opts = {}) {
       group.name = `hero-${def.id}`;
       scene.add(group);
       api = def.buildScene(THREE, group) || {};
-      if (typeof api.update === 'function') api.update(heroTime(def), def.data);
+      // Same rule as the picker: a scene driven by its own payload gets that, everything else gets
+      // the telemetry. `def.data` is deliberately not built for a def with a lazy scene payload.
+      if (typeof api.update === 'function') {
+        api.update(
+          heroTime(def),
+          (typeof def.getSceneData === 'function' ? def.getSceneData() : null) || def.data || {},
+        );
+      }
       if (typeof api.setHighlight === 'function') api.setHighlight(null);
     } catch (err) {
       console.warn('[ctx] hero scene build failed for', def.id, err);

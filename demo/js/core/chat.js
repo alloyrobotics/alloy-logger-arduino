@@ -44,6 +44,7 @@ export function createChat(mount, robotDef, hooks = {}) {
   el.innerHTML = `
     <div class="chat-log" role="log" aria-live="polite" aria-label="Analyst conversation"></div>
     <div class="chat-foot">
+      <p class="chat-prov" hidden></p>
       <div class="sugg" aria-label="Suggested questions"></div>
       <form class="chat-form" autocomplete="off">
         <input class="chat-input" type="text" maxlength="500" placeholder="Ask about this mission" aria-label="Ask about this mission" />
@@ -56,6 +57,18 @@ export function createChat(mount, robotDef, hooks = {}) {
 
   const log = el.querySelector('.chat-log');
   const sugg = el.querySelector('.sugg');
+
+  // ---------- persistent provenance line ----------
+  // A def MAY declare `chatProvenance`, a short standing disclosure pinned above the composer for
+  // the whole session. It is written here, from the def, with textContent: it is on screen before
+  // the first question and it survives every answer, so a mission whose telemetry is synthesized
+  // never depends on the model remembering to say so in prose it streamed. Defs without one (the
+  // four synthetic missions, every generated demo) render no element at all.
+  if (typeof robotDef.chatProvenance === 'string' && robotDef.chatProvenance.trim()) {
+    const prov = el.querySelector('.chat-prov');
+    prov.textContent = robotDef.chatProvenance.trim();
+    prov.hidden = false;
+  }
   const form = el.querySelector('.chat-form');
   const input = el.querySelector('.chat-input');
 

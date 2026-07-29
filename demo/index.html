@@ -92,10 +92,21 @@ input { font: inherit; color: inherit; }
 .pick-hero .sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 16px auto 0; max-width: 480px; }
 
 #robot-grid {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px;
+  --gap: 14px;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--gap);
   padding-bottom: 46px;
 }
-@media (max-width: 1000px) { #robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) {
+  #robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* An odd number of cards leaves the last one alone on its row. The art panel is a square, so
+     stretching it across both columns opens a tile as tall as the phone is wide; instead the lone
+     card keeps a normal card's width and sits centred.
+     Matched by TYPE, not by child position: preview.js appends its shared WebGL canvas to this
+     same grid, so the last card is never the last child. */
+  #robot-grid > a.rcard:nth-of-type(odd):last-of-type {
+    grid-column: 1 / -1; width: calc(50% - var(--gap) / 2); justify-self: center;
+  }
+}
 
 .rcard {
   display: flex; flex-direction: column; gap: 11px;
@@ -243,6 +254,13 @@ input { font: inherit; color: inherit; }
 .ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .ctx-system, .ctx-volume { font-size: 14.5px; color: var(--tx-body); }
 .ctx-charge { font-size: 14.5px; color: rgba(255,255,255,0.82); }
+/* where the mission's data actually comes from, and which parts of it are synthesized. Only a
+   mission with something to disclose renders one, and it sits directly under the system line as
+   a quieter footnote, hung off an accent rule so it reads as attribution and not as body copy. */
+.ctx-prov {
+  margin-top: -8px; padding-left: 11px; border-left: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
+  font-size: 12.5px; line-height: 1.5; color: var(--tx-mute);
+}
 /* the robot's own first question as an iMessage-style composer: the question sits "typed" in a
    message pill with a round accent send disc on the right. The WHOLE pill is the button; clicking
    it hands the mission to the analyst, and the demo opens by asking this exact question. */
@@ -306,6 +324,7 @@ input { font: inherit; color: inherit; }
   .ctx-stage:not(.live) .ctx-ghost { width: 50%; }
   .ctx-copy { gap: 15px; }
   .ctx-system, .ctx-volume, .ctx-charge { font-size: 13.5px; }
+  .ctx-prov { margin-top: -7px; font-size: 12px; }
   .ctx-ask { padding: 7px 7px 7px 15px; gap: 11px; }
   .ctx-ask-q { font-size: 14.5px; }
   .ctx-ask-send { width: 33px; height: 33px; }
@@ -458,6 +477,9 @@ input { font: inherit; color: inherit; }
 .ro-row { display: flex; align-items: center; gap: 5px; }
 .ro-row i { width: 7px; height: 2px; border-radius: 2px; }
 .ro-row b { color: var(--tx); font-weight: 500; }
+/* "absent" is not a reading, so it must not read like one: dimmed and italic, never the same
+   weight and colour as a number the log actually holds. */
+.ro-row b.ro-absent { color: var(--tx-mute); font-weight: 400; font-style: italic; }
 .ro-row em { font-style: normal; opacity: .5; }
 
 /* ---- chat ---- */
@@ -552,6 +574,15 @@ input { font: inherit; color: inherit; }
 .ev-chip.inline { margin: 0 2px; vertical-align: baseline; }
 
 .chat-foot { flex: 0 0 auto; min-width: 0; padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); background: var(--canvas); }
+/* Standing provenance line, written from the def by chat.js. Deliberately above the suggestions
+   and the composer rather than inside the transcript: it is not a message, it is a label on the
+   panel, and it must not scroll away behind an answer. Only a def that ships `chatProvenance`
+   renders one. */
+.chat-prov {
+  font-family: 'Geist Mono', ui-monospace, monospace; font-size: 10.5px; line-height: 1.5;
+  letter-spacing: 0.02em; color: var(--tx-mute); padding: 0 2px 8px; margin: 0;
+}
+.chat-prov[hidden] { display: none; }
 /* desktop has the vertical room, so show every suggestion instead of clipping the last two */
 .sugg { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; overflow-x: auto; padding-bottom: 9px; scrollbar-width: none; }
 .sugg::-webkit-scrollbar { display: none; }
@@ -720,7 +751,7 @@ input { font: inherit; color: inherit; }
 
   /* picker: the square 3D tile is the card; text rides under it */
   .pick-hero { padding: 34px 0 22px; }
-  #robot-grid { gap: 10px; }
+  #robot-grid { --gap: 10px; }
   .rcard { gap: 9px; padding: 9px 9px 11px; }
   .rcard-art svg { width: 96px; height: 62px; }
   .rcard-name { font-size: 14px; }
@@ -818,7 +849,7 @@ input { font: inherit; color: inherit; }
         <a class="btn" data-cta="github" href="#" target="_blank" rel="noopener">Get the library</a>
         <a class="btn ghost" data-cta="setup" href="#" target="_blank" rel="noopener">Set up your org</a>
       </div>
-      <p class="note">Synthetic missions, replayed in your browser.</p>
+      <p class="note">Four synthetic missions and one real match replay with planted fault overlays. Runs entirely in your browser.</p>
     </div>
   </div>
 </section>
