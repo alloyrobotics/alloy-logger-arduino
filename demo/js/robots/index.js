@@ -8,9 +8,12 @@ import rescue from './rescue/script.js';
 // static graph: `ssl/script.js` pulls channel metadata and a small preview slice, and the match
 // module itself arrives through `def.loadSceneData()` on the demo route only.
 import ssl from './ssl/script.js';
+// battle is the second lazy-payload mission: script.js ships metadata and a 6 s preview slice,
+// and the full-round module arrives through `def.loadSceneData()` on the demo route only.
+import battle from './battle/script.js';
 
 /** Ordered registry. Picker card order === this order. */
-export const ROBOTS = [sbr, arm6, drone, rescue, ssl];
+export const ROBOTS = [sbr, arm6, drone, rescue, ssl, battle];
 
 /** id -> RobotDefinition */
 export const ROBOTS_BY_ID = new Map(ROBOTS.map((r) => [r.id, r]));
@@ -53,4 +56,9 @@ export const ROBOT_ICONS = {
   ssl: `<path d="M63.3 17.8A24 24 0 1 0 63.3 46.2Z"/><path d="M60 21.5v21"/><circle cx="55.8" cy="23.7" r="2.7"/><circle cx="55.8" cy="40.3" r="2.7"/><circle cx="32.2" cy="23.7" r="2.7"/><circle cx="32.2" cy="40.3" r="2.7"/><circle cx="44" cy="32" r="3.6" class="acc"/><circle cx="76" cy="32" r="3"/>`,
 
   rescue: `<rect x="15" y="33" width="50" height="19" rx="9.5"/><circle cx="25" cy="42.5" r="4.5"/><circle cx="55" cy="42.5" r="4.5"/><path d="M21 51.5h38" class="acc"/><rect x="23" y="20" width="34" height="13" rx="2"/><path d="M33 20v-6"/><rect x="27" y="6" width="13" height="8" rx="1.5" class="acc"/><path d="M62 38l15 9" class="acc"/><circle cx="78.5" cy="48" r="3.6" class="acc"/><path d="M6 59h84"/><rect x="68" y="54" width="9" height="5" rx="1"/>`,
+
+  // Battle arena from above: the 8 x 5 walled field, one vertical and one horizontal obstacle,
+  // three robots as turreted squares, and the accent robot mid-shot with a tracer ending on the
+  // vertical obstacle, which is the mission's story in one line.
+  battle: `<rect x="8" y="8" width="80" height="48" rx="2"/><rect x="24" y="40" width="16" height="5"/><rect x="56" y="20" width="5" height="16"/><rect x="16" y="12" width="9" height="7" rx="1"/><rect x="72" y="44" width="9" height="7" rx="1"/><rect x="36" y="24" width="9" height="7" rx="1" class="acc"/><path d="M45 27.5h8" class="acc"/><circle cx="54.5" cy="27.5" r="1.8" class="acc"/>`,
 };

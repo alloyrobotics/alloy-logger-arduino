@@ -138,6 +138,11 @@ demo/
                  match-data.js,preview-data.js}    patterns.js: the 16 ssl-vision patterns
                                                    match-data.js: GENERATED, ~700 KB, lazily imported
                                                    preview-data.js: GENERATED, 5.9 s slice for the picker
+  js/robots/battle/{data.js,scene.js,script.js,   ← robot agent 6 (the 2v2 arena battle, fully synthetic)
+                 decode.js,claims.mjs,              decode.js: int16 stream decoder per the generator's FORMAT.md
+                 battle-data.js,preview-data.js}    claims.mjs: the claim ledger (cited constants vs data claims)
+                                                   battle-data.js: GENERATED offline, ~63 KB gz, lazily imported
+                                                   preview-data.js: GENERATED, 6 s slice for the picker
   vendor/three.module.js, vendor/addons/OrbitControls.js  ← scaffold agent
 ```
 
@@ -458,7 +463,7 @@ identifies the source: no archive URL, no log hash, no event, match or window id
 tracker label ("tracker source A") and the phrase "a professional SSL match, 2026 season". The
 identifying manifest lives only in the private clients/alloy scratch repo. Every planted fault is described
 publicly as a counterfactual overlay unrelated to any real team's hardware, and that disclosure
-appears in five places: the picker copy ("Four synthetic missions and one real match replay with
+appears in five places: the picker copy ("Five synthetic missions and one real match replay with
 planted fault overlays"), the card tagline ("A real match replay, three planted faults, one real
 tracking loss"), the brief's `context.provenance` line, the scripted first answer (which bypasses
 the facts pack entirely) and the facts pack's own preamble. A sixth is not copy at all:
@@ -471,8 +476,16 @@ is on screen before the first question and does not depend on the model complyin
 league vision losing an opponent robot, and calling it planted would be a false statement in the
 visitor's favour AND against the league's infrastructure. Every disclosure surface says three plus
 one, and `ssl-script.test.mjs` fails any surface that pairs "four" with "planted"/"synthetic". The
-picker footer is the one place that still says "four": it counts the four SYNTHETIC MISSIONS on the
-page, not four faults, and the fault overlays it names really are planted.
+picker footer counts SYNTHETIC MISSIONS on the page (five, once the battle round shipped), not
+faults, and the fault overlays it names really are planted.
+
+**Battle disclosure surfaces.** The battle mission is fully synthetic and needs no de-identification,
+but it carries the same disclosure discipline: `context.provenance` ("A scripted, rules-faithful
+simulated round..."), the scripted `provenance` answer, the facts-pack preamble (same sentence via
+`provenanceSection`), and `def.chatProvenance` ("Simulated round. All telemetry in this mission is
+synthetic..."), rendered above the composer before the first question. Battle copy never calls the
+round recorded or real, never puts DJI marks on anything, and never mentions the other competition
+or its teams (the leak gate enforces that mechanically in --repo mode).
 
 The word "final" appears nowhere the site serves. The match is described as "a professional
 Division A match" (the division is derivable from the rendered field, the round is not).
@@ -595,6 +608,43 @@ state chip), and stays at two rows down to 360 px. `max_allowed_bots` is the one
 below 700 px, because it is the one field on the strip S16 does not require and it is a permitted
 maximum rather than an observed count.
 
+### battle (robot agent 6) - a scripted 2v2 arena battle, fully synthetic
+
+A rules-faithful simulated 180 s round of the ICRA 2019 RoboMaster AI Challenge ruleset (DJI Rules
+Manual V1.1), generated OFFLINE by the battle-sim generator in the private clients/alloy scratch
+repo and shipped as `battle-data.js` (int16 streams + a typed event ledger; format in the
+generator's FORMAT.md, decoded by `battle/decode.js`). Fictional teams: Halcyon Labs (blue, the
+instrumented team) vs Redline Dynamics (red). Wire ids red 3/4, blue 13/14.
+
+The storyline is the fault chain, and the numbers are FROZEN in `battle/claims.mjs` (every number
+in copy is either a cited manual constant or a data claim bound to an exact sample):
+
+- t=72.0: Blue 1 is tracking Red 2 when it slips behind obstacle O7. The track layer keeps
+  republishing the last pose, fresh-stamped, so the fire gate's age check never trips.
+- t=72.6 to 74.457: the chassis rotates to the held bearing (outside the gimbal's +/-90 deg
+  window) and fires 14 shots at 23.0 m/s into the obstacle.
+- Heat first passes 180 on shot 12 at 74.171. Eight referee ticks (74.2 to 75.0) deduct
+  24/68/136/112/88/64/40/16 = 548 HP; peak heat 214; the stale track times out after 2.55 s.
+- Blue 1 survives on 1452, ends the round on 1102. Redline wins on deduction 1448 to 1150, and the
+  548 is the margin: remove it and Halcyon wins 1150 to 900 (the counterfactual is a test).
+
+Findings: `stale-track`, `frozen-goal`, `blind-burst`, `overheat-self-damage` (the chain), plus
+`buff-halved-damage` (the 25-vs-50 defense-zone explainer; deliberately pointed at Blue 1's FLAT
+referee line, because the referee bus never reports another robot's health) and `uwb-yaw-residual`
+(magnetometer yaw noise, an info beat, not a fault). Six channels, all `/blue1/*`, at most two unit
+groups each; per-shot muzzle speeds live in the event ledger, never as an isolated masked series.
+
+Two core extensions exist BECAUSE of this mission, both backward-compatible and regression-tested:
+
+1. **Viewer HUD extension**: `hudState().teams[].color` may be `'red'`; discipline fields (cards,
+   keeper, timeouts) render only when defined; optional `state.note` line (buff/supplier callouts);
+   `version` MUST cover every rendered field (clock, scores, label, tone, note). The SSL strip is
+   proven unchanged by re-derivation in `test:battle-hud`.
+2. **`def.eventLines` facts hook**: a function, callable only after `loadSceneData()` resolves,
+   returning typed rows `{t, source, kind, detail}`; `build-facts.mjs` renders them as a
+   `## Round events` section. Defs without the hook emit nothing. A def may also pin
+   `factsSeriesPoints` (clamped 40..80) as its facts-table budget knob; battle pins 40.
+
 ## Chat scripts (per robot, 5-6 entries)
 
 1. The firstQuestion (the headline failure): a confident, numerate diagnosis. Structure: one-line
@@ -621,6 +671,8 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 1 | `test:harness` | the two generated-demo interpreters, against the runner's own gendata |
 | 2 | `test:ssl-data` | the decoder, the provenance, the quoted values, the vision cross-check |
 | 3 | `test:ssl-script` | the def: matchers, house format, non-causality, keeper, decisive kick |
+| 3a | `test:battle-decode` | the battle decoder: ABI, preview/full parity, corruption, retry split |
+| 3b | `test:battle-data` | battle: referee arithmetic re-derived, the claim ledger, the frozen incident table, the anachronism ban list |
 | 4 | `test:ssl-eager-size` | the eager payload budget, so the match module stays lazy |
 | 5 | `test:ssl-leak:self` | the leak gate's own adversarial fixtures |
 | 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
@@ -630,6 +682,7 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 10 | `test:preview-roster` | browser: a preview roster the scene cannot pose |
 | 11 | `test:chart-absence` | browser: a masked series draws a break, not a zero |
 | 12 | `test:corrupt-meta` | browser: five failure fixtures, below |
+| 12a | `test:battle-hud` | browser: the HUD extension, SSL regression by re-derivation, version completeness |
 | 13 | `facts:fresh` | `node worker/build-facts.mjs && git diff --exit-code worker/facts.generated.js` |
 
 FIVE browser tests, not three: rows 8 to 12. Both leak modes run, and 6 and 7 are not the same

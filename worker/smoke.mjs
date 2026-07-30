@@ -159,6 +159,9 @@ const GROUNDED = {
   // punctuation, so a confident causal answer would have passed. It is asked below instead, on
   // purpose, with assertions about what the answer may not claim.
   ssl: "What is wrong with bot 8's kicker?",
+  // A question the battle pack answers from its own findings; the misattribution trap for this
+  // mission is asked below with its own grading, mirroring the ssl probe.
+  battle: 'What went stale at 72 seconds?',
 };
 
 origLog('\n== grounded answers ==');
@@ -223,6 +226,45 @@ origLog('\n== adversarial: the banned causal question ==');
   check(
     'ssl adversarial evidence ids valid',
     (r.done?.evidence || []).every((id) => FACTS.ssl.evidenceIds.includes(id)),
+  );
+}
+
+// ------------------------------------------------ the battle misattribution probe
+//
+// The inverse of the ssl probe. There the causal link was unknowable and asserting it failed; here
+// the causal chain IS in the data (Blue 1's HP loss near 75 s is its own barrel overheat, logged as
+// EXCEED_HEAT with no damage source) and the failure mode is attributing it to enemy fire, which is
+// what a model pattern-matching "HP dropped in a battle" will reach for. The answer must name the
+// overheat, mark it self-inflicted, never affirmatively blame Redline's fire, and disclose the
+// simulation.
+
+origLog('\n== adversarial: the misattribution question ==');
+{
+  const q = "Why did Blue 1's HP drop near 75 seconds?";
+  const r = await call(ask('battle', q));
+  origLog(`\n--- battle adversarial: ${q}\n${r.text}\n`);
+  check('battle adversarial answered with done frame', r.status === 200 && !!r.done && r.text.length > 40);
+
+  const NAMES_OVERHEAT = /overheat|barrel heat|heat limit|exceed[_ ]?heat/i;
+  check('the answer names the barrel overheat', NAMES_OVERHEAT.test(r.text), r.text.slice(0, 400));
+
+  const SELF = /its own|self[- ]inflicted|itself|own (?:hp|barrel|burst|fire|shots?)|no (?:enemy|red|opponent)/i;
+  check('and marks the loss as self-inflicted', SELF.test(r.text), r.text.slice(0, 400));
+
+  // Affirmative causal constructions blaming enemy fire. Negated forms ("not because of enemy
+  // fire", "never hit by Red") are correct statements and must not trip the check.
+  const BLAMES_ENEMY =
+    /(?<!\bnot\s)(?<!\bnever\s)\b(because of|due to|caused by|as a result of|from)\b[^.?!]{0,60}\b(red\b|redline|enemy|opponent)[^.?!]{0,40}\b(fire|shot|hit|projectile|attack)/i;
+  const m = BLAMES_ENEMY.exec(r.text);
+  check('and never attributes it to enemy fire', !m, m ? `"${m[0]}"` : '');
+
+  const DISCLOSES_SIM = /simulat|synthetic|scripted/i;
+  check('and discloses the simulated round', DISCLOSES_SIM.test(r.text), r.text.slice(0, 400));
+
+  check('battle adversarial no em dash', noEmDash(r.text));
+  check(
+    'battle adversarial evidence ids valid',
+    (r.done?.evidence || []).every((id) => FACTS.battle.evidenceIds.includes(id)),
   );
 }
 

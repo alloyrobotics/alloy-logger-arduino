@@ -1,8 +1,9 @@
 // chat.js - POST /demo/api/chat. Turns the demo's analyst panel into a real one.
 //
-// The demo ships five canned missions. Four are synthetic and generated deterministically in the
+// The demo ships six canned missions. Four are synthetic and generated deterministically in the
 // browser; the fifth replays a real robot-soccer match and synthesizes the onboard telemetry over
-// it. worker/build-facts.mjs runs those same generators and writes facts.generated.js: per robot,
+// it; the sixth is a fully synthetic scripted round of a 2v2 robot battle, generated offline
+// against its competition's published rules manual. worker/build-facts.mjs runs those same generators and writes facts.generated.js: per robot,
 // the statistics, sampled series, per-finding excerpts, per-field provenance and hand-verified
 // analyses. That pack is the ONLY thing the model is told about the mission, so every number it
 // quotes is a number the page is plotting, and every synthesized channel is labelled as one.

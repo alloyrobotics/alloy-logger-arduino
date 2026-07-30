@@ -247,10 +247,10 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   });
 
   // ---------- optional per-scene rendering treatment ----------
-  // A scene MAY ask for a different look by returning a `rendering` block. The hand-written
-  // robots return nothing here and are rendered exactly as they always were - which is the point:
-  // they were approved on this image, and tone mapping or an environment map applied globally
-  // would silently restyle all four. Generated scenes ask, because their content is different:
+  // A scene MAY ask for a different look by returning a `rendering` block. The four original
+  // hand-written robots return nothing here and are rendered exactly as they always were - which
+  // is the point: they were approved on this image, and tone mapping or an environment map applied
+  // globally would silently restyle all four. Generated scenes ask, because their content is different:
   // 180 mm robots on a 2 m field need a shadow frustum two orders of magnitude tighter than a
   // fixed 18 m ortho, and metal parts with no IBL to reflect collapse to flat grey.
   let pmrem = null;

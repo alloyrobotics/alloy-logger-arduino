@@ -23,7 +23,7 @@ import * as THREE from 'three';
 // only ever called later from the idle builder. Importing it rather than re-deriving the seed
 // keeps ONE data generator, which the deterministic-data rule depends on. It also owns the rule
 // about WHICH data a scene gets: telemetry for the four hand-written robots, a def's own scene
-// payload where it has one (ssl's preview slice, never its 700 KB match module).
+// payload where it has one (the ssl and battle preview slices, never their full heavy modules).
 import { sceneDataFor } from '../app.js';
 // The staging solve itself (WebGL probe, light rig, hero pose, orbit-safe fit) is shared with the
 // connect screen's hero, so it lives in stage3d.js. This module owns only the picker's one-canvas
@@ -146,7 +146,7 @@ export function createPickerPreviews(entries, host) {
     // A context can drop under us at any time (GPU-process crash, driver reset, Chrome evicting the
     // oldest context, Android backgrounding). three preventDefaults the event and re-initialises on
     // restore, but the 3D is gone in the meantime, so hand the cards back to the SVG line art -
-    // the same fallback the no-WebGL path uses - instead of leaving four empty panels.
+    // the same fallback the no-WebGL path uses - instead of leaving empty panels.
     canvas.addEventListener('webglcontextlost', () => {
       contextLost = true;
       recs.forEach((r) => r.el.classList.remove(FADE_CLASS));

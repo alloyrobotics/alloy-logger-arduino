@@ -63,7 +63,7 @@ export function createChat(mount, robotDef, hooks = {}) {
   // the whole session. It is written here, from the def, with textContent: it is on screen before
   // the first question and it survives every answer, so a mission whose telemetry is synthesized
   // never depends on the model remembering to say so in prose it streamed. Defs without one (the
-  // four synthetic missions, every generated demo) render no element at all.
+  // four browser-generated missions, every generated demo) render no element at all.
   if (typeof robotDef.chatProvenance === 'string' && robotDef.chatProvenance.trim()) {
     const prov = el.querySelector('.chat-prov');
     prov.textContent = robotDef.chatProvenance.trim();
