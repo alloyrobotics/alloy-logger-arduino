@@ -94,17 +94,21 @@ export default {
       matchers: ['548', 'no enemy', 'hp drop', 'own hp', 'why did blue 1', 'self'],
       answer: `Blue 1 shot an obstacle for nearly two seconds and paid for it in its own HP.
 
-| hop | evidence |
+| t | hop |
 | --- | --- |
-| 72.0 s, track lost | vision confidence collapses, trackAgeS starts climbing {{ev:stale-track}} |
-| 72.3 s, goal frozen | planner chase goal flatlines at the last known point {{ev:frozen-goal}} |
-| 72.6 s, blind burst | chassis rotates to a held bearing, 14 shots at 23.0 m/s into the obstacle {{ev:blind-burst}} |
-| 74.2 to 75.0 s, the bill | heat crosses 180, eight referee ticks deduct 548 HP {{ev:overheat-self-damage}} |
+| 72.0 s | track lost |
+| 72.3 s | chase goal frozen |
+| 72.6 s | blind burst begins |
+| 74.2 to 75.0 s | 548 HP deducted |
 
-The target message went stale at 72.0 but kept arriving with fresh timestamps, so the fire controller's age check never tripped. The stale track finally timed out after 2.55 s, at 74.55. By then barrel heat had peaked at 214 and the referee had already billed most of the 548.
+The target message went stale at 72.0 but kept arriving with fresh timestamps, so the fire controller's age check never tripped: the chassis rotated to the held bearing and fired 14 shots at 23.0 m/s into the obstacle. The stale track finally timed out after 2.55 s, at 74.55. By then barrel heat had crossed 180, peaked at 214, and the referee had billed the 548 across eight ticks.
 
-Simulated round: the whole chain is authored, and it is the product pitch, one bad timestamp visible in six channels at once.`,
-      evidence: ['stale-track', 'frozen-goal', 'blind-burst', 'overheat-self-damage'],
+Simulated round: the whole chain is authored, and it is the product pitch, one bad timestamp visible in six channels at once.
+
+{{ev:stale-track}}
+
+{{ev:overheat-self-damage}}`,
+      evidence: ['stale-track', 'overheat-self-damage'],
     },
     {
       id: 'stale-track',
@@ -130,10 +134,12 @@ The detector stopped seeing Red 2, but the track layer kept publishing the last 
 
 The fire controller gated on the timestamp of the incoming target message. Because the track layer stamps at publish time, a seconds-old position still looked milliseconds old. The reference stack this pipeline is modeled on ships no track ID, no sequence number, and no track age, so there was nothing else to gate on.
 
-The held point sat outside the gimbal's plus or minus 90 degree window, so the chassis rotated to face it and the 14-shot burst went into the obstacle.
+The planner had already frozen its chase goal at the same dead position, so nothing upstream disagreed with the gate. The held point sat outside the gimbal's plus or minus 90 degree window, so the chassis rotated to face it and the 14-shot burst went into the obstacle.
+
+{{ev:frozen-goal}}
 
 {{ev:blind-burst}}`,
-      evidence: ['blind-burst'],
+      evidence: ['frozen-goal', 'blind-burst'],
     },
     {
       id: 'heat-rule',
