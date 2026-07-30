@@ -58,6 +58,9 @@ export const CITED_CONSTANTS = {
   instructionsPerTeamPerMinute: { value: 2, text: '2', unit: 'instructions', source: 'S4.3.2' },
   preloadRounds: { value: 40, text: '40', unit: 'rounds', source: 'S2.2.1 / S3.5.1' },
   gimbalYawRelDegLimit: { value: 90, text: '90', unit: 'deg', source: 'AI Robot User Manual V1.1' },
+  robotsPerTeam: { value: 2, text: '2', unit: 'robots', source: 'S2.2.1 ("one or two fully automatic robots")' },
+  arenaLengthM: { value: 8, text: '8', unit: 'm', source: 'S4.1' },
+  arenaWidthM: { value: 5, text: '5', unit: 'm', source: 'S4.1' },
   projectileMassG: { value: 2.9, text: '2.9', unit: 'g', source: 'S4.9' },
   projectileDiameterMm: { value: 16.9, text: '16.9', unit: 'mm', source: 'S4.9' },
 };

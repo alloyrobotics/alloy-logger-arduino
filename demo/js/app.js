@@ -668,9 +668,15 @@ function resolveSceneData(next, def) {
   currentRoute = { name: 'load', id: next.id };
   show('connect');
   document.title = `Loading ${def.name} · AlloyLogger`;
+  // The card copy belongs to the def: one lazy mission is a real match replay and another is a
+  // synthetic round, and a shared sentence was quietly claiming every lazy payload had a ball.
+  const loading = def.loadingCopy || {
+    line: 'Loading the mission replay.',
+    cap: 'The 3D replay, the charts and the analyst open when it lands.',
+  };
   renderGenCard({
-    line: 'Loading the match replay.',
-    cap: 'Every tracked robot, the ball and the referee timeline, decoded in your browser.',
+    line: loading.line,
+    cap: loading.cap,
     progress: true,
     icon: ROBOT_ICONS[def.id],
     accent: def.accent,

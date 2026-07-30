@@ -640,6 +640,10 @@ Two core extensions exist BECAUSE of this mission, both backward-compatible and 
    keeper, timeouts) render only when defined; optional `state.note` line (buff/supplier callouts);
    `version` MUST cover every rendered field (clock, scores, label, tone, note). The SSL strip is
    proven unchanged by re-derivation in `test:battle-hud`.
+1b. **`def.loadingCopy`** (grew out of the same review): the lazy-route loading card renders
+   def-owned `{line, cap}` copy; app.js falls back to a truthful generic line for defs without it.
+   A shared sentence was quietly claiming every lazy payload was a match replay with a ball.
+
 2. **`def.eventLines` facts hook**: a function, callable only after `loadSceneData()` resolves,
    returning typed rows `{t, source, kind, detail}`; `build-facts.mjs` renders them as a
    `## Round events` section. Defs without the hook emit nothing. A def may also pin

@@ -83,7 +83,7 @@ export const rateNotes = {
   '/blue1/gimbal_launcher':
     'block 25 Hz, the rate gimbal setpoints are issued at; the fire gate is sampled continuously on the same grid',
   '/blue1/referee':
-    'block 10 Hz, which IS the native settlement grid the heat and health arithmetic is defined on',
+    'block 10 Hz: remain_HP arrives natively at 10 Hz and the heat feed natively at 50 Hz; both are exported on the 10 Hz settlement grid the heat arithmetic is defined on, with shooterHeat0 as the pre-settlement tick value',
 };
 
 /**

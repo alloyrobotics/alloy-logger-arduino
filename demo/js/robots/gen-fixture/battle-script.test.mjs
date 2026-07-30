@@ -350,6 +350,44 @@ section('7. every number is in the claim ledger');
 
 // ---------------------------------------------------------------- 8. facts-table budget knob
 
+// ------------------------------------------------- 7b. load-bearing phrases bind to their claims
+//
+// The global numeric scan above proves no UNREGISTERED number ships, but it cannot prove a number
+// is the RIGHT one: "8 x 8 m" would pass it because 8 is admitted by the eight-tick claim. These
+// are the copy's load-bearing quantitative phrases, asserted verbatim against the surface that
+// carries them AND against the semantic claim entry that backs them, so changing either side of
+// the pairing is a build failure.
+section('7b. phrase bindings');
+{
+  const K = C.CITED_CONSTANTS;
+  const D = C.DATA_CLAIMS;
+  const bind = (surface, text, phrase, entries) => {
+    ok(String(text).includes(phrase), `${surface} carries the phrase "${phrase}"`);
+    for (const [name, entry, expect] of entries) {
+      const v = entry && (entry.value !== undefined ? entry.value : entry.expected);
+      ok(v === expect, `"${phrase}" is backed by ${name} = ${expect}`);
+    }
+  };
+  bind('context.system', def.context.system, '8 x 5 m arena', [
+    ['arenaLengthM', K.arenaLengthM, 8],
+    ['arenaWidthM', K.arenaWidthM, 5],
+  ]);
+  bind('context.system', def.context.system, 'Two fully autonomous robots per team', [
+    ['robotsPerTeam', K.robotsPerTeam, 2],
+  ]);
+  bind('context.system', def.context.system, '2000 HP per robot', [['initialHP', K.initialHP, 2000]]);
+  // "17 mm" is the projectile CLASS name (the ledger's measured diameter is 16.9 mm); the number
+  // that binds here is the damage value.
+  bind('context.system', def.context.system, '50 HP per 17 mm hit', [
+    ['armorDamageHP', K.armorDamageHP, 50],
+  ]);
+  bind('context.system', def.context.system, 'barrel heat limit 180', [['heatLimit', K.heatLimit, 180]]);
+  bind('context.fault', def.context.fault, '14-shot burst', [['burstShotCount', D.burstShotCount, 14]]);
+  bind('context.fault', def.context.fault, '548 of its own HP', [['overheatLossHP', D.overheatLossHP, 548]]);
+  bind('tagline', def.tagline, '548 HP', [['overheatLossHP', D.overheatLossHP, 548]]);
+  ok(/2v2/.test(def.name), 'the mission name states the 2v2 format the robotsPerTeam claim backs');
+}
+
 section('8. facts series budget');
 {
   eq(def.factsSeriesPoints, 40, 'the def pins the whole-mission table at the plan-fixed 40 points');
@@ -385,7 +423,13 @@ section('9. contract');
   const tPreview = def.heroTime();
   ok(Number.isFinite(tPreview), `heroTime() is finite on the preview slice (${tPreview})`);
   ok(tPreview >= 0 && tPreview < 72.0, `and lands before the 72.0 s failure (${tPreview})`);
-  ok(tPreview <= def.previewData.duration || tPreview < 72.0, 'and inside the slice it poses');
+  // The decoder keeps ABSOLUTE round time; a value outside [t0, t1] would clamp to the slice edge
+  // and silently pose the first frame, which is the bug this assertion exists to catch.
+  const w = def.previewData.window;
+  ok(
+    tPreview > w.t0 && tPreview < w.t1,
+    `and lies strictly inside the decoded preview window ${w.t0}..${w.t1} (${tPreview})`,
+  );
 
   await def.loadSceneData();
   ok(def.isSceneDataLoaded(), 'the round payload loads');

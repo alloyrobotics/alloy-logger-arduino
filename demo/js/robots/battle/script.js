@@ -25,13 +25,14 @@ import {
 import { buildScene } from './scene.js';
 
 /**
- * The posed moment for the picker card and the brief hero, resolved against the payload in hand
- * (same two-clock problem as the other lazy mission: the preview slice is 37.0 to 43.0 s of the
- * round re-based to zero). Both instants sit in the Beat 5 buff firefight, well BEFORE the 72 s
- * failure, per the stage3d rule that a hero pose never shows the wreck.
+ * The posed moment for the picker card and the brief hero, resolved against the payload in hand.
+ * The preview slice is 37.0 to 43.0 s of the round on the ROUND'S OWN CLOCK (the decoder keeps
+ * absolute timestamps; nothing is re-based), so the preview hero is the slice midpoint 40.5, and
+ * the full round poses at 45.0. Both instants sit in the Beat 5 buff firefight, well BEFORE the
+ * 72 s failure, per the stage3d rule that a hero pose never shows the wreck.
  */
 const T_HERO_MATCH_S = 45.0;
-const T_HERO_PREVIEW_S = 3.5;
+const T_HERO_PREVIEW_S = 40.5;
 
 export default {
   id: 'battle',
@@ -69,6 +70,12 @@ export default {
   loadSceneData,
   isSceneDataLoaded,
   getSceneData,
+  // Def-owned loading-card copy: this mission is simulated and has no ball, and the shared card
+  // sentence used to claim both.
+  loadingCopy: {
+    line: 'Loading the simulated round.',
+    cap: 'Four robots, the referee ledger and six telemetry channels, decoded in your browser.',
+  },
   // Typed round events for the facts pack (supplier bookings, zone triggers, the eight overheat
   // ticks, survivors, result). Callable only after loadSceneData resolves; build-facts awaits that.
   eventLines,

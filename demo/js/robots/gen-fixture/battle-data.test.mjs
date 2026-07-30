@@ -744,7 +744,11 @@ for (const name of claimNames) {
     projectileMassG: R.projectile.massG,
     projectileDiameterMm: R.projectile.diameterMm,
     lowHpCoolingThresholdHP: 400,
+    robotsPerTeam: META.teams[0].robots.length,
+    arenaLengthM: META.geometry.arena.xM,
+    arenaWidthM: META.geometry.arena.yM,
   };
+  eq(META.teams[0].robots.length, META.teams[1].robots.length, 'both teams field the same robot count');
   for (const name of Object.keys(C.CITED_CONSTANTS)) {
     ok(RULE_OF[name] !== undefined, `cited constant ${name} has a frozen rules echo to check against`);
     eq(C.CITED_CONSTANTS[name].value, RULE_OF[name], `cited constant ${name} matches the frozen rules echo`);

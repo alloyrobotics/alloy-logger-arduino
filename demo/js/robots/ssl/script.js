@@ -72,6 +72,13 @@ export default {
   loadSceneData,
   isSceneDataLoaded,
   getSceneData,
+  // The lazy-route loading card renders this def-owned copy (app.js falls back to a generic line
+  // for defs without it). These are the sentences the card showed since this mission shipped;
+  // ssl-nav-race.test.mjs asserts the first one.
+  loadingCopy: {
+    line: 'Loading the match replay.',
+    cap: 'Every tracked robot, the ball and the referee timeline, decoded in your browser.',
+  },
   /**
    * Framing overrides for the two staged shots (picker card, brief hero). The shared solve culls
    * "scenery" relative to this scene's own cameraHome distance, and its defaults are tuned for a
