@@ -94,7 +94,7 @@ H.section('picker');
       tag: (a.querySelector('.rcard-tag').textContent || '').trim(),
     })),
   );
-  H.ok(cards.length === 5, `all five cards are on the picker (${cards.length})`);
+  H.ok(cards.length === 6, `all six cards are on the picker (${cards.length})`);
   const ssl = cards.find((c) => c.id === 'ssl');
   H.ok(!!ssl, 'the SSL card is built');
   H.ok(ssl && ssl.svg, 'the SSL card keeps its SVG line art');
