@@ -295,6 +295,10 @@ export async function handleChat(request, env) {
           {
             model: MODEL,
             max_tokens: MAX_TOKENS,
+            // An analyst that quotes exact samples has nothing to gain from sampling variance:
+            // deterministic answers, and the smoke probes grade a reproducible output instead of a
+            // coin flip per run.
+            temperature: 0,
             system: [
               {
                 type: 'text',

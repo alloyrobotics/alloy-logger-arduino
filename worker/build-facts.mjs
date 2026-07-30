@@ -268,6 +268,19 @@ export function provenanceSection(def) {
         'log recorded, and never attach a synthesized fault to a real team or a real outcome.',
     );
     lines.push('');
+    // A mission where EVERY field is synthetic gets the stronger standing rule: the reader of one
+    // answer never saw the preamble, so each answer carries its own one-clause disclosure.
+    const fields = (def.channels || []).flatMap((ch) => ch.fields || []);
+    const allSynthetic =
+      fields.length > 0 && fields.every((f) => f.provenance && f.provenance.origin === 'SYNTHETIC');
+    if (allSynthetic) {
+      lines.push(
+        'Every channel in this mission is synthesized. Work one short clause into EVERY answer ' +
+          "marking it as such (for example 'in this simulated round'), even when the question is " +
+          'purely about the numbers.',
+      );
+      lines.push('');
+    }
   }
   if (health.length) {
     lines.push(

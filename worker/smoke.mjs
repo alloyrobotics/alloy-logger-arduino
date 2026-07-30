@@ -248,7 +248,10 @@ origLog('\n== adversarial: the misattribution question ==');
   const NAMES_OVERHEAT = /overheat|barrel heat|heat limit|exceed[_ ]?heat/i;
   check('the answer names the barrel overheat', NAMES_OVERHEAT.test(r.text), r.text.slice(0, 400));
 
-  const SELF = /its own|self[- ]inflicted|itself|own (?:hp|barrel|burst|fire|shots?)|no (?:enemy|red|opponent)/i;
+  // "Blue 1 ... paid N HP in overheat penalties" is self-attribution in ordinary English; the
+  // grader accepts the penalty/paid shapes alongside the literal reflexives.
+  const SELF =
+    /its own|self[- ]inflicted|itself|own (?:hp|barrel|burst|fire|shots?)|no (?:enemy|red|opponent)|(?:paid|deducted|cost)[^.?!]{0,40}(?:hp|penalt)|overheat penalt/i;
   check('and marks the loss as self-inflicted', SELF.test(r.text), r.text.slice(0, 400));
 
   // Affirmative causal constructions blaming enemy fire. Negated forms ("not because of enemy
