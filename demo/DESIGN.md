@@ -684,6 +684,7 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
 | 7 | `test:ssl-leak:repo` | de-identification over EVERY TRACKED FILE (`git ls-files`) |
 | 8 | `test:nav-race` | browser: the lazy-payload navigation race |
+| 8a | `test:battle-lazy-path` | browser: battle's own routes: the race, a corrupt round module, a corrupt preview |
 | 9 | `test:preview-fallback` | browser: a preview slice that will not decode |
 | 10 | `test:preview-roster` | browser: a preview roster the scene cannot pose |
 | 11 | `test:chart-absence` | browser: a masked series draws a break, not a zero |
