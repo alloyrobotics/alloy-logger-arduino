@@ -673,7 +673,9 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 3 | `test:ssl-script` | the def: matchers, house format, non-causality, keeper, decisive kick |
 | 3a | `test:battle-decode` | the battle decoder: ABI, preview/full parity, corruption, retry split |
 | 3b | `test:battle-data` | battle: referee arithmetic re-derived, the claim ledger, the frozen incident table, the anachronism ban list |
+| 3c | `test:battle-script` | the battle def: matchers, natural phrasing, disclosure, correct causality, every number against the claim ledger |
 | 4 | `test:ssl-eager-size` | the eager payload budget, so the match module stays lazy |
+| 4a | `test:battle-eager-size` | the same budget for the battle round: 46,900 B gz, the generated round module stays lazy |
 | 5 | `test:ssl-leak:self` | the leak gate's own adversarial fixtures |
 | 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
 | 7 | `test:ssl-leak:repo` | de-identification over EVERY TRACKED FILE (`git ls-files`) |
