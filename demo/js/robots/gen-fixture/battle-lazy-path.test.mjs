@@ -199,8 +199,15 @@ H.section('E: a corrupt preview slice degrades the picker card');
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.route('**/robots/battle/preview-data.js', (route) =>
-    route.fulfill({
+  // Every card ALWAYS carries its SVG; a live preview merely hides it behind `.preview-live`. So
+  // "the SVG exists" proves nothing. This sequence proves the corrupt path actually RAN: the
+  // interception fired, the module decoded to null, the card never got `.preview-live`, the brief
+  // hero mounts no WebGL rig, and the full demo (whose round module is untouched) still works.
+  // Teeth were mutation-verified: breaking the route glob fails four of these checks.
+  let previewHits = 0;
+  await page.route('**/robots/battle/preview-data.js', (route) => {
+    previewHits++;
+    return route.fulfill({
       contentType: 'text/javascript',
       body: [
         "export const DATASET_HASH = 'corrupt';",
@@ -209,18 +216,28 @@ H.section('E: a corrupt preview slice degrades the picker card');
         'export const META = { corrupt: true };',
         "export const BLOB_B64 = 'AAAA';",
       ].join('\n'),
-    }),
-  );
+    });
+  });
   await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
-  // Give the idle preview builder time to run; the battle card must still exist with its line art.
+  // Give the idle preview builder time to run against the corrupt slice.
   await page.waitForTimeout(3500);
-  const card = await page.evaluate(() => {
+  H.ok(previewHits >= 1, `the corrupt preview module was actually served (${previewHits}x)`);
+  const st = await page.evaluate(async () => {
+    const d = await import('/demo/js/robots/battle/data.js');
     const a = document.querySelector('#robot-grid a.rcard[data-robot="battle"]');
-    return a ? { svg: !!a.querySelector('svg'), name: a.querySelector('.rcard-name')?.textContent } : null;
+    const art = a && a.querySelector('.rcard-art');
+    return {
+      preview: d.previewData,
+      card: !!a,
+      svg: !!(a && a.querySelector('svg')),
+      live: !!(art && art.classList.contains('preview-live')),
+    };
   });
-  H.ok(!!card, 'the battle card is on the picker');
-  H.ok(card && card.svg, 'and it keeps its SVG line art as the fallback');
+  H.ok(st.preview === null, 'previewData decoded to null instead of throwing out of the module');
+  H.ok(st.card, 'the battle card is on the picker');
+  H.ok(st.svg, 'and it keeps its SVG line art');
+  H.ok(!st.live, 'and never claims a live preview it does not have');
   await go(page, '#/connect/battle');
   H.ok(
     await waitFor(
@@ -234,6 +251,15 @@ H.section('E: a corrupt preview slice degrades the picker card');
     ),
     'the brief route still renders with the preview slice broken',
   );
+  const brief = await page.evaluate(() => {
+    const m = document.getElementById('ingest-mount');
+    return { svg: !!(m && m.querySelector('svg')), canvas: !!(m && m.querySelector('canvas')) };
+  });
+  H.ok(brief.svg, 'the brief hero falls back to the SVG line art');
+  H.ok(!brief.canvas, 'no empty WebGL rig is mounted with nothing to pose in it');
+  // The round module is untouched by this corruption: the demo route must still fully mount.
+  await go(page, '#/demo/battle');
+  H.ok(await onDemo(page), 'the full demo still mounts, because only the preview slice was corrupt');
   H.ok(errors.length === 0, `no uncaught page errors (${errors.slice(0, 2).join(' | ')})`);
   await ctx.close();
 }
