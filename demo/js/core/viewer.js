@@ -367,13 +367,27 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   // textContent; the DOM is only touched when `state.version` changes.
   //
   //   { version:string, clock:string, stage:string,
-  //     state: { label:string, tone:'live'|'stop'|'halt'|'prep'|'goal' },
-  //     teams: [{ name, color:'yellow'|'blue', score, cards, reds, maxBots, keeper, timeouts }] }
+  //     state: { label:string, tone:'live'|'stop'|'halt'|'prep'|'goal', note?:string },
+  //     teams: [{ name, color:'yellow'|'blue'|'red', score,
+  //               cards?, reds?, maxBots?, keeper?, timeouts? }] }
   //
   // `keeper` is the team's registered goalkeeper id and rides as a chip beside the team name,
-  // because that is where the identity honestly lives: a real SSL robot carries no keeper marking,
-  // the id is game-controller state. `timeouts` is the count REMAINING (no seconds field is
-  // exported). `stage` is the half.
+  // because that is where the identity honestly lives: a robot carries no keeper marking, the id
+  // is game-controller state. `timeouts` is the count REMAINING (no seconds field is exported).
+  // `stage` is the half.
+  //
+  // Everything after `score` is OPTIONAL and belongs to a ruleset that has it. Cards, reds,
+  // max_allowed_bots, the keeper and timeouts are league discipline state: a scene whose game has
+  // none of them omits those keys entirely and this renders nothing for them, rather than being
+  // handed zeroes and printing a truthful-looking "0Y" for a competition with no cards. A scene
+  // that DOES define a field keeps the old rendering byte for byte, zeroes included, because "0Y"
+  // is the state there and a blank is an unanswered question.
+  //
+  // `state.note` is the same deal one level up: a free-text callout for a round-level effect the
+  // label cannot carry (a defense buff, a supply run). It shares the note element with the
+  // discipline summary, which is unreachable in the same frame - a ruleset either has discipline
+  // state or has notes - and it must be covered by `version`, or a note will go stale behind the
+  // short-circuit below.
   let updateSceneHud = null;
   if (typeof sceneApi.hudState === 'function') {
     if (!document.getElementById('v-shud-css')) {
@@ -396,6 +410,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 .v-sh-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 0 1px rgba(0,0,0,0.5);}
 .v-sh-dot[data-c="yellow"]{background:#ffe600;}
 .v-sh-dot[data-c="blue"]{background:#0033ff;}
+.v-sh-dot[data-c="red"]{background:#e5484d;}
 /* nowrap + no shrink: the score is the one thing on the strip that must never break, and with the
    keeper chips beside it there is no longer slack at 390px for it to wrap "0 : 2" onto 3 lines. */
 .v-sh-score{font-family:'Geist Mono',ui-monospace,monospace;font-size:13px;color:var(--tx);
@@ -500,18 +515,24 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       const st2 = s.state || {};
       shState.textContent = st2.label || '';
       shState.dataset.tone = st2.tone || 'stop';
-      // Cards and timeouts are Tier S16 state and always render. max_allowed_bots is not, so it
-      // lives in its own element and is the one field the phone breakpoint is allowed to fold.
+      // Cards and timeouts are Tier S16 state for a ruleset that HAS them, and always render
+      // there. max_allowed_bots is not, so it lives in its own element and is the one field the
+      // phone breakpoint is allowed to fold. A scene whose game has no discipline state at all
+      // defines none of these keys and contributes no note, which leaves the element to
+      // `state.note` (and, with neither, to `:empty { display:none }`).
       const notes = [];
       const maxes = [];
+      if (st2.note) notes.push(st2.note);
       s.teams.forEach((tm) => {
         const bits = [];
         // Cards are shown at zero as well: "0Y" is the state, a blank is an unanswered question.
-        bits.push(`${tm.cards || 0}Y`);
+        // The test is DEFINED, not truthy: a league with cards renders "0Y" exactly as it always
+        // has, and a game without them never grows the key in the first place.
+        if ('cards' in tm) bits.push(`${tm.cards || 0}Y`);
         if (tm.reds) bits.push(`${tm.reds}R`);
         // Timeouts REMAINING, not taken. Shown at zero too, because "0 TO" is the interesting state.
         if (tm.timeouts != null) bits.push(`${tm.timeouts}TO`);
-        notes.push(`${tm.name} ${bits.join(' ')}`);
+        if (bits.length) notes.push(`${tm.name} ${bits.join(' ')}`);
         if (tm.maxBots != null) maxes.push(tm.maxBots);
       });
       shNote.textContent = notes.join(' · ');

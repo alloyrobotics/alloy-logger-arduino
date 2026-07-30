@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>battle scene fixture</title>
+<!--
+  battle-scene.fixture.html - the battle arena, mounted in the REAL viewer, with no registry.
+
+  Why it exists: the arena, the four standards, the tracers and the HUD strip can only be judged by
+  looking at them, and there is no way to look at them through the demo screen until the mission is
+  registered (script.js, the picker card, index.js). This page mounts exactly three production
+  pieces - core/timeline.js, core/viewer.js and robots/battle/scene.js - against a hand-made robot
+  def whose only job is to hand the decoded round over, and pulls the page's own stylesheet out of
+  demo/index.html so the HUD strip is styled by the same rules that style it in production.
+
+  It is a LOOKING GLASS, not a test: nothing here asserts anything. This directory is in
+  .assetsignore, so none of it is ever served from the site.
+
+  Drive it from Playwright:
+      await page.evaluate(() => window.__ready)
+      await page.evaluate((t) => window.__seek(t), 74.5)
+-->
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "/demo/vendor/three.module.js",
+    "three/addons/": "/demo/vendor/addons/"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; padding: 0; background: #111111; overflow: hidden; }
+  #wrap { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script type="module">
+import { createTimeline } from '/demo/js/core/timeline.js';
+import { createViewer } from '/demo/js/core/viewer.js';
+import { buildScene } from '/demo/js/robots/battle/scene.js';
+import { decodeBattleData } from '/demo/js/robots/battle/decode.js';
+import * as roundModule from '/demo/js/robots/battle/battle-data.js';
+
+window.__error = null;
+try {
+  // The production stylesheet, lifted out of the real page rather than copied here, so the strip
+  // can never drift away from what a visitor sees.
+  const pageHtml = await (await fetch('/demo/index.html')).text();
+  const styleBlock = pageHtml.match(/<style>([\s\S]*?)<\/style>/);
+  if (styleBlock) {
+    const st = document.createElement('style');
+    st.textContent = styleBlock[1];
+    document.head.appendChild(st);
+  }
+
+  const D = decodeBattleData(roundModule);
+  const def = {
+    id: 'battle',
+    duration: D.durationS,
+    buildScene,
+    getSceneData: () => D,
+    data: {},
+  };
+  const timeline = createTimeline(D.durationS);
+  const viewer = createViewer(document.getElementById('wrap'), def, timeline);
+
+  window.__D = D;
+  window.__viewer = viewer;
+  window.__timeline = timeline;
+  window.__seek = (t) => timeline.seek(t);
+  window.__hud = (t) => viewer.sceneApi.hudState(t);
+  window.__hudText = () => {
+    const el = document.querySelector('.v-shud');
+    return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+  };
+  /** Renderer stats, for the triangle budget. */
+  window.__stats = () => ({
+    triangles: viewer.renderer.info.render.triangles,
+    calls: viewer.renderer.info.render.calls,
+    geometries: viewer.renderer.info.memory.geometries,
+    textures: viewer.renderer.info.memory.textures,
+  });
+  window.__ready = true;
+} catch (err) {
+  window.__error = String((err && err.stack) || err);
+  window.__ready = true;
+}
+</script>
+</body>
+</html>

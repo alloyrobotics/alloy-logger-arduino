@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>viewer HUD contract fixture</title>
+<!--
+  hud-contract.fixture.html - the page battle-hud.test.mjs drives.
+
+  The scene HUD strip is written by viewer.js against a real DOM, so the only honest place to test
+  it is a real DOM. This page mounts THREE viewers over the production `createViewer`:
+
+    stub   a scene whose hudState() returns whatever the test last handed it, so a state shape can
+           be posted and the rendered strip read straight back
+    ssl    the real match replay, so the regression is measured against the states the SSL scene
+           actually produces rather than against states a test author imagined
+    battle the real simulated round, for the version-completeness sweep
+
+  It also carries `referenceRender`, which is the PRE-CHANGE rendering algorithm copied verbatim
+  out of viewer.js. That is what makes "the SSL strip is byte-identical" a proof rather than a
+  captured golden: the old algorithm is run beside the new one on the same states, and the two are
+  compared field by field.
+
+  Nothing here asserts. This directory is in .assetsignore and is never served from the site.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "/demo/vendor/three.module.js",
+    "three/addons/": "/demo/vendor/addons/"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; background: #111; }
+  .pane { position: relative; width: 640px; height: 360px; }
+</style>
+</head>
+<body>
+<div class="pane" id="pane-stub"></div>
+<div class="pane" id="pane-ssl"></div>
+<div class="pane" id="pane-battle"></div>
+<script type="module">
+import * as THREE from 'three';
+import { createTimeline } from '/demo/js/core/timeline.js';
+import { createViewer } from '/demo/js/core/viewer.js';
+
+window.__error = null;
+window.__ready = false;
+
+/**
+ * The team/state rendering EXACTLY as viewer.js performed it before the battle mission needed a
+ * red dot, optional discipline fields and a state note. Any divergence between this and the live
+ * strip, on a state shape the SSL scene produces, is a regression.
+ */
+function referenceRender(s) {
+  const dots = [];
+  const names = [];
+  const keeps = [];
+  for (let i = 0; i < 2 && i < s.teams.length; i++) {
+    const tm = s.teams[i];
+    dots.push(tm.color || '');
+    names.push(tm.name || '');
+    keeps.push(tm.keeper == null ? '' : `K${tm.keeper}`);
+  }
+  const notes = [];
+  const maxes = [];
+  s.teams.forEach((tm) => {
+    const bits = [];
+    bits.push(`${tm.cards || 0}Y`);
+    if (tm.reds) bits.push(`${tm.reds}R`);
+    if (tm.timeouts != null) bits.push(`${tm.timeouts}TO`);
+    notes.push(`${tm.name} ${bits.join(' ')}`);
+    if (tm.maxBots != null) maxes.push(tm.maxBots);
+  });
+  const st = s.state || {};
+  return {
+    hidden: false,
+    dots,
+    names,
+    keeps,
+    score: `${s.teams[0].score} : ${s.teams[1].score}`,
+    stage: s.stage || '',
+    clock: s.clock || '',
+    state: st.label || '',
+    tone: st.tone || 'stop',
+    note: notes.join(' · '),
+    max: maxes.length ? `max ${maxes.join('/')}` : '',
+  };
+}
+window.__referenceRender = referenceRender;
+
+/** What the live strip is actually showing, element by element. */
+function readStrip(root) {
+  const hud = root.querySelector('.v-shud');
+  if (!hud) return null;
+  if (hud.hidden) return { hidden: true };
+  const state = hud.querySelector('.v-sh-state');
+  return {
+    hidden: false,
+    dots: Array.from(hud.querySelectorAll('.v-sh-dot')).map((d) => d.dataset.c || ''),
+    names: Array.from(hud.querySelectorAll('.v-sh-team b')).map((b) => b.textContent),
+    keeps: Array.from(hud.querySelectorAll('.v-sh-kp')).map((k) => k.textContent),
+    score: hud.querySelector('.v-sh-score').textContent,
+    stage: hud.querySelector('.v-sh-stage').textContent,
+    clock: hud.querySelector('.v-sh-clock').textContent,
+    state: state.textContent,
+    tone: state.dataset.tone || '',
+    note: hud.querySelector('.v-sh-note').textContent,
+    max: hud.querySelector('.v-sh-max').textContent,
+  };
+}
+
+try {
+  // ---------------------------------------------------------------- 1. the stub viewer
+  let stubState = null;
+  let stubTick = 0;
+  const stubTimeline = createTimeline(110);
+  const stubViewer = createViewer(
+    document.getElementById('pane-stub'),
+    {
+      id: 'stub',
+      duration: 110,
+      data: {},
+      buildScene: () => ({
+        update() {},
+        dispose() {},
+        hudState: () => stubState,
+        rendering: { ground: false, grids: false, shadow: false },
+      }),
+    },
+    stubTimeline
+  );
+  /** Post a HUD state and read back what the strip rendered for it. */
+  window.__pushStub = (s) => {
+    stubState = s;
+    stubTick += 1;
+    stubTimeline.seek((stubTick % 900) * 0.11);
+    return readStrip(stubViewer.el);
+  };
+
+  // ---------------------------------------------------------------- 2. the real SSL replay
+  const sslData = await import('/demo/js/robots/ssl/data.js');
+  const sslScene = await import('/demo/js/robots/ssl/scene.js');
+  await sslData.loadSceneData();
+  const sslTimeline = createTimeline(sslData.duration);
+  const sslViewer = createViewer(
+    document.getElementById('pane-ssl'),
+    {
+      id: 'ssl',
+      duration: sslData.duration,
+      data: {},
+      buildScene: sslScene.buildScene,
+      getSceneData: sslData.getSceneData,
+    },
+    sslTimeline
+  );
+  window.__sslDuration = sslData.duration;
+  /** Seek the real SSL replay and hand back both the producer's state and the rendered strip. */
+  window.__sslAt = (t) => {
+    sslTimeline.seek(t);
+    const s = sslViewer.sceneApi.hudState(t);
+    return { state: s ? JSON.parse(JSON.stringify(s)) : null, strip: readStrip(sslViewer.el) };
+  };
+
+  // ---------------------------------------------------------------- 3. the real battle round
+  const battleScene = await import('/demo/js/robots/battle/scene.js');
+  const battleDecode = await import('/demo/js/robots/battle/decode.js');
+  const battleModule = await import('/demo/js/robots/battle/battle-data.js');
+  const BD = battleDecode.decodeBattleData(battleModule);
+  const battleTimeline = createTimeline(BD.durationS);
+  const battleViewer = createViewer(
+    document.getElementById('pane-battle'),
+    {
+      id: 'battle',
+      duration: BD.durationS,
+      data: {},
+      buildScene: battleScene.buildScene,
+      getSceneData: () => BD,
+    },
+    battleTimeline
+  );
+  window.__battleAt = (t) => {
+    battleTimeline.seek(t);
+    const s = battleViewer.sceneApi.hudState(t);
+    return { state: s ? JSON.parse(JSON.stringify(s)) : null, strip: readStrip(battleViewer.el) };
+  };
+  /**
+   * The producer's state ONLY, with no viewer in the loop, for the dense version sweep. A fresh
+   * scene is used so the sweep cannot be answered out of the mounted viewer's memo.
+   */
+  const sweepScene = battleScene.buildScene(THREE, new THREE.Group());
+  sweepScene.update(0, BD);
+  window.__battleHud = (t) => {
+    const s = sweepScene.hudState(t);
+    if (!s) return null;
+    return {
+      version: s.version,
+      clock: s.clock,
+      blue: s.teams[0].score,
+      red: s.teams[1].score,
+      label: s.state.label,
+      tone: s.state.tone,
+      note: s.state.note || '',
+      keys0: Object.keys(s.teams[0]).sort().join(','),
+      color0: s.teams[0].color,
+      color1: s.teams[1].color,
+      name0: s.teams[0].name,
+      name1: s.teams[1].name,
+    };
+  };
+  /** hudState BEFORE any data has reached the scene: the picker's pre-load state. */
+  const coldScene = battleScene.buildScene(THREE, new THREE.Group());
+  window.__coldHud = () => coldScene.hudState(12);
+
+  window.__ready = true;
+} catch (err) {
+  window.__error = String((err && err.stack) || err);
+  window.__ready = true;
+}
+</script>
+</body>
+</html>
