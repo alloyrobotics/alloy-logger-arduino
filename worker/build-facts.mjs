@@ -27,7 +27,7 @@ import path from 'node:path';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ROBOTS_DIR = path.join(ROOT, 'demo', 'js', 'robots');
-export const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue', 'ssl', 'battle'];
+export const ROBOT_IDS = ['sbr', 'arm6', 'drone', 'rescue', 'ssl', 'battle', 'donna'];
 
 /** How many points a whole-mission series is downsampled to. */
 export const SERIES_POINTS = 80;
@@ -308,12 +308,13 @@ export function eventsSection(def) {
   if (typeof def.eventLines !== 'function') return '';
   const rows = def.eventLines() || [];
   if (!rows.length) return '';
-  const lines = ['## Round events', ''];
-  lines.push(
+  const owned = def.eventsSection || {};
+  const title = owned.title || 'Round events';
+  const preamble =
+    owned.preamble ||
     'Referee-visible events from the mission event ledger, in order. These are the only event ' +
-      'timestamps you may cite; the charts do not carry them.',
-  );
-  lines.push('');
+      'timestamps you may cite; the charts do not carry them.';
+  const lines = [`## ${title}`, '', preamble, ''];
   for (const r of rows) lines.push(`- t=${fmt(r.t)} s \`${r.source}\` ${r.kind}: ${r.detail}`);
   lines.push('');
   return lines.join('\n');
@@ -455,7 +456,7 @@ The only product facts you may state; anything about Alloy this does not cover, 
 - Every power-on lands in Alloy as one replayable MCAP mission: replay it, scrub it, query it with SQL, ask about it the way this visitor is asking you.
 - Alloy is the robotics data platform by Alloy Robotics: usealloy.ai. The library and docs: github.com/alloyrobotics/alloy-logger-arduino, or the Get started section on alloylogger.com.
 - Pricing and accounts are not covered here: usealloy.ai.
-- This page carries six missions: four are synthetic demo logs generated in the browser, one is a replay of a real robot-soccer match, and one is a scripted simulated round of a 2v2 robot battle. The match replay carries three planted onboard faults synthesized on top of the real tracking data, plus one finding that is the log's own data and not planted at all: the shared vision losing an opponent robot. The battle round is fully synthetic, generated against its competition's published rules manual. No account or hardware is needed to explore any of them.
+- This page carries seven missions: five are synthetic, one is a real robot-soccer match replay with disclosed planted fault overlays, and one is a real recorded humanoid log. The match replay carries three planted onboard faults synthesized on top of the real tracking data, plus one finding that is the log's own data and not planted at all: the shared vision losing an opponent robot. The battle round is fully synthetic, generated against its competition's published rules manual. Donna's log was recorded onboard by the robot's ROS 2 rosbag2 logger, converted offline into this demo's replay format, and replayed here. It was not captured by the AlloyLogger library or ingested by an AlloyLogger production pipeline. No account or hardware is needed to explore any mission.
 `;
 
 /** One line per sibling so "what about the drone?" gets a useful pointer, not a shrug. */

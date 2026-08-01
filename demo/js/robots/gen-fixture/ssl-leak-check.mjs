@@ -1018,6 +1018,143 @@ const APPROVED_OCCURRENCES = [
     sha256: '875131dcf5b2d1681fd2ce38ba20e4c6508285cfcbd50bab7b49cb649b63889a',
     why: 'the assertion label of the test that PROVES the brief never says it',
   },
+  // Donna is a different, publicly attributed source. These exact occurrences name Donna's source,
+  // event or rules context and disclose no identifier from the de-identified SSL match.
+  {
+    file: 'demo/js/robots/donna/data.js',
+    sha256: 'f11c1691e2b05dc554c275dc3e6727d4abee7d4b8136cf2a2dd81fb587b2b28a',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/donna-data.js',
+    sha256: 'c56394b4205c1b675221664a420b9e9ee8ecb98cfc0695178291acfd17639487',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/preview-data.js',
+    sha256: '8f20ef6348d07769253a1e108b743146d79692fbbf98a676921b84c719253de1',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: '7bfe13e1a40b747f908872a015ccec59da1333976bca30d46718573224ee453a',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: '543f991b958c887c950377549d835e36660eb3c230db8321f7436a28504c749e',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: '7123963aa50f0f82f5bf6d67261dab21291f9b317bb2acfb42468671b9cef226',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: '138edcad477f0cc531d07e199cf95a752546c8c91ae1d7c6a2088fb593a4e784',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: 'd6a9548c75fd63961c82ef95ab199d4a35e4b1065e2de24374bb28d478d305c0',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: 'f30752bcbe5c13e52d71baf8b1eb73fdff20b6932a3abf575d38579001328561',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: '3ebc0158ffe0c6fe77a9c3fd1b12857453ca420d9dd28d73368d4d0b8f685b00',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: 'b15ef81f4f5360593dab0a940e69dc0265a63ce6661089b140004944776147d9',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: '995c1d3251150da8740556e74521fb5a478e0149dfe561816979dac4b78e5fa1',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: 'ca88437bcb1d8e370cefc2cc39262c3249f9f83776f702e49852ea36efee81ed',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: 'fea824aa45c21b933946363b75dc44088aa6ff0401786da917cf5ccd736f6a3f',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: '46fb9c4e2d0961292e9c4f99e419069514ccdb58c469e9024a68c27f188f9b1e',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: '9c63afb474cda575131b2c13b276c27c3908515fdcf50c240c9ad4551f0836df',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: '1bfb2b125c6f23a96b8b91e0b2763a4ca7ead7b1eb0fe5a79408132a4f1d4e29',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: 'c273b8adc9ce68b8a98ea75e83335e6aa0570b79b717265bc7f4482a17397acb',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: '43797df8516696e4c1c9ca90377113cd856cd21eca30964574a0c79412ed7da6',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: 'df5fdeb833a56c6509e8e664ffd06224aa035a8f3c991d6650b5aed045d0da15',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/DESIGN.md',
+    sha256: '6c29fc46f1f10f514acf799b5ea52698302031979acc7bd67124f2727fdf7c71',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/DESIGN.md',
+    sha256: '0642958943db8bbbf9fb9071525d079c988fe3e8aab8737d624ca737bb76ffa3',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-hud.test.mjs',
+    sha256: '8659588e95717e69c4e751b715b53211935ee7accab55109f2b3b262f9bc60f0',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: '45028eae2e48358e22875a5bf33deaa73d5bc823c6ee7d0f8b4956264aec8a74',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: 'd34a3756b85e675260330c220fea64994838aa4a43cb273835dc8b3376a3ca12',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: 'e4c614226a4f597710c26533b6a7f1efaba5594b3c0ddeca8be0682684a837b4',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: '0a4c0b21c9b258c4ada6c18e98aef075a1506e69f9e39afceff34e25dadb4c6f',
+    why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
+  },
 ];
 
 /** The exact text an approval covers: the line, or a window around the hit on a megaline file. */

@@ -143,6 +143,11 @@ demo/
                  battle-data.js,preview-data.js}    claims.mjs: the claim ledger (cited constants vs data claims)
                                                    battle-data.js: GENERATED offline, ~63 KB gz, lazily imported
                                                    preview-data.js: GENERATED, 6 s slice for the picker
+  js/robots/donna/{data.js,scene.js,script.js,    ← robot agent 7 (Donna's real recorded humanoid match log)
+                 decode.js,claims.mjs,              decode.js: donna-int16-delta-v1 decoder
+                 donna-data.js,preview-data.js}     claims.mjs: data-bound claim ledger
+                                                   donna-data.js: GENERATED offline, lazily imported
+                                                   preview-data.js: GENERATED, 6 s slice for the picker
   vendor/three.module.js, vendor/addons/OrbitControls.js  ← scaffold agent
 ```
 
@@ -191,7 +196,8 @@ export default {
                                    // every field array same length as its channel's t
   findings: [                      // scrubber markers + what evidence chips reference
     { id:'fall', title:'Fall at 51.7 s', window:[50.5,58.5], t:51.7,
-      severity:'alert'|'warn',
+      severity:'alert'|'warn'|'info', // documents the viewer's existing three-tone extension;
+                                    // Donna uses info for the added-time-finish finding
       focus:{ channel:'/balance', fields:['pitch','output'] },
       highlight:'body',            // part id passed to scene.setHighlight
       slowmo:true,                 // play the window at 0.4x
@@ -282,12 +288,14 @@ shadow and the renderer's shadow map outright, which is the right answer wheneve
 smaller than a shadow texel; `shadow:{...}` retunes the frustum instead.
 
 **Scene HUD strip.** A scene may expose `hudState(tSec)` and get a compact fixed strip across the
-top of the stage: the scene returns STATE (`{version, clock, stage, state:{label,tone},
+top of the stage: the scene returns STATE (`{version, clock, stage, state:{label,tone,note?},
 teams:[{name,color,score,cards,reds,maxBots,keeper,timeouts}]}`)
 and never markup, the viewer writes it with `textContent`, and the DOM is touched only when
-`version` changes. It exists because a follow-cam on a 46 dvh phone panel cannot show a legible
-in-world scoreboard. The viewer marks itself `.has-shud` so the evidence banner opens BELOW the
-strip instead of on top of it.
+`version` changes. This documents the viewer's existing optional `state.note` extension: a non-empty
+note is rendered in the shared note slot, an empty or omitted note renders nothing, and its value
+must be covered by `version`. Donna uses it for the penalty and goal callouts. It exists because a
+follow-cam on a 46 dvh phone panel cannot show a legible in-world scoreboard. The viewer marks itself
+`.has-shud` so the evidence banner opens BELOW the strip instead of on top of it.
 Exposes `setHighlight(partId)` pass-through and a small overlay HUD: play/pause, speed (0.4x/1x/2x),
 reset-view, and the scrubber with finding markers (colored ticks; hover shows title; click seeks).
 
@@ -331,7 +339,7 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
 ## Screens (hash-routed: `#/`, `#/connect/:id`, `#/demo/:id`)
 
 1. **Picker** `#/`: header (AlloyLogger wordmark linking to `/`, "Live demo" chip), headline
-   "Replay a real mission.", sub "Pick a robot. Ask it why it failed." Five cards (`repeat(5)`
+   "Replay a mission.", sub "Pick a robot. Ask it why it failed." Seven cards (`repeat(7)`
    at >1000 px, `repeat(2)` below it with the odd last card centred at a normal card's width):
    inline-SVG
    line-art schematic of each robot (brand-styled, stroke `--tx-mute`, accent stroke per robot),
@@ -463,8 +471,9 @@ identifies the source: no archive URL, no log hash, no event, match or window id
 tracker label ("tracker source A") and the phrase "a professional SSL match, 2026 season". The
 identifying manifest lives only in the private clients/alloy scratch repo. Every planted fault is described
 publicly as a counterfactual overlay unrelated to any real team's hardware, and that disclosure
-appears in five places: the picker copy ("Five synthetic missions and one real match replay with
-planted fault overlays"), the card tagline ("A real match replay, three planted faults, one real
+appears in five places: the picker copy ("Five synthetic missions, one real match replay with
+planted fault overlays, and one real recorded robot log"), the card tagline ("A real match replay,
+three planted faults, one real
 tracking loss"), the brief's `context.provenance` line, the scripted first answer (which bypasses
 the facts pack entirely) and the facts pack's own preamble. A sixth is not copy at all:
 `def.chatProvenance` ("Real match motion. Three faults are synthetic overlays; the bot 13 tracking
@@ -645,9 +654,59 @@ Two core extensions exist BECAUSE of this mission, both backward-compatible and 
    A shared sentence was quietly claiming every lazy payload was a match replay with a ball.
 
 2. **`def.eventLines` facts hook**: a function, callable only after `loadSceneData()` resolves,
-   returning typed rows `{t, source, kind, detail}`; `build-facts.mjs` renders them as a
-   `## Round events` section. Defs without the hook emit nothing. A def may also pin
-   `factsSeriesPoints` (clamped 40..80) as its facts-table budget knob; battle pins 40.
+   returning typed rows `{t, source, kind, detail}`. `build-facts.mjs` renders them under a def-owned
+   `eventsSection {title, preamble}` when provided. The default remains `## Round events` with the
+   existing referee-visible preamble, so battle's rendered event section stays byte-identical.
+   Defs without the hook emit nothing. A def may also pin `factsSeriesPoints` (clamped 40..80) as its
+   facts-table budget knob; battle pins 40.
+
+### donna (robot agent 7) - a real recorded humanoid match log
+
+Donna is a Wolfgang-OP humanoid from the Hamburg Bit-Bots. The mission replays a 306 s onboard ROS 2
+rosbag2 recording from a RoboCup German Open 2025 match. The browser does not simulate the telemetry.
+An offline extractor converted the recorded MCAP into `donna-int16-delta-v1`, and the static demo
+replays that derived payload.
+
+Recorded onboard by Donna, the Hamburg Bit-Bots' Wolfgang-OP humanoid, during a RoboCup German Open
+2025 match. The team publishes their game logs openly; this replay is derived from that recording
+with thanks.
+
+The role split is mandatory on both provenance surfaces. `context.provenance` reaches the analyst
+facts pack and names the recorded-on-robot, converted-offline, replayed-here path plus the composite
+transform tokens used by derived and resampled series. `chatProvenance` is client-rendered above the
+composer and says the mission was not captured by the AlloyLogger library. Neither surface may claim
+that an AlloyLogger production pipeline ingested or produced the replay.
+
+Six channels carry recorded or derived telemetry: torso IMU, commanded and achieved motion, servo
+diagnostics, game-controller state, filtered ball estimates and onboard compute. Every field is
+`REAL_MCAP` with one composite transform token such as `DERIVED_MAGNITUDE+RESAMPLED_20HZ`,
+`DERIVED_DIAG_AGGREGATE+RESAMPLED_2HZ` or `DERIVED_RATIO+RESAMPLED_2HZ`. Those labels prevent a
+derived value from being presented as raw wire data.
+
+The storyline is Donna's six falls and six recoveries. Every recovery completes within 6.5 s under
+the event definitions frozen in the claim ledger. Servo undervoltage statuses and a 12.1 V minimum
+cluster late in the recording and correlate with the later falls, but the log does not diagnose
+battery sag as their cause. Servo clamp warnings, the added-time goal, final whistle and Donna's
+recorded `/speak` lines remain typed event-ledger rows.
+
+The scene is a simplified Wolfgang-OP replay driven by recorded joint states, torso attitude and a
+segmented field pose. The pose holds across localization resets and fall windows rather than
+interpolating through them. `heroTime()` is 240.3 s, an upright walking moment with the ball visible,
+and lies inside the preview window.
+
+Donna owns `eventsSection {title: 'Match and onboard events', preamble: ...}` because its ledger mixes
+match state with internal diagnostics. Its heavy `donna-data.js` stays behind the lazy import. The
+eager mission graph includes `preview-data.js` and excludes `donna-data.js`, with a 57,344 B gzip
+ceiling. The full module remains at or below 250 KB gzip, Node decode stays below 80 ms, and the Donna
+facts pack stays at or below 31,500 characters.
+
+**Disclosure surfaces.** The global footer says exactly: "Five synthetic missions, one real match
+replay with planted fault overlays, and one real recorded robot log. Runs entirely in your browser."
+Donna's verbatim attribution surfaces are `context.provenance`, the facts pack and the leak gate's
+`APPROVED_OCCURRENCES`. `loadingCopy` and `chatProvenance` deliberately carry abbreviated honest
+copy, while the persistent header/device line credits "Hamburg Bit-Bots". Scripted answers carry the
+role split without repeating the attribution. The global headline is "Replay a mission." so the site
+does not call the five synthetic missions real.
 
 ## Chat scripts (per robot, 5-6 entries)
 
@@ -661,8 +720,9 @@ Two core extensions exist BECAUSE of this mission, both backward-compatible and 
    (gains, hardware, geometry), cites numbers.
 4. The slow-burn/system question (heap/battery/temp/health) → its warn finding.
 5. "How do I log this from my own robot?" (log, arduino, sketch, code, library, esp32, own robot)
-   → real Arduino snippet in a code block + one line: free tier, `alloy.begin()` and every field
-   in this demo came from `alloy.log()` calls.
+   → real Arduino snippet in a code block. Synthetic missions say their fields came from
+   `alloy.log()` calls. Real-log missions use the honest inversion: show how a visitor would log the
+   same fields from their own robot, and never claim the replayed fields came from `alloy.log()`.
 6. Optional flavor entry per robot (e.g. drone: "was the landing a crash?").
 Fallback: "I have this mission's data loaded. Try one of these:" + suggested chips.
 
@@ -678,13 +738,22 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 3a | `test:battle-decode` | the battle decoder: ABI, preview/full parity, corruption, retry split |
 | 3b | `test:battle-data` | battle: referee arithmetic re-derived, the claim ledger, the frozen incident table, the anachronism ban list |
 | 3c | `test:battle-script` | the battle def: matchers, natural phrasing, disclosure, correct causality, every number against the claim ledger |
+| 3d | `test:donna-decode` | Donna ABI, preview/full parity, corruption, retry split, module gzip ceiling and Node decode ceiling |
+| 3e | `test:donna-data` | Donna channels, transforms, masks, events, fixtures and claim-ledger bindings |
+| 3f | `test:donna-scene-pose` | recorded upright/fallen attitudes and joint-angle fidelity |
+| 3g | `test:donna-hud` | score, state and whistle seeks with version completeness |
+| 3h | `test:donna-script` | Donna matchers, evidence, attribution, role split, phrase bindings and banned product claims |
+| 3i | `test:donna-facts-size` | Donna facts pack stays within 31,500 characters |
+| 3j | `test:donna-deident` | generic identifiers plus private-manifest needles, fail-closed by default |
 | 4 | `test:ssl-eager-size` | the eager payload budget, so the match module stays lazy |
 | 4a | `test:battle-eager-size` | the same budget for the battle round: 46,900 B gz, the generated round module stays lazy |
+| 4b | `test:donna-eager-size` | Donna's eager graph stays within 57,344 B gz and keeps the full module lazy |
 | 5 | `test:ssl-leak:self` | the leak gate's own adversarial fixtures |
 | 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
 | 7 | `test:ssl-leak:repo` | de-identification over EVERY TRACKED FILE (`git ls-files`) |
 | 8 | `test:nav-race` | browser: the lazy-payload navigation race |
 | 8a | `test:battle-lazy-path` | browser: battle's own routes: the race, a corrupt round module, a corrupt preview |
+| 8b | `test:donna-lazy-path` | browser: Donna's own routes: the race, a corrupt recorded module, a corrupt preview |
 | 9 | `test:preview-fallback` | browser: a preview slice that will not decode |
 | 10 | `test:preview-roster` | browser: a preview roster the scene cannot pose |
 | 11 | `test:chart-absence` | browser: a masked series draws a break, not a zero |
@@ -692,10 +761,11 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 12a | `test:battle-hud` | browser: the HUD extension, SSL regression by re-derivation, version completeness |
 | 13 | `facts:fresh` | `node worker/build-facts.mjs && git diff --exit-code worker/facts.generated.js` |
 
-FIVE browser tests, not three: rows 8 to 12. Both leak modes run, and 6 and 7 are not the same
-surface. 6 scans what Cloudflare uploads; 7 scans what anyone can clone, which is 196 files against
-48 and includes this document, the whole `gen-fixture/` directory and the worker. Both FAIL on a
-machine without the private manifest, by design.
+The browser-gated suites cover the SSL navigation race, battle and Donna lazy paths, preview
+fallback and roster behavior, chart absence, corrupt metadata and the battle HUD regression. Both
+leak modes run, and 6 and 7 are not the same surface. 6 scans what Cloudflare uploads; 7 scans what
+anyone can clone and includes this document, the whole `gen-fixture/` directory and the worker. Both
+FAIL on a machine without the private manifest, by design.
 
 `test:corrupt-meta` drives five fixtures against the real app in Chromium. The first two are about
 a payload that will not build:

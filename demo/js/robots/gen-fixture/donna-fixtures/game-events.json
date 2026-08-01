@@ -1,0 +1,98 @@
+{
+  "negativeClockMessageCount": 125,
+  "samples": [
+    {
+      "gameState": 3,
+      "ownScore": 1,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -48,
+      "t": 277.582
+    },
+    {
+      "gameState": 1,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -49,
+      "t": 278.197
+    },
+    {
+      "gameState": 1,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -50,
+      "t": 279.016
+    },
+    {
+      "gameState": 1,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -56,
+      "t": 285.16
+    },
+    {
+      "gameState": 2,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -56,
+      "t": 285.571
+    },
+    {
+      "gameState": 3,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -57,
+      "t": 286.191
+    },
+    {
+      "gameState": 4,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -57,
+      "t": 286.596
+    },
+    {
+      "gameState": 4,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -57,
+      "t": 287.21
+    },
+    {
+      "gameState": 4,
+      "ownScore": 2,
+      "penalized": false,
+      "rivalScore": 0,
+      "secondaryState": "STATE_NORMAL",
+      "secondsRemaining": -57,
+      "t": 288.643
+    }
+  ],
+  "secondaryStatesObserved": [
+    "STATE_NORMAL"
+  ],
+  "secondaryStatesWhileClockNegative": [
+    "STATE_NORMAL"
+  ],
+  "targets": [
+    278.197,
+    285.571,
+    286.191,
+    286.596
+  ]
+}

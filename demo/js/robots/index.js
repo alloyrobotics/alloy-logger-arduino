@@ -11,9 +11,12 @@ import ssl from './ssl/script.js';
 // battle is the second lazy-payload mission: script.js ships metadata and a 6 s preview slice,
 // and the full-round module arrives through `def.loadSceneData()` on the demo route only.
 import battle from './battle/script.js';
+// donna is the third lazy-payload mission: script.js ships metadata and a 6 s preview slice, and
+// the full recorded match module arrives through `def.loadSceneData()` on the demo route only.
+import donna from './donna/script.js';
 
 /** Ordered registry. Picker card order === this order. */
-export const ROBOTS = [sbr, arm6, drone, rescue, ssl, battle];
+export const ROBOTS = [sbr, arm6, drone, rescue, ssl, battle, donna];
 
 /** id -> RobotDefinition */
 export const ROBOTS_BY_ID = new Map(ROBOTS.map((r) => [r.id, r]));
@@ -61,4 +64,7 @@ export const ROBOT_ICONS = {
   // three robots as turreted squares, and the accent robot mid-shot with a tracer ending on the
   // vertical obstacle, which is the mission's story in one line.
   battle: `<rect x="8" y="8" width="80" height="48" rx="2"/><rect x="24" y="40" width="16" height="5"/><rect x="56" y="20" width="5" height="16"/><rect x="16" y="12" width="9" height="7" rx="1"/><rect x="72" y="44" width="9" height="7" rx="1"/><rect x="36" y="24" width="9" height="7" rx="1" class="acc"/><path d="M45 27.5h8" class="acc"/><circle cx="54.5" cy="27.5" r="1.8" class="acc"/>`,
+
+  // Front-view humanoid: visor head, torso, articulated limbs, and the match ball at Donna's foot.
+  donna: `<rect x="38" y="4" width="20" height="12" rx="2"/><path d="M41 10h14" class="acc"/><path d="M48 16v5"/><path d="M37 21h22l3 18H34z"/><circle cx="34" cy="24" r="2.5" class="acc"/><circle cx="62" cy="24" r="2.5" class="acc"/><path d="M34 26l-9 10 5 10M62 26l9 10-5 10"/><circle cx="25" cy="36" r="2.5"/><circle cx="71" cy="36" r="2.5"/><path d="M41 39l-4 11-1 9M55 39l4 11 1 9"/><circle cx="37" cy="50" r="2.5" class="acc"/><circle cx="59" cy="50" r="2.5" class="acc"/><path d="M30 59h8M58 59h8"/><circle cx="72" cy="55" r="5" class="acc"/>`,
 };

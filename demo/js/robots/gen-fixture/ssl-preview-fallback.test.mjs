@@ -94,7 +94,7 @@ H.section('picker');
       tag: (a.querySelector('.rcard-tag').textContent || '').trim(),
     })),
   );
-  H.ok(cards.length === 6, `all six cards are on the picker (${cards.length})`);
+  H.ok(cards.length === 7, `all seven cards are on the picker (${cards.length})`);
   const ssl = cards.find((c) => c.id === 'ssl');
   H.ok(!!ssl, 'the SSL card is built');
   H.ok(ssl && ssl.svg, 'the SSL card keeps its SVG line art');
@@ -113,7 +113,7 @@ H.section('picker');
       .filter((a) => a.dataset.robot !== 'ssl')
       .map((a) => a.querySelector('.rcard-art').classList.contains('preview-live')),
   );
-  H.ok(others.some(Boolean), 'the other four cards still preview normally');
+  H.ok(others.some(Boolean), 'the other six cards still preview normally');
   H.ok(errors.length === 0, `no uncaught page errors on the picker (${errors.slice(0, 2).join(' | ')})`);
 }
 

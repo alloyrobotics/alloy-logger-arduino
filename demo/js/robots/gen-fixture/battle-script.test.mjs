@@ -229,7 +229,7 @@ section('5. disclosure surfaces');
   );
   ok(
     html.includes(
-      'Five synthetic missions and one real match replay with planted fault overlays. Runs entirely in your browser.',
+      'Five synthetic missions, one real match replay with planted fault overlays, and one real recorded robot log. Runs entirely in your browser.',
     ),
     'the picker footer sentence is the authored copy, verbatim',
   );

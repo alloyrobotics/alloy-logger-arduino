@@ -228,7 +228,7 @@ section('disclosure surfaces');
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
   ok(
     html.includes(
-      'Five synthetic missions and one real match replay with planted fault overlays. Runs entirely in your browser.',
+      'Five synthetic missions, one real match replay with planted fault overlays, and one real recorded robot log. Runs entirely in your browser.',
     ),
     'the picker footer names the fault overlays as planted, verbatim',
   );

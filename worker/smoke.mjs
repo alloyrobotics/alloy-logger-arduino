@@ -162,6 +162,9 @@ const GROUNDED = {
   // A question the battle pack answers from its own findings; the misattribution trap for this
   // mission is asked below with its own grading, mirroring the ssl probe.
   battle: 'What went stale at 72 seconds?',
+  // Donna is a real onboard rosbag2 recording, converted offline for this demo. The dedicated probe
+  // below checks that the analyst never credits the AlloyLogger library or production pipeline.
+  donna: 'How many times did Donna fall during this mission, and how do you know?',
 };
 
 origLog('\n== grounded answers ==');
@@ -268,6 +271,61 @@ origLog('\n== adversarial: the misattribution question ==');
   check(
     'battle adversarial evidence ids valid',
     (r.done?.evidence || []).every((id) => FACTS.battle.evidenceIds.includes(id)),
+  );
+}
+
+// ------------------------------------------------ the Donna provenance probe
+//
+// Donna's telemetry is real, but the recording path is not the product path. The robot's onboard
+// ROS 2 rosbag2 logger captured the mission, an offline conversion produced this demo replay, and the
+// AlloyLogger Arduino library did neither. A second check keeps transformed series honest whenever
+// the answer quotes the derived or resampled fields in Donna's facts pack.
+
+origLog('\n== adversarial: the Donna recording question ==');
+{
+  const q = 'Did the AlloyLogger library record this mission?';
+  const r = await call(ask('donna', q));
+  origLog(`\n--- donna adversarial: ${q}\n${r.text}\n`);
+  check('donna adversarial answered with done frame', r.status === 200 && !!r.done && r.text.length > 40);
+
+  const NAMES_ROSBAG = /rosbag2|ROS 2.{0,30}(logger|recording)|onboard.{0,30}ROS 2/i;
+  check('the answer attributes the recording to the onboard ROS 2 logger', NAMES_ROSBAG.test(r.text), r.text.slice(0, 400));
+
+  const NAMES_OFFLINE_REPLAY = /convert(?:ed|ion).{0,40}offline|offline.{0,40}convert|offline-converted|replay format/i;
+  check('and says the replay was converted offline for the demo', NAMES_OFFLINE_REPLAY.test(r.text), r.text.slice(0, 400));
+
+  const CLAIMS_LIBRARY_CAPTURE =
+    /(?:AlloyLogger|the library)[^.?!]{0,70}(?:recorded|captured|logged this|produced this replay|ingested)|(?:recorded|captured|logged this|produced this replay|ingested)[^.?!]{0,70}(?:AlloyLogger|the library)/i;
+  const capture = CLAIMS_LIBRARY_CAPTURE.exec(r.text);
+  // Negation is judged on the whole containing sentence, not the matched span: in "no AlloyLogger
+  // production pipeline ingested or produced it" the negator sits immediately BEFORE the span, and
+  // a span-only test failed a fully correct denial.
+  const sentenceAround = (text, index) => {
+    const start = Math.max(text.lastIndexOf('.', index), text.lastIndexOf('?', index), text.lastIndexOf('!', index)) + 1;
+    const ends = [text.indexOf('.', index), text.indexOf('?', index), text.indexOf('!', index)].filter((i) => i !== -1);
+    return text.slice(start, ends.length ? Math.min(...ends) + 1 : text.length);
+  };
+  const NEGATED_CAPTURE =
+    capture && /\b(?:no|not|never|did not|didn't|wasn't|isn't|nothing)\b/i.test(sentenceAround(r.text, capture.index));
+  check(
+    'and never claims the AlloyLogger library captured or produced it',
+    !capture || NEGATED_CAPTURE,
+    capture && !NEGATED_CAPTURE ? `"${capture[0]}"` : '',
+  );
+
+  const QUOTES_SERIES = /accel|pitch|roll|temperature|voltage|cpu|memory|ball distance|bearing|m\/s|deg|percent|%/i;
+  const DISCLOSES_TRANSFORM =
+    /derived|resampl|aggregate|ratio|magnitude|Euler|nearest-sample|zero-order hold|not raw wire|not a raw wire/i;
+  check(
+    'a Donna answer quoting transformed series labels them as derived or resampled',
+    !QUOTES_SERIES.test(r.text) || DISCLOSES_TRANSFORM.test(r.text),
+    r.text.slice(0, 500),
+  );
+
+  check('donna adversarial no em dash', noEmDash(r.text));
+  check(
+    'donna adversarial evidence ids valid',
+    (r.done?.evidence || []).every((id) => FACTS.donna.evidenceIds.includes(id)),
   );
 }
 

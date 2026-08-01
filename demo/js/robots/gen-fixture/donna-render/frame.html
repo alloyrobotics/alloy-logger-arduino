@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>donna render frame</title>
+<!--
+  donna-render/frame.html - Donna's match, mounted in the REAL viewer, for the render-frame gate.
+
+  A LOOKING GLASS, not a test: nothing here asserts anything. It mounts exactly three production
+  pieces - core/timeline.js, core/viewer.js and robots/donna/scene.js - against a hand-made def
+  whose only job is to hand the decoded match over, and lifts the page's own stylesheet out of
+  demo/index.html so the HUD strip is styled by the rules that style it in production.
+
+  Serve the repo root and open with ?t=<seconds>. The default is the frozen hero moment.
+
+      python3 -m http.server 8791
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+        --hide-scrollbars --virtual-time-budget=12000 --screenshot=frame.png \
+        --window-size=1800,1080 "http://127.0.0.1:8791/demo/js/robots/gen-fixture/donna-render/frame.html"
+
+  The generous virtual-time budget is deliberate: headless Chrome will happily capture a WebGL
+  canvas before the GL frame composites, and the page keeps the viewer's rAF loop turning until it
+  has counted real drawn frames, so a short budget captures the background colour instead.
+-->
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "/demo/vendor/three.module.js",
+    "three/addons/": "/demo/vendor/addons/"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; padding: 0; background: #111111; overflow: hidden; }
+  #wrap { position: absolute; inset: 0; }
+  /* the viewer's own overlay controls are stage furniture, not the shot */
+  .v-hud, .v-scrub, .v-btns { display: none !important; }
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script type="module">
+import { createTimeline } from '/demo/js/core/timeline.js';
+import { createViewer } from '/demo/js/core/viewer.js';
+import { buildScene } from '/demo/js/robots/donna/scene.js';
+import { decodeDonnaData } from '/demo/js/robots/donna/decode.js';
+import * as matchModule from '/demo/js/robots/donna/donna-data.js';
+
+window.__error = null;
+window.__frames = 0;
+try {
+  const pageHtml = await (await fetch('/demo/index.html')).text();
+  const styleBlock = pageHtml.match(/<style>([\s\S]*?)<\/style>/);
+  if (styleBlock) {
+    const st = document.createElement('style');
+    st.textContent = styleBlock[1];
+    document.head.appendChild(st);
+  }
+
+  const D = decodeDonnaData(matchModule);
+  const t = Number(new URLSearchParams(location.search).get('t') ?? 240.3);
+  const def = {
+    id: 'donna',
+    duration: D.meta.window[1],
+    buildScene,
+    getSceneData: () => D,
+    data: {},
+  };
+  const timeline = createTimeline(def.duration);
+  const viewer = createViewer(document.getElementById('wrap'), def, timeline);
+  timeline.seek(t);
+
+  window.__D = D;
+  window.__viewer = viewer;
+  window.__seek = (s) => timeline.seek(s);
+  window.__hudText = () => {
+    const el = document.querySelector('.v-shud');
+    return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+  };
+  window.__stats = () => ({
+    triangles: viewer.renderer.info.render.triangles,
+    calls: viewer.renderer.info.render.calls,
+  });
+
+  // Keep the loop turning and count REAL drawn frames. `__ready` only flips once the canvas has
+  // actually composited several times, which is the signal a capture should wait on.
+  const spin = () => {
+    timeline.seek(t);
+    window.__frames++;
+    if (window.__frames > 12) window.__ready = true;
+    requestAnimationFrame(spin);
+  };
+  requestAnimationFrame(spin);
+} catch (err) {
+  window.__error = String((err && err.stack) || err);
+  window.__ready = true;
+}
+</script>
+</body>
+</html>
