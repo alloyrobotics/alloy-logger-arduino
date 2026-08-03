@@ -125,7 +125,22 @@ them. Technical and curious, just not doing this professionally. Same facts, dif
 - Keep to the one or two numbers the finding actually turns on. Drop the rest.
 - End on something they could change on their own robot: a gain, a mount, a rate, a wire.
 - Still cite evidence. Watching the moment is how this lands for someone learning the system.`,
-  lead: `## This visitor
+  lead: (facts, robotId) =>
+    // Keyed on the mission id, never the display title: generated g-* missions may
+    // carry any printable robot_name, including this exact title (Codex R3-C3).
+    robotId === 'donna'
+      ? `## This visitor
+This visitor owns the fleet and the schedule, not this one match. Same facts, different altitude.
+
+- Lead with the consequence: what this costs, how often it would happen, what it puts at risk.
+- Treat this as one match recorded independently in three onboard logs, not as a single log.
+- Keep the source split exact: Donna's sensors alone feed the six chart groups. Jack and Rory add
+  replay poses and event evidence, not chart telemetry.
+- Prefer a small table of findings over a walkthrough of the timeline.
+- Close on the decision it points at: what to check, instrument or change next.
+- Never extrapolate a rate, a fleet number or a cost that the mission data does not contain. If they
+  ask how often, say what this one match shows across three logs and that it cannot answer a broader rate.`
+      : `## This visitor
 This visitor owns the fleet and the schedule, not this one run. Same facts, different altitude.
 
 - Lead with the consequence: what this costs, how often it would happen, what it puts at risk.
@@ -154,8 +169,9 @@ robot to somebody else, often to the customer it happened to. Same facts, differ
  * byte-identical across every role, and the cache_control breakpoint is on block 0 and nowhere
  * else.
  */
-export function buildSystemBlocks(facts, role) {
-  const register = role && Object.hasOwn(ROLE_REGISTERS, role) ? ROLE_REGISTERS[role] : null;
+export function buildSystemBlocks(facts, role, robotId) {
+  const configured = role && Object.hasOwn(ROLE_REGISTERS, role) ? ROLE_REGISTERS[role] : null;
+  const register = typeof configured === 'function' ? configured(facts, robotId) : configured;
   const blocks = [
     {
       type: 'text',
@@ -357,7 +373,7 @@ export async function handleChat(request, env) {
   } catch (err) {
     return json({ error: typeof err === 'string' ? err : 'Bad request.' }, 400);
   }
-  const { robot, role, messages } = parsed;
+  const { robotId, robot, role, messages } = parsed;
 
   // No retries: a visitor is watching a caret blink, a retry doubles spend to answer nobody.
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 60_000 });
@@ -396,7 +412,7 @@ export async function handleChat(request, env) {
             temperature: 0,
             // Block 0 is the cached prefix and is identical for every role; the register, when
             // there is one, rides after the breakpoint. See buildSystemBlocks.
-            system: buildSystemBlocks(robot.facts, role),
+            system: buildSystemBlocks(robot.facts, role, robotId),
             messages,
           },
           { signal: upstream.signal },

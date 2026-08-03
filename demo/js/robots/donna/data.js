@@ -1,20 +1,17 @@
-// donna/data.js - telemetry and event contract for Donna's recorded RoboCup match log.
+// donna/data.js - Donna telemetry plus the aligned three-robot event contract.
 //
-// Every sample in this mission comes from the public Bit-Bots Donna MCAP. Summary channels are
-// derived or resampled from that recording, and each field carries the exact composite transform
-// token frozen by the extractor. No browser-time simulation or random generation happens here.
-//
-// The full payload loads lazily. buildData() is a tripwire until loadSceneData() resolves. The picker
-// and mission brief use the decoded 6 second preview slice instead.
+// Donna remains the chart protagonist. Donna, Jack and Rory each contribute scene tracks and aligned
+// event rows from their independently recorded onboard rosbag2 logs. The full payload loads lazily;
+// the picker and brief use the decoded preview module.
 
 import { decodeDonnaData } from './decode.js';
 import * as previewModule from './preview-data.js';
-import { text as T } from './claims.mjs';
+import { text as T, value as V } from './claims.mjs';
 
 // ------------------------------------------------------------------ mission shape
 
-export const duration = 306.0;
-export const rate = 20;
+export const duration = V('durationS');
+export const heroTime = V('heroTime');
 
 export const rates = {
   '/imu': 20,
@@ -25,19 +22,36 @@ export const rates = {
   '/compute': 2,
 };
 
+export const rate = rates['/imu'];
+
 export const rateNotes = {
-  '/imu':
-    'block 20 Hz, nearest-sample resampled from the recorded IMU stream at 342.75 Hz native cadence',
+  '/imu': 'block 20 Hz, nearest-sample resampled from Donna\'s recorded raw IMU stream',
   '/motion':
-    'block 10 Hz; commands are zero-order held from an event-driven 28.49 Hz native cadence and 200 Hz odometry is nearest-sample downsampled',
+    'block 10 Hz; commands are zero-order held and motion odometry is nearest-sample downsampled',
   '/servos':
-    'block 2 Hz; diagnostic updates arrive at about 107 Hz natively, then the per-servo aggregates are zero-order held onto the grid',
-  '/game':
-    'block 2 Hz, zero-order held from the recorded game-controller stream at 1.75 Hz native cadence',
+    'block 2 Hz; per-servo diagnostic aggregates are zero-order held onto the shared grid',
+  '/game': 'block 2 Hz, zero-order held from Donna\'s recorded game-controller stream',
   '/ball':
-    'block 5 Hz, nearest-sample resampled from the 47.21 Hz filtered estimate with a 0.4 s validated presence mask, then differenced against the segmented localization pose at each tick to put both series in Donna\'s frame',
-  '/compute':
-    'block 2 Hz, nearest-sample resampled from the recorded system workload stream at 19.95 Hz native cadence',
+    'block 5 Hz; filtered map-frame ball and Donna localization are validated, differenced and masked',
+  '/compute': 'block 2 Hz, nearest-sample resampled from Donna\'s recorded workload stream',
+};
+
+export const fieldRateNotes = {
+  '/imu.accelMagMps2': 'recorded IMU acceleration magnitude, nearest-sample at 20 Hz',
+  '/imu.pitchDeg': 'recorded normalized IMU quaternion reduced to Euler pitch, nearest-sample at 20 Hz',
+  '/imu.rollDeg': 'recorded normalized IMU quaternion reduced to Euler roll, nearest-sample at 20 Hz',
+  '/motion.cmdVxMps': 'recorded forward command, zero-order held at 10 Hz',
+  '/motion.odomVxMps': 'recorded forward motion odometry, nearest-sample at 10 Hz',
+  '/motion.cmdYawRadps': 'recorded angular.z yaw command, zero-order held at 10 Hz',
+  '/servos.maxTempC': 'maximum current DS Temperature status, zero-order held at 2 Hz',
+  '/servos.minBusVoltageV': 'minimum positive current DS Input Voltage status, zero-order held at 2 Hz',
+  '/game.secondsRemaining': 'Donna master gamestate seconds_remaining, zero-order held at 2 Hz',
+  '/game.ownScore': 'Donna master gamestate own_score, zero-order held at 2 Hz',
+  '/game.rivalScore': 'Donna master gamestate rival_score, zero-order held at 2 Hz',
+  '/ball.ballDistM': 'Donna-relative distance from two validated map-frame estimates at 5 Hz',
+  '/ball.ballBearingDeg': 'Donna-relative wrapped bearing from two validated map-frame estimates at 5 Hz',
+  '/compute.cpuLoadPct': 'recorded overall CPU usage, nearest-sample at 2 Hz',
+  '/compute.memUsedPct': 'recorded memory_used divided by memory_total, nearest-sample at 2 Hz',
 };
 
 const P = (transform, note) => ({ origin: 'REAL_MCAP', transform, note });
@@ -45,75 +59,66 @@ const P = (transform, note) => ({ origin: 'REAL_MCAP', transform, note });
 export const channels = [
   {
     path: '/imu',
-    label: 'Torso IMU',
-    note: 'Recorded onboard. Magnitude and Euler angles are derived from the raw IMU stream.',
+    label: 'Donna torso IMU',
+    note: 'Recorded onboard Donna. Magnitude and Euler angles are derived from the raw IMU stream.',
     fields: [
       {
         key: 'accelMagMps2',
         label: 'accelMagMps2',
         unit: 'm/s^2',
-        provenance: P(
-          'DERIVED_MAGNITUDE+RESAMPLED_20HZ',
-          'magnitude of the recorded linear-acceleration vector, nearest-sample resampled at 20 Hz',
-        ),
+        provenance: P('DERIVED_MAGNITUDE+RESAMPLED_NEAREST_20HZ', fieldRateNotes['/imu.accelMagMps2']),
       },
       {
         key: 'pitchDeg',
         label: 'pitchDeg',
         unit: 'deg',
-        provenance: P(
-          'DERIVED_ANGLES+RESAMPLED_20HZ',
-          'Euler pitch derived from the normalized recorded IMU quaternion, resampled at 20 Hz',
-        ),
+        provenance: P('DERIVED_ANGLES+RESAMPLED_NEAREST_20HZ', fieldRateNotes['/imu.pitchDeg']),
       },
       {
         key: 'rollDeg',
         label: 'rollDeg',
         unit: 'deg',
-        provenance: P(
-          'DERIVED_ANGLES+RESAMPLED_20HZ',
-          'Euler roll derived from the normalized recorded IMU quaternion, resampled at 20 Hz',
-        ),
+        provenance: P('DERIVED_ANGLES+RESAMPLED_NEAREST_20HZ', fieldRateNotes['/imu.rollDeg']),
       },
     ],
   },
   {
     path: '/motion',
-    label: 'Command and odometry',
-    note: 'Recorded command and motion-odometry streams on one 10 Hz chart grid.',
+    label: 'Donna command and odometry',
+    note: 'Recorded Donna command and motion-odometry streams on one chart grid.',
     fields: [
       {
         key: 'cmdVxMps',
         label: 'cmdVxMps',
         unit: 'm/s',
-        provenance: P('RESAMPLED_10HZ', 'recorded forward command, zero-order held onto the 10 Hz grid'),
+        provenance: P('CMD_ZOH_10HZ', fieldRateNotes['/motion.cmdVxMps']),
       },
       {
         key: 'odomVxMps',
         label: 'odomVxMps',
         unit: 'm/s',
-        provenance: P('RESAMPLED_10HZ', 'recorded forward odometry, nearest-sample downsampled onto the 10 Hz grid'),
+        provenance: P('ODOM_NEAREST_10HZ', fieldRateNotes['/motion.odomVxMps']),
       },
       {
         key: 'cmdYawRadps',
         label: 'cmdYawRadps',
         unit: 'rad/s',
-        provenance: P('RESAMPLED_10HZ', 'recorded yaw command, zero-order held onto the 10 Hz grid'),
+        provenance: P('CMD_ANGULAR_Z_ZOH_10HZ', fieldRateNotes['/motion.cmdYawRadps']),
       },
     ],
   },
   {
     path: '/servos',
-    label: 'Servo diagnostics',
-    note: 'Recorded Dynamixel diagnostic statuses reduced to maximum temperature and minimum positive bus voltage.',
+    label: 'Donna servo diagnostics',
+    note: 'Recorded Donna Dynamixel statuses reduced to temperature and positive bus-voltage extrema.',
     fields: [
       {
         key: 'maxTempC',
         label: 'maxTempC',
         unit: 'degC',
         provenance: P(
-          'DERIVED_DIAG_AGGREGATE+RESAMPLED_2HZ',
-          'maximum current Temperature across recorded DS diagnostic statuses, zero-order held at 2 Hz',
+          'DERIVED_DIAGNOSTIC_AGGREGATE+ZOH_2HZ',
+          fieldRateNotes['/servos.maxTempC'],
         ),
       },
       {
@@ -121,53 +126,53 @@ export const channels = [
         label: 'minBusVoltageV',
         unit: 'V',
         provenance: P(
-          'DERIVED_DIAG_AGGREGATE+RESAMPLED_2HZ',
-          'minimum positive current Input Voltage across recorded DS diagnostic statuses, zero-order held at 2 Hz',
+          'DERIVED_DIAGNOSTIC_AGGREGATE+ZOH_2HZ',
+          fieldRateNotes['/servos.minBusVoltageV'],
         ),
       },
     ],
   },
   {
     path: '/game',
-    label: 'Game controller',
-    note: 'Recorded onboard game-controller state, zero-order held onto the shared 2 Hz grid.',
+    label: 'Donna game controller',
+    note: 'Donna-clock game state shared by the replay, including STATE_NORMAL added time.',
     fields: [
       {
         key: 'secondsRemaining',
         label: 'secondsRemaining',
         unit: 's',
-        provenance: P('RESAMPLED_2HZ', 'recorded seconds_remaining, zero-order held onto the 2 Hz grid'),
+        provenance: P('DONNA_MASTER_GAMESTATE+ZOH_2HZ', fieldRateNotes['/game.secondsRemaining']),
       },
       {
         key: 'ownScore',
         label: 'ownScore',
         unit: 'count',
-        provenance: P('RESAMPLED_2HZ', 'recorded own_score, zero-order held onto the 2 Hz grid'),
+        provenance: P('DONNA_MASTER_GAMESTATE+ZOH_2HZ', fieldRateNotes['/game.ownScore']),
       },
       {
         key: 'rivalScore',
         label: 'rivalScore',
         unit: 'count',
-        provenance: P('RESAMPLED_2HZ', 'recorded rival_score, zero-order held onto the 2 Hz grid'),
+        provenance: P('DONNA_MASTER_GAMESTATE+ZOH_2HZ', fieldRateNotes['/game.rivalScore']),
       },
     ],
   },
   {
     path: '/ball',
-    label: 'Filtered ball estimate',
+    label: 'Donna filtered ball estimate',
     note:
-      'Recorded filtered ball estimates in the map frame. The chart values are relative to Donna, ' +
-      'and numeric zero is filler when ballSeen is clear.',
+      'Recorded filtered ball estimates in the map frame. Chart values are relative to Donna, and ' +
+      'numeric zero is filler while ballSeen is clear.',
     fields: [
       {
         key: 'ballDistM',
         label: 'ballDistM',
         unit: 'm',
         mask: 'ballSeen',
-        maskNote: 'the filtered estimate or segmented localization pose fails the frozen validity rules',
+        maskNote: 'the ball estimate or Donna localization fails the frozen validity rules',
         provenance: P(
-          'DERIVED_DISTANCE+RESAMPLED_5HZ',
-          'relative to Donna, derived by differencing two map-frame estimates (filtered ball pose and localization pose), not a direct robot-frame measurement',
+          'MAP_FRAME_DIFFERENCE_TO_DONNA+VALIDATED_MASK_5HZ',
+          fieldRateNotes['/ball.ballDistM'],
         ),
       },
       {
@@ -175,33 +180,30 @@ export const channels = [
         label: 'ballBearingDeg',
         unit: 'deg',
         mask: 'ballSeen',
-        maskNote: 'the filtered estimate or segmented localization pose fails the frozen validity rules',
+        maskNote: 'the ball estimate or Donna localization fails the frozen validity rules',
         provenance: P(
-          'DERIVED_BEARING+RESAMPLED_5HZ',
-          'relative to Donna, derived by differencing two map-frame estimates (filtered ball pose and localization pose), not a direct robot-frame measurement',
+          'MAP_FRAME_DIFFERENCE_TO_DONNA+WRAPPED_BEARING+VALIDATED_MASK_5HZ',
+          fieldRateNotes['/ball.ballBearingDeg'],
         ),
       },
     ],
   },
   {
     path: '/compute',
-    label: 'Onboard compute',
-    note: 'Recorded workload telemetry reduced to CPU load and used-memory percentage.',
+    label: 'Donna onboard compute',
+    note: 'Recorded Donna workload telemetry reduced to CPU load and used-memory percentage.',
     fields: [
       {
         key: 'cpuLoadPct',
         label: 'cpuLoadPct',
         unit: 'percent',
-        provenance: P('RESAMPLED_2HZ', 'recorded overall CPU usage, nearest-sample resampled at 2 Hz'),
+        provenance: P('RESAMPLED_NEAREST_2HZ', fieldRateNotes['/compute.cpuLoadPct']),
       },
       {
         key: 'memUsedPct',
         label: 'memUsedPct',
         unit: 'percent',
-        provenance: P(
-          'DERIVED_RATIO+RESAMPLED_2HZ',
-          'recorded memory_used divided by memory_total, nearest-sample resampled at 2 Hz',
-        ),
+        provenance: P('DERIVED_RATIO+RESAMPLED_NEAREST_2HZ', fieldRateNotes['/compute.memUsedPct']),
       },
     ],
   },
@@ -209,95 +211,72 @@ export const channels = [
 
 // ------------------------------------------------------------------ findings
 
-const ankleMessage =
-  `Invalid position for LAnklePitch: ${T('clampLAnklePitchValue')} not in ` +
-  `(${T('clampLAnklePitchLow')}, ${T('clampLAnklePitchHigh')})`;
-const rightElbowMessage =
-  `Invalid position for RElbow: ${T('clampRElbowValue')} not in ` +
-  `(${T('clampRElbowLow')}, ${T('clampRElbowHigh')})`;
-const leftElbowMessage =
-  `Invalid position for LElbow: ${T('clampLElbowValue')} not in ` +
-  `(${T('clampLElbowLow')}, ${T('clampLElbowHigh')})`;
-
 export const findings = [
   {
-    id: 'falls-recoveries',
-    title: `${T('fallCount')} falls, ${T('recoveryCount')} recoveries`,
-    window: [92.0, 103.0],
-    t: 94.848,
+    id: 'one-match-three-logs',
+    title: `${T('oneMatchWord')} match, ${T('threeLogsWord')} onboard logs`,
+    window: [V('windowOpenT'), V('jackSpeak1T')],
+    t: V('windowOpenT'),
+    severity: 'warn',
+    focus: { channel: '/compute', fields: ['cpuLoadPct', 'memUsedPct'] },
+    highlight: 'team',
+    slowmo: false,
+    note:
+      `All ${T('threeLogsWord')} robots recorded independently onboard. In this window, the separate ` +
+      `live-stream application queue filled ${T('donnaQueueFull')} times on Donna, ` +
+      `${T('jackQueueFull')} on Jack and ${T('roryQueueFull')} on Rory. These are application-queue ` +
+      'warnings, not gaps in the rosbag2 recordings replayed here.',
+  },
+  {
+    id: 'jack-falls-foul-line',
+    title: `Jack's ${T('jackFallCountWord')} falls and the foul line`,
+    window: [V('jackFall3T'), V('jackRecovery3T')],
+    t: V('jackSpeak3T'),
     severity: 'alert',
     focus: { channel: '/imu', fields: ['accelMagMps2', 'pitchDeg', 'rollDeg'] },
-    highlight: 'body',
+    highlight: 'jack',
     slowmo: true,
     note:
-      `Every FALLING onset is followed by recovery within ${T('recoveryCeilingS')} s. The first ` +
-      'five recoveries run from GETTING_UP to WALKING. The last runs from GETTING_UP to the first ' +
-      'CONTROLLABLE state because the final whistle arrives before WALKING.',
+      `Window fall counts are Donna ${T('donnaFallCount')}, Jack ${T('jackFallCount')} and Rory ` +
+      `${T('roryFallCount')}. During the last recovery Jack says, "This was definitely a foul."`,
   },
   {
-    id: 'battery-sag',
-    title: `Battery rail reaches ${T('minBusVoltageV')} V`,
-    window: [218.0, 228.0],
-    t: 223.628,
-    severity: 'warn',
-    focus: { channel: '/servos', fields: ['minBusVoltageV', 'maxTempC'] },
-    highlight: 'body',
+    id: 'penalty-traffic',
+    title: 'Penalty traffic',
+    window: [V('donnaPenaltyStartT'), V('donnaPenaltyEndT')],
+    t: V('donnaPenaltyStartT'),
+    severity: 'info',
+    focus: { channel: '/game', fields: ['secondsRemaining', 'ownScore', 'rivalScore'] },
+    highlight: 'donna',
     slowmo: false,
     note:
-      `${T('undervoltageCount')} recorded "Power getting low" statuses cluster around a ` +
-      `${T('minBusVoltageV')} V minimum. The timing correlates with the late falls, but this log ` +
-      'does not establish battery sag as their root cause.',
-  },
-  {
-    id: 'servo-command-clamps',
-    title: 'Servo commands hit the hardware interface limits',
-    window: [92.0, 101.0],
-    t: 94.905,
-    severity: 'warn',
-    focus: { channel: '/servos', fields: ['maxTempC', 'minBusVoltageV'] },
-    highlight: 'body',
-    slowmo: false,
-    note:
-      `${T('clampLAnklePitchCount')} LAnklePitch clamps, ${T('clampRElbowCount')} RElbow clamps ` +
-      `and ${T('clampLElbowCount')} LElbow clamps. The log's own first limit strings are ` +
-      `"${ankleMessage}", "${rightElbowMessage}" and "${leftElbowMessage}".`,
+      `Donna serves ${T('donnaPenaltyDurationS')} s off-field with her localization honestly dark. ` +
+      `Rory re-enters at ${T('roryReentryT')} s, and live pose resumes at ` +
+      `${T('roryLivePoseT')} s. The replay hides unobserved pose instead of inventing it.`,
   },
   {
     id: 'added-time-finish',
-    title: `Added-time goal and whistle finish ${T('scoreFinalOwn')}-${T('scoreRival')}`,
-    window: [276.0, 289.0],
-    t: 278.197,
+    title: `Added-time finish: ${T('scoreAtSecondGoalOwn')}-${T('scoreRival')}`,
+    window: [V('goal6T'), V('finishedT')],
+    t: V('goal6T'),
     severity: 'info',
     focus: { channel: '/game', fields: ['secondsRemaining', 'ownScore', 'rivalScore'] },
-    highlight: 'body',
+    highlight: 'team',
     slowmo: false,
     note:
-      `Donna's side moves from ${T('scoreBeforeOwn')}-${T('scoreRival')} to ` +
-      `${T('scoreFinalOwn')}-${T('scoreRival')} with ${T('secondsRemainingAtGoal')} s on the ` +
-      `recorded clock. FINISHED follows at ${T('finalWhistleT')} s.`,
-  },
-  {
-    id: 'stream-backpressure',
-    title: `${T('streamDroppedCount')} messages dropped from the live stream`,
-    window: [0.0, 8.0],
-    t: 0.456,
-    severity: 'warn',
-    focus: { channel: '/compute', fields: ['cpuLoadPct', 'memUsedPct'] },
-    highlight: 'body',
-    slowmo: false,
-    note:
-      `udp_bridge_sender reports ${T('streamDroppedCount')} queue-full drops for /rosout from the ` +
-      'live stream. The MCAP recording retained the messages, so the replay and event inventory are complete.',
+      `The score moves to ${T('scoreAtFirstGoalOwn')}-${T('scoreRival')} with ` +
+      `${T('firstGoalClockS')} s on the clock, then to ${T('scoreAtSecondGoalOwn')}-` +
+      `${T('scoreRival')} at ${T('secondGoalClockS')} s. FINISHED arrives at ` +
+      `${T('whistleClockS')} s on the same STATE_NORMAL clock.`,
   },
 ];
 
-// The default six-channel build-facts budget is 53 points. It is exported explicitly so the later
-// RobotDefinition can carry the value without silently changing the default.
 export const factsSeriesPoints = 53;
 
 export const eventsSection = {
-  title: 'Match and onboard events',
-  preamble: "These are the robot's own recorded match and diagnostic events.",
+  title: 'Aligned match and onboard events',
+  preamble:
+    'These are Donna-clock events and window summaries from Donna, Jack and Rory, recorded independently onboard.',
 };
 
 // ------------------------------------------------------------------ scene-data contract
@@ -314,30 +293,47 @@ const SUMMARY_TRACK_FOR = {
   '/compute': 'summaryCompute',
 };
 
-/** Validate the full decoded payload once, on the load promise's rejection path. */
 export function validateSceneData(M) {
   const problems = [];
   if (!M || typeof M !== 'object') problems.push('nothing decoded');
   if (M && M.variant !== 'full') problems.push(`variant is "${M.variant}", not full`);
   if (M && (!Array.isArray(M.events) || M.events.length !== 20)) problems.push('event ledger is not 20 rows');
   if (M && M.tracks) {
-    for (const ch of channels) {
-      const trackName = SUMMARY_TRACK_FOR[ch.path];
+    for (const channel of channels) {
+      const trackName = SUMMARY_TRACK_FOR[channel.path];
       const track = M.tracks[trackName];
       if (!track) {
         problems.push(`track ${trackName} is missing`);
         continue;
       }
-      for (const field of ch.fields) {
+      for (const field of channel.fields) {
         if (!track[field.key]) problems.push(`${trackName}.${field.key} is missing`);
       }
-      if (ch.path === '/ball' && !track.ballSeen) problems.push('summaryBall.ballSeen is missing');
+      if (channel.path === '/ball' && !track.ballSeen) problems.push('summaryBall.ballSeen is missing');
     }
-    for (const trackName of ['joints', 'torsoQuaternion', 'pose', 'ballField']) {
-      if (!M.tracks[trackName]) problems.push(`scene track ${trackName} is missing`);
+    for (const robot of ['donna', 'jack', 'rory']) {
+      for (const suffix of ['Joints', 'TorsoQuaternion', 'RobotState', 'Presence', 'Hud']) {
+        if (!M.tracks[`${robot}${suffix}`]) problems.push(`scene track ${robot}${suffix} is missing`);
+      }
+      if (!Object.keys(M.tracks).some((name) => new RegExp(`^${robot}Pose\\d+$`).test(name))) {
+        problems.push(`scene pose segments for ${robot} are missing`);
+      }
     }
+    if (!M.tracks.donnaBallField) problems.push('scene track donnaBallField is missing');
   } else if (M) {
     problems.push('no tracks object');
+  }
+  if (M && (!M.presence || !M.presence.donna || !M.presence.jack || !M.presence.rory)) {
+    problems.push('decoded presence segments are missing');
+  }
+  if (
+    M &&
+    (!M.mesh ||
+      Object.keys(M.mesh.parts || {}).length !== 52 ||
+      !Array.isArray(M.mesh.instances) ||
+      M.mesh.instances.length !== 133)
+  ) {
+    problems.push('decoded Wolfgang mesh or instance manifest is missing');
   }
   if (problems.length) {
     const err = new Error(`donna/data.js: the decoded mission payload is unusable - ${problems.join('; ')}`);
@@ -347,7 +343,6 @@ export function validateSceneData(M) {
   return M;
 }
 
-/** Load and decode the full mission module. Repeated calls return the same promise. */
 export function loadSceneData() {
   if (donnaPromise) return donnaPromise;
   const p = import('./donna-data.js')
@@ -394,7 +389,6 @@ try {
   previewData = null;
 }
 
-/** Test hook for the pre-load tripwires. */
 export function __resetSceneDataForTests() {
   donnaPromise = null;
   donnaData = null;
@@ -414,7 +408,6 @@ function copyValues(src) {
   return out;
 }
 
-/** Reshape decoded summary tracks onto the RobotDefinition chart contract. */
 export function buildData(prng) {
   const M = donnaData;
   if (!M) {
@@ -426,29 +419,31 @@ export function buildData(prng) {
     throw err;
   }
   const out = {};
-  for (const ch of channels) {
-    const trackName = SUMMARY_TRACK_FOR[ch.path];
+  for (const channel of channels) {
+    const trackName = SUMMARY_TRACK_FOR[channel.path];
     const spec = M.meta.tracks[trackName];
     const track = M.tracks[trackName];
     const built = { t: uniformTimeAxis(spec.timing, spec.count) };
-    for (const field of ch.fields) built[field.key] = copyValues(track[field.key]);
-    if (ch.path === '/ball') built.ballSeen = copyValues(track.ballSeen);
-    out[ch.path] = built;
+    for (const field of channel.fields) built[field.key] = copyValues(track[field.key]);
+    if (channel.path === '/ball') built.ballSeen = copyValues(track.ballSeen);
+    out[channel.path] = built;
   }
   return out;
 }
 
-// ------------------------------------------------------------------ recorded event ledger
+// ------------------------------------------------------------------ aligned event ledger
 
-const sourceFor = (event) => {
-  if (event.kind === 'fall') return '/robot_state';
-  if (event.kind === 'speak') return '/speak';
-  if (event.id === 'servo-undervoltage') return '/diagnostics';
-  if (event.kind === 'game' || event.kind === 'penalty') return '/gamestate';
-  return '/rosout';
-};
+function sourceFor(event) {
+  if (event.kind === 'fall') return `/${event.robot}/robot_state`;
+  if (event.kind === 'speak') return `/${event.robot}/speak`;
+  if (event.kind === 'penalty') return `/${event.robot}/gamestate`;
+  if (event.kind === 'game') return '/match/gamestate';
+  if (event.id.endsWith('-fall-count')) return `/${event.robot}/robot_state`;
+  if (event.id.endsWith('-queue-full')) return `/${event.robot}/rosout`;
+  if (event.id === 'donna-low-power') return '/donna/diagnostics';
+  return '/match/clock';
+}
 
-/** Return one fixed-format row for each of the frozen 20 recorded events, in ledger order. */
 export function eventLines() {
   const M = donnaData;
   if (!M) {

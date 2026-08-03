@@ -491,6 +491,73 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     const shMax = hudEl.querySelector('.v-sh-max');
     const shClock = hudEl.querySelector('.v-sh-clock');
     const shState = hudEl.querySelector('.v-sh-state');
+    // ---------- optional per-subject chip row (HUD chip ABI v1) ----------
+    //
+    // A scene MAY additionally send `{ chipsAbi: 1, chips: [{ name, state, note, tone }] }`, and get
+    // a third row of per-subject status chips under the match state. It exists because a mission
+    // with more than one recorded subject has more than one presence story at any instant, and the
+    // single `state.note` above cannot carry three of them: the Donna team replay drives three
+    // Wolfgang-OP humanoids from three independently recorded logs, and at 100 s one of them is off
+    // the field serving a penalty while another is mid-fall. "Where is she?" has to be answerable
+    // from the strip, not inferred from an empty patch of pitch.
+    //
+    // `tone` is an ENUM, not a colour: `live` (the subject's own log observed it), `hold` (observed
+    // pose is stale and disclosed as held) and `hidden` (not observed at all, so not drawn). No
+    // scene-specific hex ever crosses this ABI.
+    //
+    // VERSION GUARDED, AND THE GUARD IS THE POINT. `chipsAbi` must equal HUD_CHIP_ABI exactly.
+    // Everything below - the extra stylesheet, the row element, every chip element and every write
+    // - is created LAZILY on the first state that declares the ABI, so a scene that does not send
+    // chips (which is all six of the other missions) never reaches any of it: no element, no
+    // attribute, no stylesheet, no byte of the strip's DOM different from what it has always been.
+    const HUD_CHIP_ABI = 1;
+    let chipRow = null;
+    let chipEls = [];
+    function ensureChips(n) {
+      if (chipRow && chipEls.length >= n) return;
+      if (!document.getElementById('v-shud-chips-css')) {
+        const cst = document.createElement('style');
+        cst.id = 'v-shud-chips-css';
+        cst.textContent = `
+.v-sh-chips{flex:1 0 100%;justify-content:flex-start;gap:10px;flex-wrap:wrap;row-gap:2px;}
+.v-sh-chip{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap;
+  font-family:'Geist Mono',ui-monospace,monospace;font-size:9.5px;letter-spacing:0.04em;
+  color:var(--tx-mute);border:1px solid var(--line);border-radius:60px;padding:1px 8px 1px 6px;}
+.v-sh-cdot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;background:var(--tx-mute);
+  box-shadow:0 0 0 1px rgba(0,0,0,0.5);}
+/* live = the subject's own log observed it; hold = the drawn pose is stale and disclosed;
+   hidden = never observed in this interval, so nothing is drawn for it on the stage. */
+.v-sh-chip[data-tone="live"] .v-sh-cdot{background:var(--sage);}
+.v-sh-chip[data-tone="hold"] .v-sh-cdot{background:var(--warn);}
+.v-sh-chip[data-tone="hidden"] .v-sh-cdot{background:transparent;box-shadow:inset 0 0 0 1px var(--tx-mute);}
+.v-sh-chip[data-tone="hold"],.v-sh-chip[data-tone="hidden"]{border-color:var(--line-hi);}
+.v-sh-chip b{font-weight:500;color:var(--tx);}
+.v-sh-chip em{font-style:normal;}
+.v-sh-chip u{text-decoration:none;color:var(--warn);}
+.v-sh-chip u:empty{display:none;}
+@media (max-width:1000px){.v-sh-chips{gap:8px;}}
+@media (max-width:700px){.v-sh-chips{gap:6px;}.v-sh-chip{font-size:8.5px;padding:1px 6px 1px 5px;}}`;
+        document.head.appendChild(cst);
+      }
+      if (!chipRow) {
+        chipRow = document.createElement('span');
+        chipRow.className = 'v-sh-row v-sh-chips';
+        hudEl.appendChild(chipRow);
+      }
+      while (chipEls.length < n) {
+        const chip = document.createElement('span');
+        chip.className = 'v-sh-chip';
+        chip.innerHTML = '<i class="v-sh-cdot"></i><b></b><em></em><u></u>';
+        chipRow.appendChild(chip);
+        chipEls.push({
+          el: chip,
+          name: chip.querySelector('b'),
+          state: chip.querySelector('em'),
+          note: chip.querySelector('u'),
+        });
+      }
+    }
+
     let shVer = null;
     updateSceneHud = (t) => {
       const s = sceneApi.hudState(t);
@@ -537,6 +604,25 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       });
       shNote.textContent = notes.join(' · ');
       shMax.textContent = maxes.length ? `max ${maxes.join('/')}` : '';
+
+      // Chips last, and only for a scene that declared the ABI. A scene whose chips vanish between
+      // states (a mission that stops sending them) empties the row rather than leaving three stale
+      // subjects on the strip.
+      if (s.chipsAbi === HUD_CHIP_ABI && Array.isArray(s.chips) && s.chips.length) {
+        ensureChips(s.chips.length);
+        for (let i = 0; i < chipEls.length; i++) {
+          const c = s.chips[i];
+          const slot = chipEls[i];
+          slot.el.hidden = !c;
+          if (!c) continue;
+          slot.el.dataset.tone = c.tone || 'live';
+          slot.name.textContent = c.name || '';
+          slot.state.textContent = c.state || '';
+          slot.note.textContent = c.note || '';
+        }
+      } else if (chipRow) {
+        for (let i = 0; i < chipEls.length; i++) chipEls[i].el.hidden = true;
+      }
     };
   }
 

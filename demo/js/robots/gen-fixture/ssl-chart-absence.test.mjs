@@ -34,6 +34,7 @@ const server = await serve();
 const browser = await launchChromium(pw);
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await ctx.newPage();
+await page.addInitScript(() => localStorage.setItem('alloy_demo_role', 'engineer'));
 
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
@@ -57,7 +58,9 @@ async function settleGuide() {
     const ready = await waitFor(
       page,
       () => {
-        const g = window.__demo && window.__demo.guide;
+        const d = window.__demo;
+        const g = d && d.guide;
+        if (d && d.chat && d.chat.streaming) d.chat.finishStreaming();
         return !!g && (g.settled || document.querySelectorAll('.guide-cta:not(:disabled)').length > 0);
       },
       30000,
@@ -85,6 +88,7 @@ async function openChart(robot, channel, fields) {
     ([ch, fs]) => {
       const d = window.__demo;
       d.timeline.pause();
+      d.timeline.seek(0);
       d.setChartOpen(true);
       if (ch) d.chart.setChannel(ch, fs);
       d.chart.resetZoom();
@@ -101,7 +105,7 @@ async function openChart(robot, channel, fields) {
  *
  * The trace is the only thing drawn in `#2f78ff`... except the playhead, which is the same blue by
  * design, so the timeline is parked at 0 and the columns probed are nowhere near it. Sampling a
- * 3 px band absorbs the antialiasing on a 1.5 px line.
+ * 21 px band absorbs line occlusion, antialiasing and fractional x placement without reaching a gap edge.
  */
 const traceAt = (t) =>
   page.evaluate((tt) => {
@@ -114,7 +118,7 @@ const traceAt = (t) =>
     const p = d.chart.plot;
     const [d0, d1] = d.chart.domain;
     const x = Math.round((p.left + ((tt - d0) / (d1 - d0)) * (p.right - p.left)) * dpr);
-    const img = c.getImageData(Math.max(0, x - 1), 0, 3, canvas.height).data;
+    const img = c.getImageData(Math.max(0, x - 10), 0, 21, canvas.height).data;
     let hits = 0;
     for (let i = 0; i < img.length; i += 4) {
       // #2f78ff with a tolerance for the line's antialiased edges
@@ -122,6 +126,17 @@ const traceAt = (t) =>
     }
     return hits;
   }, t);
+
+async function waitForTrace(t, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let hits = 0;
+  do {
+    hits = await traceAt(t);
+    if (hits > 0) return hits;
+    await page.waitForTimeout(40);
+  } while (Date.now() < deadline);
+  return hits;
+}
 
 /** Hover the canvas at time `t` and read back what the readout says. */
 const readoutAt = (t) =>
@@ -190,11 +205,11 @@ H.section('the masked field');
 
 H.section('the trace breaks across the absence');
 {
-  // 10 s: tracked, full confidence. 60 s and 100 s: long after the last tracked sample at 29.70 s.
-  const live = await traceAt(10);
+  // 25 s: tracked below the plot ceiling. 60 s and 100 s: long after the last tracked sample at 29.70 s.
+  const live = await waitForTrace(25);
   const gap60 = await traceAt(60);
   const gap100 = await traceAt(100);
-  H.ok(live > 0, `the trace is drawn where the tracker had the robot (${live} px at 10 s)`);
+  H.ok(live > 0, `the trace is drawn where the tracker had the robot (${live} px at 25 s)`);
   H.ok(gap60 === 0, `and NOT drawn inside the absence (${gap60} px at 60 s)`);
   H.ok(gap100 === 0, `still nothing at the end of the window (${gap100} px at 100 s)`);
 }
@@ -304,16 +319,16 @@ H.section('a masked readout never interpolates across the boundary');
 
 H.section('sbr: the mask contract is inert');
 {
-  H.ok(await openChart('sbr', null, null), 'the sbr demo mounts with its default channel charted');
+  H.ok(await openChart('sbr', '/balance', ['pitch']), 'the sbr demo mounts with its pitch charted');
   const declared = await page.evaluate(() =>
     window.__demo.def.channels.flatMap((c) => c.fields.filter((f) => f.mask).map((f) => `${c.path}.${f.key}`)),
   );
   H.ok(declared.length === 0, `no sbr field declares a mask (${declared.join(', ') || 'none'})`);
 
   const duration = await page.evaluate(() => window.__demo.def.duration);
-  const probes = [0.2, 0.4, 0.6, 0.8].map((k) => Number((duration * k).toFixed(2)));
+  const probes = [0.25, 0.4, 0.6, 0.8].map((k) => Number((duration * k).toFixed(2)));
   const drawn = [];
-  for (const t of probes) drawn.push(await traceAt(t));
+  for (const t of probes) drawn.push(await waitForTrace(t));
   H.ok(
     drawn.every((n) => n > 0),
     `its trace is continuous across the mission (${probes.map((t, i) => `${t}s:${drawn[i]}px`).join(' ')})`,

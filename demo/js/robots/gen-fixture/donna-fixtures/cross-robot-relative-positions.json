@@ -1,0 +1,84 @@
+{
+  "samples": [
+    {
+      "label": "goal-5-0",
+      "t": 36.27,
+      "relativeToDonna": {
+        "jack": {
+          "dxM": -6.224498,
+          "dyM": 0.032266,
+          "dHeadingRad": -0.268627
+        },
+        "rory": {
+          "dxM": -7.4156,
+          "dyM": -3.5398,
+          "dHeadingRad": 1.3119
+        }
+      }
+    },
+    {
+      "label": "penalty-start",
+      "t": 86.85,
+      "relativeToDonna": {
+        "jack": {
+          "dxM": -2.019188,
+          "dyM": -0.145958,
+          "dHeadingRad": 2.528779
+        },
+        "rory": {
+          "dxM": -2.987448,
+          "dyM": -0.136392,
+          "dHeadingRad": 2.868534
+        }
+      }
+    },
+    {
+      "label": "penalty-end-first-fix",
+      "t": 124.1,
+      "relativeToDonna": {
+        "jack": {
+          "dxM": 2.242699,
+          "dyM": -0.243998,
+          "dHeadingRad": 1.952932
+        },
+        "rory": {
+          "dxM": -0.988026,
+          "dyM": -0.090609,
+          "dHeadingRad": 1.933127
+        }
+      }
+    },
+    {
+      "label": "hero",
+      "t": 187.6,
+      "relativeToDonna": {
+        "jack": {
+          "dxM": 3.365627,
+          "dyM": 0.755104,
+          "dHeadingRad": 0.57636
+        },
+        "rory": {
+          "dxM": -1.776192,
+          "dyM": -0.570786,
+          "dHeadingRad": 1.094663
+        }
+      }
+    },
+    {
+      "label": "goal-6-0",
+      "t": 229.6,
+      "relativeToDonna": {
+        "jack": {
+          "dxM": 4.211991,
+          "dyM": 0.472477,
+          "dHeadingRad": -0.514931
+        },
+        "rory": {
+          "dxM": -3.160368,
+          "dyM": -0.571662,
+          "dHeadingRad": -0.229654
+        }
+      }
+    }
+  ]
+}

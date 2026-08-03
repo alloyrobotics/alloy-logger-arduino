@@ -1,93 +1,76 @@
 {
-  "covariance": {
-    "credibleModeMaxTrace": 1384.5802726587206,
-    "rawSampleCount": 14446,
-    "rawSentinelCount": 808,
-    "samplesInValley": 0,
-    "sentinelModeMinTrace": 2000.004,
-    "traceMax": 1500.0
-  },
-  "maskCounts": {
-    "fieldPresent": 1384,
-    "highCovariance": 78,
-    "poseInvalid": 371,
-    "sentinel": 67,
-    "stale": 2,
-    "summaryPresent": 1013,
-    "ticks": 1531
-  },
-  "maxNearestAgeSec": 0.4,
-  "maxPoseAgeSec": 0.4,
-  "poseCovarianceTraceThreshold": 0.9823,
   "segments": [
     {
-      "bracketingRawSamples": [
-        {
-          "covarianceTrace": 5.603038110608897,
-          "t": 0.522623,
-          "xM": -2.278007370640296,
-          "yM": 0.8378818479439403,
-          "zM": 0.0689570010150755
-        }
-      ],
-      "gridEnd": 0.0,
-      "gridSamples": [
-        {
-          "ballSeen": false,
-          "fieldSeen": false,
-          "fresh": false,
-          "t": 0.0
-        },
-        {
-          "ballSeen": false,
-          "fieldSeen": true,
-          "fresh": true,
-          "t": 0.2
-        }
-      ],
-      "gridStart": 0.0,
-      "mask": false
+      "startT": 0.0,
+      "endT": 0.0,
+      "reason": "pose-unavailable",
+      "samples": 1
     },
     {
-      "bracketingRawSamples": [
-        {
-          "covarianceTrace": 1.1340837126911198,
-          "t": 102.39015,
-          "xM": -1.2430093972813843,
-          "yM": -2.4664414432016724,
-          "zM": 0.08141342219882308
-        },
-        {
-          "covarianceTrace": 1.1380837126911199,
-          "t": 103.224126,
-          "xM": -1.2430093972813843,
-          "yM": -2.4664414432016724,
-          "zM": 0.08141342219882308
-        }
-      ],
-      "gridEnd": 102.8,
-      "gridSamples": [
-        {
-          "ballSeen": true,
-          "fieldSeen": true,
-          "fresh": true,
-          "t": 102.6
-        },
-        {
-          "ballSeen": false,
-          "fieldSeen": false,
-          "fresh": false,
-          "t": 102.8
-        },
-        {
-          "ballSeen": true,
-          "fieldSeen": true,
-          "fresh": true,
-          "t": 103.0
-        }
-      ],
-      "gridStart": 102.8,
-      "mask": false
+      "startT": 3.0,
+      "endT": 3.2,
+      "reason": "sentinel",
+      "samples": 2
+    },
+    {
+      "startT": 4.0,
+      "endT": 4.2,
+      "reason": "sentinel",
+      "samples": 2
+    },
+    {
+      "startT": 6.4,
+      "endT": 7.2,
+      "reason": "sentinel",
+      "samples": 5
+    },
+    {
+      "startT": 19.4,
+      "endT": 20.6,
+      "reason": "sentinel",
+      "samples": 7
+    },
+    {
+      "startT": 33.2,
+      "endT": 33.4,
+      "reason": "sentinel",
+      "samples": 2
+    },
+    {
+      "startT": 34.2,
+      "endT": 34.2,
+      "reason": "sentinel",
+      "samples": 1
+    },
+    {
+      "startT": 87.0,
+      "endT": 124.4,
+      "reason": "pose-unavailable",
+      "samples": 188
+    },
+    {
+      "startT": 126.2,
+      "endT": 127.4,
+      "reason": "pose-unavailable",
+      "samples": 7
+    },
+    {
+      "startT": 129.4,
+      "endT": 129.4,
+      "reason": "pose-unavailable",
+      "samples": 1
+    },
+    {
+      "startT": 224.0,
+      "endT": 243.4,
+      "reason": "high-covariance",
+      "samples": 98
+    },
+    {
+      "startT": 250.0,
+      "endT": 250.0,
+      "reason": "pose-unavailable",
+      "samples": 1
     }
   ]
 }

@@ -143,8 +143,8 @@ demo/
                  battle-data.js,preview-data.js}    claims.mjs: the claim ledger (cited constants vs data claims)
                                                    battle-data.js: GENERATED offline, ~63 KB gz, lazily imported
                                                    preview-data.js: GENERATED, 6 s slice for the picker
-  js/robots/donna/{data.js,scene.js,script.js,    ← robot agent 7 (Donna's real recorded humanoid match log)
-                 decode.js,claims.mjs,              decode.js: donna-int16-delta-v1 decoder
+  js/robots/donna/{data.js,scene.js,script.js,    ← robot agent 7 (donna-team-v2: one real match, three onboard logs, Donna's telemetry + three-body replay)
+                 decode.js,claims.mjs,              decode.js: donna-team-v2 decoder (multi-robot + mesh columns)
                  donna-data.js,preview-data.js}     claims.mjs: data-bound claim ledger
                                                    donna-data.js: GENERATED offline, lazily imported
                                                    preview-data.js: GENERATED, 6 s slice for the picker
@@ -472,7 +472,7 @@ tracker label ("tracker source A") and the phrase "a professional SSL match, 202
 identifying manifest lives only in the private clients/alloy scratch repo. Every planted fault is described
 publicly as a counterfactual overlay unrelated to any real team's hardware, and that disclosure
 appears in five places: the picker copy ("Five synthetic missions, one real match replay with
-planted fault overlays, and one real recorded robot log"), the card tagline ("A real match replay,
+planted fault overlays, and one real match replayed from three robots' onboard logs"), the card tagline ("A real match replay,
 three planted faults, one real
 tracking loss"), the brief's `context.provenance` line, the scripted first answer (which bypasses
 the facts pack entirely) and the facts pack's own preamble. A sixth is not copy at all:
@@ -660,53 +660,82 @@ Two core extensions exist BECAUSE of this mission, both backward-compatible and 
    Defs without the hook emit nothing. A def may also pin `factsSeriesPoints` (clamped 40..80) as its
    facts-table budget knob; battle pins 40.
 
-### donna (robot agent 7) - a real recorded humanoid match log
+### donna (robot agent 7) - a real three-robot humanoid match replay
 
-Donna is a Wolfgang-OP humanoid from the Hamburg Bit-Bots. The mission replays a 306 s onboard ROS 2
-rosbag2 recording from a RoboCup German Open 2025 match. The browser does not simulate the telemetry.
-An offline extractor converted the recorded MCAP into `donna-int16-delta-v1`, and the static demo
-replays that derived payload.
+The mission replays the closing 250 s of one RoboCup German Open 2025 match from three independently
+recorded onboard ROS 2 rosbag2 logs. Donna, Jack and Rory are the Hamburg Bit-Bots' Wolfgang-OP
+humanoids. An offline extractor aligns Jack and Rory to Donna's clock and emits `donna-team-v2`; the
+browser decodes and replays the resulting static payload rather than simulating the telemetry.
 
-Recorded onboard by Donna, the Hamburg Bit-Bots' Wolfgang-OP humanoid, during a RoboCup German Open
-2025 match. The team publishes their game logs openly; this replay is derived from that recording
-with thanks.
+The frozen attribution is verbatim: "Three Wolfgang-OP humanoids of the Hamburg Bit-Bots (Universitat
+Hamburg), recorded at RoboCup German Open 2025."
 
-The role split is mandatory on both provenance surfaces. `context.provenance` reaches the analyst
-facts pack and names the recorded-on-robot, converted-offline, replayed-here path plus the composite
-transform tokens used by derived and resampled series. `chatProvenance` is client-rendered above the
-composer and says the mission was not captured by the AlloyLogger library. Neither surface may claim
-that an AlloyLogger production pipeline ingested or produced the replay.
+The role split is mandatory and verbatim on both provenance surfaces: "recorded independently on each
+robot by its onboard rosbag2 logger; converted offline for this demo; replayed here."
+`context.provenance` reaches the analyst facts pack. `chatProvenance` is client-rendered above the
+composer. Both explicitly say the AlloyLogger Arduino library did not capture the logs and no
+AlloyLogger production pipeline ingested or produced the replay.
 
-Six channels carry recorded or derived telemetry: torso IMU, commanded and achieved motion, servo
-diagnostics, game-controller state, filtered ball estimates and onboard compute. Every field is
-`REAL_MCAP` with one composite transform token such as `DERIVED_MAGNITUDE+RESAMPLED_20HZ`,
-`DERIVED_DIAG_AGGREGATE+RESAMPLED_2HZ` or `DERIVED_RATIO+RESAMPLED_2HZ`. Those labels prevent a
-derived value from being presented as raw wire data.
+Donna remains the telemetry protagonist. Her six chart groups are torso IMU, command and motion
+odometry, servo diagnostics, game-controller state, filtered ball estimates and onboard compute.
+Jack and Rory do not contribute chart series. They contribute their own scene tracks, presence,
+robot-state events, penalty state and speech rows. Every chart field is `REAL_MCAP` with a composite
+transform token such as `DERIVED_MAGNITUDE+RESAMPLED_NEAREST_20HZ`,
+`DERIVED_DIAGNOSTIC_AGGREGATE+ZOH_2HZ` or `DERIVED_RATIO+RESAMPLED_NEAREST_2HZ`, so a derived value is
+never presented as raw wire data. The analyst smoke matrix separately probes this chart-source split.
 
-The storyline is Donna's six falls and six recoveries. Every recovery completes within 6.5 s under
-the event definitions frozen in the claim ledger. Servo undervoltage statuses and a 12.1 V minimum
-cluster late in the recording and correlate with the later falls, but the log does not diagnose
-battery sag as their cause. Servo clamp warnings, the added-time goal, final whistle and Donna's
-recorded `/speak` lines remain typed event-ledger rows.
+The storyline is team-shaped. Jack falls 3 times and returns to WALKING after each fall while Donna
+and Rory record 0 falls in the window. During the last recovery Jack's recorded `/speak` row says,
+"This was definitely a foul." Rory re-enters from penalty at 28.072 s and gets her first live pose at
+28.269 s. Donna serves 37.071 s off-field. Goals move the score to 5-0 with 162 s on the clock and to
+6-0 at -31 s in added time; FINISHED arrives at -33 s. All teammate times are post-alignment on
+Donna's clock and every quoted number is claim-ledger bound.
 
-The scene is a simplified Wolfgang-OP replay driven by recorded joint states, torso attitude and a
-segmented field pose. The pose holds across localization resets and fall windows rather than
-interpolating through them. `heroTime()` is 240.3 s, an upright walking moment with the ball visible,
-and lies inside the preview window.
+The scene uses the official Wolfgang-OP CAD body for all three robots. Each body is driven by that
+robot's recorded joints, yaw-free torso tilt and segmented field pose. Presence is disclosed rather
+than filled in. Jack's root pose is held at its last observed field position during each fall outage
+while his recorded joints, torso attitude and state continue. Donna is hidden during her off-field
+penalty outage. Rory is hidden before her first map fix. Consumers interpolate only within one live
+pose segment and never across an unobserved gap.
 
-Donna owns `eventsSection {title: 'Match and onboard events', preamble: ...}` because its ledger mixes
-match state with internal diagnostics. Its heavy `donna-data.js` stays behind the lazy import. The
-eager mission graph includes `preview-data.js` and excludes `donna-data.js`, with a 57,344 B gzip
-ceiling. The full module remains at or below 250 KB gzip, Node decode stays below 80 ms, and the Donna
-facts pack stays at or below 31,500 characters.
+The ball marker comes only from Donna's validated filtered estimate in the `map` frame. An exact
+`(0,0,0)` pose, covariance trace at least 1500, stale nearest sample or clear `ballSeen` mask hides the
+marker. Numeric zero in a masked ball column is filler, not an observation. `heroTime()` is 187.6 s,
+strictly inside the healthy interval with all three robots present, live, upright and unpenalized,
+Donna WALKING, the ball seen, and no fall within 5 s.
 
-**Disclosure surfaces.** The global footer says exactly: "Five synthetic missions, one real match
-replay with planted fault overlays, and one real recorded robot log. Runs entirely in your browser."
-Donna's verbatim attribution surfaces are `context.provenance`, the facts pack and the leak gate's
-`APPROVED_OCCURRENCES`. `loadingCopy` and `chatProvenance` deliberately carry abbreviated honest
-copy, while the persistent header/device line credits "Hamburg Bit-Bots". Scripted answers carry the
-role split without repeating the attribution. The global headline is "Replay a mission." so the site
-does not call the five synthetic missions real.
+**FORMAT-V2 Amendment 2, eager preview.** Inspection of `core/preview.js`, `core/context.js` and the
+Donna scene proves the picker and connect hero each pose the scene exactly once at 187.6 s. The picker
+has no telemetry chart. `preview-data.js` therefore carries only one hero sample for each uniform
+scene series, the two native localization samples bracketing the hero for each pose, one LIVE presence
+row per robot, the Donna ball-field sample, and the CAD-derived proxy mesh. It removes all six chart
+series, event rows, robot-state series, HUD series and non-runtime audit metadata. The unchanged scene
+binder receives inert state and HUD adapters from `decode.js`; neither eager surface calls
+`hudState()`.
+
+The proxy retains all 52 part names, 133 visual placements and 21 driven buckets, with 645 vertices
+and 1,072 unique triangles. It renders DoubleSide because the audited proxy has boundary and
+non-manifold edges; the full mesh remains FrontSide. The full `donna-data.js` is byte-unchanged at
+410,559 B gzip and remains behind the dynamic import. The current staged eager graph measures 57,265 B
+gzip. Gzip output varies slightly across zlib and Node versions, so its frozen ceiling is the measured
+graph plus 10 percent rounded up, 62,992 B; the margin absorbs that variation while keeping provenance
+re-derivable, under the 86,016 B hard cap. The three-robot CAD justification and commit `1a0357a`, which
+raised SSL and battle ceilings for the guided aha-flow copy, are cited in `donna-eager-size.test.mjs`.
+Donna's facts pack measures 29,074 characters under the 31,500-character ceiling. The synchronous
+decode gate runs three independently warmed batches of 50 decodes and requires the minimum batch p95
+below 80 ms, removing transient machine load while a genuinely slow decode still fails all batches.
+
+`eventsSection` is "Aligned match and onboard events" and identifies Donna-clock rows from Donna,
+Jack and Rory. `context.oldwaySample` is re-derived from the new window: 40 consecutive Donna chart
+lines around the first goal, including the 4-0 to 5-0 transition. Its authored row-times-field volume
+is 28,515 values.
+
+**Presence and licensing.** The redistributed CAD comes from `bit-bots/wolfgang_robot` under MIT.
+The repository root `THIRD_PARTY_NOTICES` carries the upstream notice verbatim, and
+`test:donna-notice` asserts its presence. The global footer says exactly: "Five synthetic missions,
+one real match replay with planted fault overlays, and one real match replayed from three robots'
+onboard logs. Runs entirely in your browser." The card title is "Donna, Jack & Rory", the fallback
+icon carries three figures, and the global headline remains "Replay a mission."
 
 ## Chat scripts (per robot, 5-6 entries)
 
@@ -745,9 +774,10 @@ Fallback: "I have this mission's data loaded. Try one of these:" + suggested chi
 | 3h | `test:donna-script` | Donna matchers, evidence, attribution, role split, phrase bindings and banned product claims |
 | 3i | `test:donna-facts-size` | Donna facts pack stays within 31,500 characters |
 | 3j | `test:donna-deident` | generic identifiers plus private-manifest needles, fail-closed by default |
+| 3k | `test:donna-notice` | redistributed Wolfgang-OP CAD retains its upstream MIT notice |
 | 4 | `test:ssl-eager-size` | the eager payload budget, so the match module stays lazy |
 | 4a | `test:battle-eager-size` | the same budget for the battle round: 46,900 B gz, the generated round module stays lazy |
-| 4b | `test:donna-eager-size` | Donna's eager graph stays within 57,344 B gz and keeps the full module lazy |
+| 4b | `test:donna-eager-size` | Donna's trimmed eager graph stays within 62,992 B gz and the 86,016 B hard cap |
 | 5 | `test:ssl-leak:self` | the leak gate's own adversarial fixtures |
 | 6 | `test:ssl-leak` | de-identification over the DEPLOYMENT SURFACE |
 | 7 | `test:ssl-leak:repo` | de-identification over EVERY TRACKED FILE (`git ls-files`) |

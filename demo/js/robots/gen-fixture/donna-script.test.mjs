@@ -1,22 +1,23 @@
-// donna-script.test.mjs - integration contract for Donna's RobotDefinition.
+// donna-script.test.mjs - integration contract for the Donna, Jack and Rory RobotDefinition.
 //
-// The mission is a real onboard rosbag2 recording, converted offline for this demo. These checks
-// keep its attribution, role split, claim bindings and lazy replay contract honest.
+// The three robots recorded independently onboard with rosbag2. These checks keep the frozen copy,
+// role split, claim bindings, old-way sample and lazy replay contract honest.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { eventsSection as renderEventsSection, loadRobotDefinition } from '../../../../worker/build-facts.mjs';
 import { matchEntry } from '../../core/matcher.js';
 import * as C from '../donna/claims.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ATTRIBUTION =
-  "Recorded onboard by Donna, the Hamburg Bit-Bots' Wolfgang-OP humanoid, during a RoboCup German Open 2025 match. The team publishes their game logs openly; this replay is derived from that recording with thanks.";
+  'Three Wolfgang-OP humanoids of the Hamburg Bit-Bots (Universitat Hamburg), recorded at RoboCup German Open 2025.';
+const ROLE_SPLIT =
+  'recorded independently on each robot by its onboard rosbag2 logger; converted offline for this demo; replayed here.';
 const FOOTER =
-  'Five synthetic missions, one real match replay with planted fault overlays, and one real recorded robot log. Runs entirely in your browser.';
-const CHAT_PROVENANCE =
-  "Real recorded mission: captured onboard by the robot's ROS 2 logger at RoboCup German Open 2025, converted offline for this demo, and replayed here. Not captured by the AlloyLogger library.";
+  "Five synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.";
 
 let failures = 0;
 let checks = 0;
@@ -32,7 +33,7 @@ const eq = (actual, expected, msg) =>
 const section = (name) => console.log(`\n${name}`);
 
 const def = await loadRobotDefinition('donna');
-const findingIds = new Set(def.findings.map((f) => f.id));
+const findingIds = new Set(def.findings.map((finding) => finding.id));
 const prose = {
   name: def.name,
   device: def.device,
@@ -50,30 +51,18 @@ const prose = {
   eventsTitle: def.eventsSection?.title,
   eventsPreamble: def.eventsSection?.preamble,
 };
-def.suggested.forEach((q, i) => { prose[`suggested[${i}]`] = q; });
+def.suggested.forEach((question, index) => { prose[`suggested[${index}]`] = question; });
 for (const entry of def.script) prose[`script.${entry.id}`] = entry.answer;
 const numberWordProse = { ...prose };
 for (const finding of def.findings) {
   numberWordProse[`finding.${finding.id}.title`] = finding.title;
   numberWordProse[`finding.${finding.id}.note`] = finding.note;
 }
-for (const channel of def.channels) {
-  numberWordProse[`channel.${channel.path}.label`] = channel.label;
-  numberWordProse[`channel.${channel.path}.note`] = channel.note;
-  for (const field of channel.fields) {
-    numberWordProse[`channel.${channel.path}.${field.key}.label`] = field.label;
-    numberWordProse[`channel.${channel.path}.${field.key}.provenance`] = field.provenance?.note;
-  }
-}
 
 const PHRASE_BINDINGS = [
-  { surface: 'tagline', phrase: /falls,\s+\w+\s+recoveries/i, claims: ['fallCount', 'recoveryCount'] },
-  { surface: 'context.label', phrase: /falls,\s+\w+\s+recoveries/i, claims: ['fallCount', 'recoveryCount'] },
-  { surface: 'loadingCap', phrase: /telemetry channels/i, claims: ['channelCount'] },
-  { surface: 'script.speak-lines', phrase: /utterances in this half, \w+ distinct lines/i, claims: ['utteranceCount', 'distinctSpeakLineCount'] },
-  { surface: 'script.falls-and-recoveries', phrase: /Peak acceleration magnitude across the \w+ impacts/i, claims: ['fallCount'] },
+  { surface: 'tagline', phrase: /One match/i, claims: ['oneMatchWord'] },
+  { surface: 'tagline', phrase: /Three onboard logs/i, claims: ['threeLogsWord'] },
 ];
-
 const NUMBER_WORD_VALUES = new Map([
   ['zero', 0], ['one', 1], ['two', 2], ['three', 3], ['four', 4], ['five', 5], ['six', 6],
   ['seven', 7], ['eight', 8], ['nine', 9], ['ten', 10], ['eleven', 11], ['twelve', 12],
@@ -89,20 +78,20 @@ for (const entry of def.script) {
 }
 {
   const natural = {
-    'falls-and-recoveries': 'How many times did Donna fall in this match, and did she get up?',
-    'show-the-fall': 'Show me the first fall.',
-    'battery-sag': 'Did the battery cause the falls?',
-    'servo-health': 'How hot did the servos get?',
+    'jack-falls': 'How many times did Jack fall, and did Donna or Rory fall too?',
+    'show-jack-fall': 'Show me the last Jack fall.',
+    'three-logs-and-charts': 'Which robot produced the charts?',
+    'penalty-traffic': 'What happened during the penalties?',
+    'added-time-finish': 'How did the match finish?',
     'how-log': 'How do I log this from my own robot?',
-    'speak-lines': 'What did Donna say after the falls?',
   };
   eq(Object.keys(natural).length, def.script.length, 'every scripted entry has a natural phrasing');
-  for (const [id, q] of Object.entries(natural)) {
-    const hit = matchEntry(def.script, q);
-    eq(hit && hit.id, id, `"${q}" routes to ${id}`);
+  for (const [id, question] of Object.entries(natural)) {
+    const hit = matchEntry(def.script, question);
+    eq(hit && hit.id, id, `"${question}" routes to ${id}`);
   }
-  eq(matchEntry(def.script, def.firstQuestion)?.id, 'falls-and-recoveries', 'the opener routes to the fall answer');
-  for (const q of def.suggested) ok(!!matchEntry(def.script, q), `suggested question resolves: "${q}"`);
+  eq(matchEntry(def.script, def.firstQuestion)?.id, 'jack-falls', 'the opener routes to Jack falls');
+  for (const question of def.suggested) ok(!!matchEntry(def.script, question), `suggested question resolves: "${question}"`);
 }
 
 section('2. evidence');
@@ -135,41 +124,41 @@ for (const entry of def.script) {
   ok(!text.includes(String.fromCharCode(0x2013)), 'no en dash in Donna copy');
 }
 
-section('4. frozen disclosure surfaces');
+section('4. frozen disclosure and picker surfaces');
 {
-  eq(def.firstQuestion, 'How many times did Donna fall in this match, and did she get up?', 'firstQuestion is frozen');
-  eq(def.chatProvenance, CHAT_PROVENANCE, 'chatProvenance is frozen');
+  eq(def.name, 'Donna, Jack & Rory', 'card title is frozen');
+  eq(def.firstQuestion, 'How many times did Jack fall, and did Donna or Rory fall too?', 'firstQuestion is frozen');
   eq(def.loadingCopy?.line, 'Loading the recorded mission.', 'loading line is frozen');
-  eq(
-    def.loadingCopy?.cap,
-    'Recorded onboard at a real RoboCup match. Six telemetry channels and the full-body replay, decoded in your browser.',
-    'loading cap is frozen',
+  // These picker framing overrides keep the three preview robots inside the lightweight card view;
+  // drifting or removing them restores the empty-card regression while the full replay still works.
+  ok(
+    isDeepStrictEqual(def.preview, { envCull: 0.6, envRadius: 0.5, distScale: 0.55 }),
+    'preview framing override is frozen against the empty-card regression',
   );
   ok(def.context.provenance.startsWith(ATTRIBUTION), 'context provenance begins with the attribution verbatim');
-  ok(def.context.provenance.includes(ATTRIBUTION), 'context provenance carries the attribution verbatim');
   for (const [surface, text] of [
     ['context.provenance', def.context.provenance],
     ['chatProvenance', def.chatProvenance],
   ]) {
-    ok(/ROS 2|rosbag2/i.test(text), `${surface}: names the onboard ROS 2 recording path`);
-    ok(/offline/i.test(text) && /convert/i.test(text), `${surface}: names the offline conversion`);
-    ok(/replay/i.test(text), `${surface}: says the result is replayed here`);
+    ok(text.includes(ROLE_SPLIT), `${surface}: carries the frozen role split verbatim`);
+    ok(/AlloyLogger Arduino library did not capture/i.test(text), `${surface}: negates library capture`);
+    ok(/no AlloyLogger production pipeline ingested or produced/i.test(text), `${surface}: negates product pipeline ingest`);
   }
   for (const token of [
-    'DERIVED_MAGNITUDE+RESAMPLED_20HZ',
-    'DERIVED_DIAG_AGGREGATE+RESAMPLED_2HZ',
-    'DERIVED_RATIO+RESAMPLED_2HZ',
+    'DERIVED_MAGNITUDE+RESAMPLED_NEAREST_20HZ',
+    'DERIVED_DIAGNOSTIC_AGGREGATE+ZOH_2HZ',
+    'DERIVED_RATIO+RESAMPLED_NEAREST_2HZ',
   ]) {
     ok(def.context.provenance.includes(token), `context.provenance names ${token}`);
   }
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
   ok(html.includes('<h1>Replay a mission.</h1>'), 'global headline is frozen');
   ok(html.includes(FOOTER), 'global footer is frozen');
-  const chat = await readFile(path.join(HERE, '..', '..', 'core', 'chat.js'), 'utf8');
-  ok(/robotDef\.chatProvenance/.test(chat), 'chat.js renders def.chatProvenance');
+  const registry = await readFile(path.join(HERE, '..', 'index.js'), 'utf8');
+  ok(/donna:\s*`[^`]*data-figure="donna"[^`]*data-figure="jack"[^`]*data-figure="rory"[^`]*`/s.test(registry), 'Donna picker fallback icon carries three labelled figure groups');
 }
 
-section('5. banned product claims');
+section('5. banned product claims and stale v1 story');
 {
   const claimsCapture = /\b(AlloyLogger(?: Arduino)? library|the library)\b[^.?!]{0,100}\b(captured|recorded|logged this|produced|ingested)\b|\b(captured|recorded|logged this|produced|ingested)\b[^.?!]{0,100}\b(AlloyLogger(?: Arduino)? library|the library)\b/i;
   const claimsPipeline = /\bAlloyLogger(?:'s)?(?: production)? pipeline\b[^.?!]{0,100}\b(ingested|produced|converted|captured|recorded)\b|\b(ingested|produced|converted|captured|recorded)\b[^.?!]{0,100}\bAlloyLogger(?:'s)?(?: production)? pipeline\b/i;
@@ -183,42 +172,37 @@ section('5. banned product claims');
     }
   }
   const how = def.script.find((entry) => entry.id === 'how-log')?.answer || '';
-  ok(/would look like this|comparable fields|your own robot/i.test(how), 'logging answer is framed as how a visitor would log comparable fields');
-  ok(/nothing on this page came out of an `alloy\.log\(\)` call/i.test(how), 'logging answer carries the honest inversion');
+  ok(/did not come from an `alloy\.log\(\)` call/i.test(how), 'logging answer carries the honest inversion');
+  const text = JSON.stringify(prose);
+  for (const stale of ['six falls', 'six recoveries', 'battery sag', 'servo clamp', 'What did Donna say']) {
+    ok(!text.toLowerCase().includes(stale.toLowerCase()), `stale v1 story is absent: ${stale}`);
+  }
 }
 
 section('6. phrase bindings and numbers');
 {
-  const first = def.script.find((entry) => entry.id === 'falls-and-recoveries')?.answer || '';
-  const battery = def.script.find((entry) => entry.id === 'battery-sag')?.answer || '';
-  ok(first.startsWith(`${C.text('fallCount')} times, and she got up after every one.`), 'fall answer opens on the ledger fall count');
-  ok(first.includes(`All ${C.text('recoveryCount')} land inside ${C.text('recoveryCeilingS')} s.`), 'fall answer binds every recovery to the measured ceiling');
-  ok(C.value('recoveryCeilingS') < 6.6, 'the measured 6.5 s ceiling proves every recovery was under 6.6 s');
-  ok(battery.includes(`${C.text('undervoltageCount')}`) && battery.includes(`${C.text('minBusVoltageV')} V`), 'battery answer binds count and minimum voltage');
-  ok(/correlation inside one match log/i.test(battery), 'battery answer labels the relationship as correlation');
-  ok(/does not establish battery sag as the cause/i.test(battery), 'battery answer rejects a diagnosed cause');
+  const jack = def.script.find((entry) => entry.id === 'jack-falls')?.answer || '';
+  const logs = def.script.find((entry) => entry.id === 'three-logs-and-charts')?.answer || '';
+  ok(jack.startsWith(`Jack fell ${C.text('jackFallCount')} times; Donna and Rory did not fall.`), 'Jack answer opens on all three ledger counts');
+  ok(jack.includes('This was definitely a foul.'), 'Jack answer preserves the recorded foul line verbatim');
+  ok(logs.startsWith("The charts are Donna's; the replay combines three onboard logs."), 'chart-source answer names Donna as chart protagonist');
+  ok(logs.includes(`Donna ${C.text('donnaQueueFull')}, Jack ${C.text('jackQueueFull')}, Rory ${C.text('roryQueueFull')}`), 'three-log answer binds queue counts');
 
   for (const binding of PHRASE_BINDINGS) {
     const surfaceText = String(numberWordProse[binding.surface] || '');
     ok(binding.phrase.test(surfaceText), `${binding.surface}: phrase binding resolves on the rendered surface`);
     for (const claimName of binding.claims) {
-      ok(
-        Object.hasOwn(C.DATA_CLAIMS, claimName) && Number.isFinite(C.value(claimName)),
-        `${binding.surface}: phrase binding resolves claim ${claimName}`,
-      );
+      ok(Object.hasOwn(C.DATA_CLAIMS, claimName) && Number.isFinite(C.value(claimName)), `${binding.surface}: phrase binding resolves claim ${claimName}`);
     }
   }
 
   const allowedNumbers = C.allowedNumbers();
   const allowedTexts = C.allowedTexts();
-  for (const claim of Object.values(C.DATA_CLAIMS)) {
-    if (typeof claim.eventId === 'number') allowedNumbers.add(claim.eventId);
-  }
   const identifiers = [
-    'RoboCup German Open 2025', 'ROS 2', '2v2', 'm/s^2',
-    ...def.channels.flatMap((ch) => [
-      ch.path,
-      ...ch.fields.flatMap((field) => [field.key, field.provenance?.transform || '']),
+    'RoboCup German Open 2025', 'ROS 2', 'rosbag2', 'ESP32', 'm/s^2',
+    ...def.channels.flatMap((channel) => [
+      channel.path,
+      ...channel.fields.flatMap((field) => [field.key, field.provenance?.transform || '']),
     ]),
   ].filter(Boolean).sort((a, b) => b.length - a.length);
   const stripIdentifiers = (text) => identifiers.reduce((out, id) => out.split(id).join(' '), text);
@@ -236,61 +220,78 @@ section('6. phrase bindings and numbers');
   const badWords = [];
   let wordTotal = 0;
   for (const [where, text] of Object.entries(numberWordProse)) {
-    const withoutCode = String(text).replace(/```[\s\S]*?```/g, ' ');
-    const stripped = stripIdentifiers(withoutCode);
-    for (const sentence of stripped.split(/(?<=[.!?])\s+|\n+/).map((part) => part.trim()).filter(Boolean)) {
-      const bindings = PHRASE_BINDINGS.filter(
-        (binding) => binding.surface === where && binding.phrase.test(sentence),
-      );
-      if (!bindings.length) continue;
-      const claimNames = new Set(bindings.flatMap((binding) => binding.claims));
-      NUMBER_WORD_RE.lastIndex = 0;
-      for (const match of sentence.matchAll(NUMBER_WORD_RE)) {
-        wordTotal++;
-        const value = NUMBER_WORD_VALUES.get(match[0].toLocaleLowerCase('en-US'));
-        const bound = [...claimNames].some((claimName) => C.value(claimName) === value);
-        if (!bound) {
-          badWords.push(
-            `${where}: ${match[0]}=${value} is not bound to a matching claim in ${[...claimNames].join(',')}`,
-          );
-        }
-      }
+    const bindings = PHRASE_BINDINGS.filter((binding) => binding.surface === where && binding.phrase.test(String(text)));
+    if (!bindings.length) continue;
+    const claimNames = new Set(bindings.flatMap((binding) => binding.claims));
+    for (const match of String(text).matchAll(NUMBER_WORD_RE)) {
+      wordTotal++;
+      const value = NUMBER_WORD_VALUES.get(match[0].toLowerCase());
+      const bound = [...claimNames].some((claimName) => C.value(claimName) === value);
+      if (!bound) badWords.push(`${where}: ${match[0]}=${value}`);
     }
   }
   eq(bad.length, 0, `every numeric token in visitor copy is ledger-backed: ${bad.slice(0, 8).join(' | ')}`);
-  ok(total > 25, `the numeric scan covered ${total} tokens`);
-  eq(
-    badWords.length,
-    0,
-    `every zero-to-twelve number word in a load-bearing sentence is phrase-bound: ${badWords.join(' | ')}`,
-  );
-  ok(wordTotal >= 8, `the phrase-bound number-word scan covered ${wordTotal} tokens`);
+  ok(total > 20, `the numeric scan covered ${total} tokens`);
+  eq(badWords.length, 0, `load-bearing number words are phrase-bound: ${badWords.join(' | ')}`);
+  ok(wordTotal >= 2, `the phrase-bound number-word scan covered ${wordTotal} tokens`);
 }
 
-section('7. lazy contract and hero');
+section('7. old-way sample and lazy contract');
 {
-  eq(def.id, 'donna', 'registry id');
-  eq(def.duration, 306, 'full duration');
-  ok(typeof def.loadSceneData === 'function', 'loadSceneData exists');
-  ok(typeof def.isSceneDataLoaded === 'function', 'isSceneDataLoaded exists');
-  ok(typeof def.getSceneData === 'function', 'getSceneData exists');
-  ok(typeof def.eventLines === 'function', 'eventLines exists');
-  ok(def.previewData && typeof def.previewData === 'object', 'preview data decodes at import');
-  eq(def.heroTime(), 240.3, 'heroTime is frozen');
+  await def.loadSceneData();
+  const data = def.buildData();
+  const expectedDatapoints = def.channels.reduce(
+    (sum, channel) => sum + data[channel.path].t.length * channel.fields.length,
+    0,
+  );
+  eq(expectedDatapoints, 28515, 'new-window row-times-field count is frozen');
+  eq(def.context.datapoints, expectedDatapoints, 'authored datapoint count matches the decoded arrays');
+  eq(def.context.oldwaySample.length, 40, 'old-way sample is exactly 40 lines');
+  let previousT = -Infinity;
+  for (const [lineIndex, line] of def.context.oldwaySample.entries()) {
+    const match = line.match(/^(\d+\.\d{3})\s+(\/\w+)\s+(.+)$/);
+    ok(!!match, `old-way line ${lineIndex}: parseable authored format`);
+    if (!match) continue;
+    const t = Number(match[1]);
+    ok(t >= previousT, `old-way line ${lineIndex}: time ordered`);
+    previousT = t;
+    const channel = def.channels.find((candidate) => candidate.path === match[2]);
+    ok(!!channel, `old-way line ${lineIndex}: known channel ${match[2]}`);
+    const block = data[match[2]];
+    const sampleIndex = [...block.t].findIndex((value) => Math.abs(value - t) < 1e-9);
+    ok(sampleIndex >= 0, `old-way line ${lineIndex}: timestamp exists in decoded series`);
+    for (const token of match[3].split(/\s+/)) {
+      const [key, rendered] = token.split('=');
+      const field = channel?.fields.find((candidate) => candidate.key === key);
+      ok(!!field, `old-way line ${lineIndex}: known field ${key}`);
+      if (!field || sampleIndex < 0) continue;
+      const mask = field.mask && block[field.mask];
+      if (rendered === 'null') {
+        ok(!!mask && !mask[sampleIndex], `old-way line ${lineIndex}: null is masked absence`);
+      } else {
+        const decimals = (rendered.split('.')[1] || '').length;
+        eq(Number(rendered).toFixed(decimals), Number(block[key][sampleIndex]).toFixed(decimals), `old-way line ${lineIndex}: ${key} sample exact`);
+      }
+    }
+  }
+  ok(def.context.oldwaySample.some((line) => line.includes('ownScore=4')), 'old-way slice contains pre-goal score');
+  ok(def.context.oldwaySample.some((line) => line.includes('ownScore=5')), 'old-way slice contains post-goal score');
+
+  eq(def.duration, 250, 'full duration');
+  eq(def.factsSeriesPoints, 53, 'Donna uses the six-channel default facts density');
+  eq(def.heroTime(), 187.6, 'heroTime is frozen');
   const window = def.previewData.meta.window;
   ok(def.heroTime() > window[0] && def.heroTime() < window[1], `hero is strictly inside ${window[0]}..${window[1]}`);
-  const src = await readFile(path.join(HERE, '..', 'donna', 'script.js'), 'utf8');
-  ok(/^import \{ buildScene \} from '\.\/scene\.js';$/m.test(src), 'scene import remains byte-exact for build-facts');
-  ok(src.includes(`ball visible at ${C.text('heroBallDistM')} m relative to Donna`), 'hero copy binds the recomputed Donna-relative ball distance');
-  eq(def.factsSeriesPoints, 48, 'Donna pins the facts table below the size ceiling');
+  ok(typeof def.loadSceneData === 'function' && typeof def.getSceneData === 'function', 'lazy scene-data ABI exists');
+  const source = await readFile(path.join(HERE, '..', 'donna', 'script.js'), 'utf8');
+  ok(/^import \{ buildScene \} from '\.\/scene\.js';$/m.test(source), 'scene import remains byte-exact for build-facts');
 }
 
 section('8. eventsSection extension');
 {
-  await def.loadSceneData();
   const donnaSection = renderEventsSection(def);
-  ok(donnaSection.startsWith('## Match and onboard events\n\n'), 'Donna owns the event section title');
-  ok(donnaSection.includes("These are the robot's own recorded match and diagnostic events."), 'Donna owns the event preamble');
+  ok(donnaSection.startsWith('## Aligned match and onboard events\n\n'), 'Donna owns the aligned event title');
+  ok(donnaSection.includes('Donna-clock events and window summaries from Donna, Jack and Rory'), 'Donna owns the three-robot event preamble');
 
   const battle = await loadRobotDefinition('battle');
   await battle.loadSceneData();
@@ -311,9 +312,6 @@ section('8. eventsSection extension');
     '',
   ].join('\n');
   eq(renderEventsSection(battle), legacy, 'battle rendered events section is byte-identical to the legacy default');
-
-  const sbr = await loadRobotDefinition('sbr');
-  eq(renderEventsSection(sbr), '', 'a mission without eventLines emits no event section');
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`);

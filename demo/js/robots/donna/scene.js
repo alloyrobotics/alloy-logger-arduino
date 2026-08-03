@@ -1,44 +1,66 @@
-// donna/scene.js - Donna's recorded RoboCup German Open 2025 match, replayed on a KidSize field.
+// donna/scene.js - Donna, Jack and Rory's recorded RoboCup German Open 2025 match, replayed on a
+// KidSize field with the official Wolfgang-OP CAD body.
 //
-// Nothing here is simulated. The joint columns are RECORDED `/joint_states.position` measurements,
-// not commands, and the display interpolates between their 25 Hz samples. Torso attitude and field
-// position come from recorded tracks. Ball position comes from the filtered recorded estimate, with
-// rendered z clamped to the ball radius for ground contact. Torso HEIGHT is derived because the log
-// records the robot's joints, attitude and (x, y, yaw) on the field but never how far its hips are off
-// the ground. See groundOffset() for exactly how that number is produced and why.
+// Nothing here is simulated. Each robot's joint columns are RECORDED `/joint_states.position`
+// measurements from ITS OWN onboard rosbag2 log, not commands, and the display interpolates between
+// their samples (Donna 25 Hz, Jack and Rory 10 Hz). Torso attitude and field position come from
+// recorded tracks. The ball comes from Donna's filtered recorded estimate in the map frame, with
+// rendered z clamped to the ball radius for ground contact. Torso HEIGHT is derived because the
+// logs record joints, attitude and (x, y, yaw) on the field but never how far the hips are off the
+// ground. See groundOffset() for exactly how that number is produced and why.
 //
 // FRAMES. The payload is in the ROS FLU field frame the Bit-Bots localization publishes: x along
 // the 9 m touch line, y left, z up, origin at the centre mark, yaw CCW about +z from +x. three.js
-// is y-up, so the scene ROOT carries the frozen frame map from CONTRACTS.md (g)
+// is y-up, so the scene ROOT carries the frozen frame map from FORMAT-V2.md (META.scene.frameMap)
 //
 //     three.x = -ros.y
 //     three.y =  ros.z
 //     three.z = -ros.x
 //
-// and EVERYTHING inside the root - field, goals, lines, ball, rig - is authored in ROS metres.
+// and EVERYTHING inside the root - field, goals, lines, ball, bodies - is authored in ROS metres.
 // The map is a proper rotation (det = +1), so winding and normals survive it untouched. Putting it
 // on the root rather than open-coding it at every call site is what makes the frame contract one
-// testable object instead of forty conversions.
+// testable object instead of a hundred and thirty-three conversions.
 //
-// YAW IS APPLIED EXACTLY ONCE (R1-M3). Heading comes from the segmented localization pose and
-// nothing else. The torso quaternion in the payload is the yaw-FREE tilt quaternion the extractor
-// froze: it rotates world vertical onto the torso up axis and its z component is identically zero.
-// So the robot group carries `rotation.z = poseYaw` and the torso node carries the tilt, and no
-// yaw is ever applied a second time. One honest consequence, recorded here rather than hidden:
-// the tilt quaternion's lean AXIS was expressed in the IMU's own drifting yaw reference, which the
+// YAW IS APPLIED EXACTLY ONCE. Heading comes from the segmented localization pose and nothing else.
+// The torso quaternion in the payload is the yaw-FREE tilt quaternion the extractor froze: it
+// rotates world vertical onto the torso up axis and its z component is identically zero. So each
+// robot group carries `rotation.z = poseYaw` and its torso node carries the tilt, and no yaw is
+// ever applied a second time. One honest consequence, recorded here rather than hidden: the tilt
+// quaternion's lean AXIS was expressed in that robot's own drifting IMU yaw reference, which the
 // extractor discarded with the yaw, so the lean is rendered inside the localization heading. The
-// lean ANGLE - the quantity the known-pose fixture binds and the pose test asserts - is exact; the
-// lean AZIMUTH is only as good as the two yaw references agreeing.
+// lean ANGLE is exact; the lean AZIMUTH is only as good as the two yaw references agreeing.
 //
-// The scene is built LAZILY, on the first update() that arrives with a decoded payload, because
-// donna-data.js is ~650 KB and buildScene() runs on the picker's boot path before any data exists.
-// update() is where the data contract lives (`viewer.js` passes `def.getSceneData?.() ?? def.data`),
-// so that is where the field gets built - off the 6 s preview slice on the picker card, off the
-// full 306 s match on the demo screen, through one code path either way.
+// THE BODY IS THE REAL CAD. The heavy module ships the MIT-licensed Wolfgang-OP visual meshes
+// (bit-bots/wolfgang_robot @ b067cae, (c) Hamburg Bit-Bots) as quantized columns: 52 unique meshes,
+// 4,361 vertices, 8,922 unique triangles, placed by a frozen 133-row visual-instance manifest whose
+// every placement is PRE-COMPOSED at build time into one of 21 driven buckets - the 20 revolute
+// joints plus ROOT/TORSO, which carries the 24 placements that hang off `torso` and has no revolute
+// ancestor. The runtime contract is exactly
 //
-// NO `document`. Every surface in this file is untextured geometry or a DataTexture, so buildScene()
-// runs unchanged inside Node against the vendored three, which is what lets the pose and HUD
-// contracts be proven by plain `node` tests instead of by a browser nobody installs.
+//     instanceWorld = boneWorld[drivenAncestor] * preComposedInstanceTransform
+//
+// and this file honours it by BAKING each pre-composed transform into the vertices of a merged
+// per-(bucket, material class) geometry, then parenting that merged geometry to the bucket's node.
+// Baking a rigid transform into vertices and parenting to the same node is the same world matrix
+// with 42 draw calls per body instead of 133, and the merge is built ONCE and shared by all three
+// robots, which is what keeps three CAD humanoids at ~63k triangles and ~145 draw calls.
+//
+// PRESENCE IS THREE CLASSES, NOT A BOOLEAN (FORMAT-V2 "Presence tracks"). A robot is only drawn
+// where its own log actually observed it:
+//   * LIVE      - normal replay, pose interpolated inside the live segment.
+//   * HOLD      - Jack's three fall outages. His localization drops while his joints, IMU and
+//                 robot_state keep streaming, so the recorded fall ANIMATION plays at his last
+//                 observed root pose. The HUD chip says "fallen" for exactly that interval.
+//   * HIDDEN    - Donna's penalty (86.85-124.10, physically off the field) and Rory before her
+//                 first map fix (0-28.27). There is no observed pose, so there is no body on the
+//                 pitch, and the HUD chip says why. An unobserved pose is never rendered as
+//                 observed and is never back-filled.
+//
+// NO `document`. Every surface in this file is untextured geometry or a DataTexture - the name tags
+// included, which is why they are a hand-rolled 5x8 bitmap font rather than a canvas - so
+// buildScene() runs unchanged inside Node against the vendored three, which is what lets the pose
+// and HUD contracts be proven by plain `node` tests instead of by a browser nobody installs.
 //
 // PER-FRAME ALLOCATION IS ZERO. Every vector, quaternion, matrix and string buffer below is
 // allocated once at build time; update() and hudState() only write into them.
@@ -101,13 +123,15 @@ const Z_TURF = 0.0;
 const Z_LINE = 0.0016;
 const Z_MARK = 0.0026;
 const Z_CONTACT = 0.0034;
-const Z_HALO = 0.0042;
+const Z_RING = 0.0040;
+const Z_HALO = 0.0048;
 
 // ---------------------------------------------------------------------------- rig
 //
 // FROZEN. The 20 revolute joints of the Wolfgang-OP, transcribed from `rig/RIG.json`, which the
 // Phase 0 extractor pulled out of the MIT-licensed `bit-bots/wolfgang_robot` URDF (c) Hamburg
-// Bit-Bots. Names match `/joint_states.name` exactly and in the payload's own column order.
+// Bit-Bots. Names match `/joint_states.name` exactly, they are the payload's own column order, and
+// they are ALSO the 20 driven-bucket names in the visual-instance manifest.
 //
 // Each row is [name, parent link, child link, origin xyz, origin rpy, axis]. `rpy` is the URDF
 // convention R = Rz(yaw) Ry(pitch) Rx(roll), which is three's Euler order 'ZYX'. Exporter float
@@ -115,11 +139,14 @@ const Z_HALO = 0.0042;
 // carries meaning is verbatim, including the ones that are NOT mirror-symmetric between the left
 // and right sides - LKnee's 2.87979 rad origin yaw, RKnee's -0.261799 rad origin pitch and
 // RAnkleRoll's 1.54833 rad origin pitch are all really in the URDF, and a "tidied" symmetric rig
-// would bend this robot's legs differently from the machine that recorded the log.
+// would bend these robots' legs differently from the machines that recorded the logs.
+//
+// The three robots are the same hardware and the Phase 0 scans confirmed identical joint-name
+// inventories across all three logs, so ONE rig table drives all three bodies.
 //
 // `limit` is carried for reference only and is NEVER used to clamp: the hardware interface's own
-// limit config differs from the URDF's (CONTRACTS.md (g)), and a replay that silently clamped a
-// recorded angle would be showing a pose the robot did not hold.
+// limit config differs from the URDF's, and a replay that silently clamped a recorded angle would
+// be showing a pose the machine did not hold.
 const RIG = [
   ['HeadPan', 'torso', 'neck', [-0.0095, 0, 0.2345], [-3.14159, 0, 0], [0, 0, -1], [-2.3562, 2.3562]],
   ['HeadTilt', 'neck', 'head', [0.036, 0.0235, -0.024], [-1.5708, 0, 0], [0, 0, 1], [-1.5708, 1.0472]],
@@ -147,17 +174,19 @@ const RIG = [
   ['RAnkleRoll', 'r_ankle', 'r_foot', [-0.0691, 0, -0.026], [0, 1.54833, -1.5708], [0, -1, 0], [-1.0472, 1.0472]],
 ];
 
+const ROOT_BUCKET = 'ROOT/TORSO';
+
 // ---------------------------------------------------------------------------- palette
 //
-// House 3D style, same construction as the other two replay scenes: matte dark shell, one accent,
-// emissive used only where a real machine emits. The accent is the alloy blue the picker card
-// carries. The two HUD dot colours are the strip's own two-team affordance and NOT a recorded team
-// marking - this log exports no team colour for either side, which is also why the second team is
-// called "Opponent" rather than named.
-const SHELL = 0x2b2f34;
-const SHELL_DARK = 0x1a1c20;
-const ACCENT = 0x2f78ff;
-const FOOT = 0x141619;
+// House 3D style: the CAD's own two material classes (a light printed/milled shell and the dark
+// Dynamixel and camera bodies), one accent per robot, emissive used only where a real machine
+// emits. The accents are three of the page's own brand tokens - Donna keeps the alloy blue the v1
+// scene and the picker card carry, Jack takes the sage and Rory the amber - and they are a REPLAY
+// affordance, not a recorded team marking: these three robots are all on the same team and the log
+// exports no per-robot colour. The two HUD dot colours are the strip's own two-team affordance for
+// the same reason, which is also why the second team is called "Opponent" rather than named.
+const SHELL_LIGHT = 0xc9ced5;
+const SHELL_DARK = 0x1c1f24;
 const TURF = 0x22402b;
 const TURF_BORDER = 0x1a3222;
 const LINE = 0xeef1f3;
@@ -166,36 +195,50 @@ const NET = 0x94a6b8;
 const BALL_LIGHT = 0xe9ecee;
 const BALL_DARK = 0x22262b;
 const ALERT = 0xff5f57;
+const TAG_INK = 0xf2f5f8;
+const TAG_BACK = [14, 16, 20, 176]; // rgba bytes behind the glyphs
+
+/**
+ * The three recorded robots, in the payload's own robot order. `accent` is the identity colour;
+ * `label` is the approved factual robot name and is what the floating tag and the HUD chip say.
+ */
+const ROBOTS = [
+  { key: 'donna', label: 'Donna', accent: 0x2f78ff },
+  { key: 'jack', label: 'Jack', accent: 0xd3eeb6 },
+  { key: 'rory', label: 'Rory', accent: 0xf5a623 },
+];
 
 // ---------------------------------------------------------------------------- camera
 //
 // The shot is framed for the follow spring, not for a static wide: the viewer translates camera
 // and target together, so this OFFSET is the follow framing and "reset view" recentres it on
-// whatever the robot is doing. |offset| = 3.4 m at 23 deg elevation, swung 28 deg off the field's
-// long axis - near enough to end-on that a goal stays behind the play, far enough off it that the
-// pitch reads as a plane. The subject here is ONE 0.8 m machine rather than a fleet, so the offset
-// is half what the other two replay scenes use: at this distance Donna is about a third of the
-// frame's height, the ball at her feet is a ball rather than a pixel, and roughly 5 m of pitch
-// still sits around her. Expressed in THREE coordinates, because the viewer applies it to its own
-// camera and never sees the ROS frame.
+// whatever the three robots are doing. |offset| = 7.4 m at 33 deg elevation, sitting off the -y
+// touch line so the 9 m long axis runs across the frame - which is the axis the three robots
+// actually spread along (5.1 m apart at the hero moment) - and swung slightly toward the -x goal so
+// the shot is not dead side-on. That is more than twice v1's 3.4 m, and it has to be: v1 framed ONE
+// 0.8 m machine, and a follow shot tight enough for one robot cannot hold three. At the hero moment
+// the outermost two land at +-0.7 of frame width on a phone panel and +-0.4 on the desktop one, so
+// nobody is on the edge in either. Expressed in THREE coordinates, because the viewer applies it to
+// its own camera and never sees the ROS frame.
 export const cameraHome = {
-  position: { x: 1.47, y: 1.68, z: 2.76 },
-  target: { x: 0, y: 0.35, z: 0 },
+  position: { x: 6.2, y: 4.4, z: 0.8 },
+  target: { x: 0, y: 0.4, z: 0 },
 };
 
-// The frozen healthy-hero moment: WALKING window, upright, ball visible, 2-0 buildup (CONTRACTS (h)).
-const HERO_T = 240.3;
+// The frozen healthy-hero moment (CONTRACTS-V2 "Hero"): all three present with a live pose,
+// upright, un-penalized, Donna WALKING with the ball seen, no fall within 5 s for anyone.
+const HERO_T = 187.6;
 
 // ---------------------------------------------------------------------------- event ids
 //
-// The scene reads exactly four rows out of the frozen 20-row ledger, by id, and derives the game
-// state machine from them. It reads them by ID and not by index so a re-ordered ledger fails loudly
-// instead of rendering the wrong instant.
-const EV_PENALTY = 'penalty-reentry';
-const EV_GOAL = 'goal-2-0';
-const EV_BLIP = 'ready-set-blip';
-const EV_WHISTLE = 'final-whistle';
-const GOAL_NOTE_S = 3.0; // how long the goal callout stands on the strip after its recorded instant
+// The scene reads exactly two rows out of the frozen 20-row ledger, by id, for the goal callout.
+// It reads them by ID and not by index so a re-ordered ledger fails loudly instead of rendering the
+// wrong instant. Everything else on the strip - the clock, both scores, the match state and every
+// per-robot chip - comes off the recorded HUD and presence tracks, so the ledger is a caption
+// source here and never a state machine.
+const EV_GOAL_1 = 'goal-5-0';
+const EV_GOAL_2 = 'goal-6-0';
+const GOAL_NOTE_S = 3.0; // how long a goal callout stands on the strip after its recorded instant
 
 // ---------------------------------------------------------------------------- small helpers
 
@@ -213,9 +256,9 @@ function lerpRad(a, b, s) {
  * m:ss from the recorded `secondsRemaining`.
  *
  * The RoboCup game controller counts a half DOWN and then keeps going, so this match's clock is
- * negative for its last 76 s while secondary_state remains STATE_NORMAL. Negative renders as added
- * time with a leading "+", which is what the referee display shows and what the copy quotes
- * ("+0:49" at the goal).
+ * negative for its last stretch while secondary_state remains STATE_NORMAL. Negative renders as
+ * added time with a leading "+", which is what the referee display shows and what the copy quotes
+ * (the 6-0 goal lands at clock -31, the whistle at -33).
  */
 function clockText(sec) {
   if (!Number.isFinite(sec)) return '--:--';
@@ -226,11 +269,25 @@ function clockText(sec) {
   return `${neg ? '+' : ''}${mm}:${ss < 10 ? '0' : ''}${ss}`;
 }
 
+/** Last index of an ascending array at or before `v`. -1 when `v` precedes all of them. */
+function holdIndex(arr, v) {
+  if (!arr.length || v < arr[0]) return -1;
+  let lo = 0;
+  let hi = arr.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (arr[mid] <= v) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 // ---------------------------------------------------------------------------- geometry batcher
 
 /**
- * Accumulates untextured triangles so the pitch, the goals and each rig link land in a handful of
- * draw calls. All coordinates are ROS FLU metres; the root's frame map does the rest.
+ * Accumulates untextured triangles so the pitch and the goals land in a handful of draw calls. All
+ * coordinates are ROS FLU metres; the root's frame map does the rest. The bodies do NOT come
+ * through here - they are the decoded CAD - so this is field furniture only.
  *
  * Normals are COMPUTED from the winding rather than passed in. One code path, and a face that was
  * wound the wrong way would render as a hole rather than as a lie about which way it faces.
@@ -274,46 +331,6 @@ Batch.prototype.box = function box(cx, cy, cz, sx, sy, sz) {
   this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]);
   this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]);
   this.quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]);
-};
-/**
- * An oriented box from A to B with a `w` x `h` cross-section: the link shell the rig is drawn with.
- * Its own frame is built off the segment direction, so a limb whose child joint sits off-axis (and
- * on this robot several do) gets a shell that actually spans the two joint origins.
- */
-Batch.prototype.bone = function bone(ax, ay, az, bx, by, bz, w, h) {
-  let dx = bx - ax;
-  let dy = by - ay;
-  let dz = bz - az;
-  const len = Math.hypot(dx, dy, dz);
-  if (!(len > 1e-6)) return;
-  dx /= len;
-  dy /= len;
-  dz /= len;
-  // any up that is not parallel to the bone; the shell is a box, so its roll about its own axis
-  // is a styling choice and not a rig quantity
-  const upx = Math.abs(dz) > 0.9 ? 1 : 0;
-  const upz = Math.abs(dz) > 0.9 ? 0 : 1;
-  let rx = dy * upz - dz * 0;
-  let ry = dz * upx - dx * upz;
-  let rz = dx * 0 - dy * upx;
-  const rl = Math.hypot(rx, ry, rz) || 1;
-  rx /= rl;
-  ry /= rl;
-  rz /= rl;
-  const ux = ry * dz - rz * dy;
-  const uy = rz * dx - rx * dz;
-  const uz = rx * dy - ry * dx;
-  const c = (s, u, v) => [
-    ax + dx * s * len + rx * (u * w) / 2 + ux * (v * h) / 2,
-    ay + dy * s * len + ry * (u * w) / 2 + uy * (v * h) / 2,
-    az + dz * s * len + rz * (u * w) / 2 + uz * (v * h) / 2,
-  ];
-  this.quad(c(0, 1, -1), c(1, 1, -1), c(1, 1, 1), c(0, 1, 1));
-  this.quad(c(0, -1, 1), c(1, -1, 1), c(1, -1, -1), c(0, -1, -1));
-  this.quad(c(0, 1, 1), c(1, 1, 1), c(1, -1, 1), c(0, -1, 1));
-  this.quad(c(0, 1, -1), c(0, -1, -1), c(1, -1, -1), c(1, 1, -1));
-  this.quad(c(1, 1, -1), c(1, -1, -1), c(1, -1, 1), c(1, 1, 1));
-  this.quad(c(0, 1, -1), c(0, 1, 1), c(0, -1, 1), c(0, -1, -1));
 };
 /** A flat rectangle on the pitch, ROS metres. */
 Batch.prototype.rect = function rect(x0, y0, x1, y1, z) {
@@ -374,13 +391,13 @@ Batch.prototype.build = function build(THREE) {
   return g;
 };
 
-/**
- * A soft round contact patch as a DataTexture.
- *
- * The other two replay scenes paint theirs into a canvas, which needs `document`; this one is
- * generated as raw bytes so the whole scene stays constructible in Node and the pose and HUD
- * contracts can be proven without a browser.
- */
+// ---------------------------------------------------------------------------- textures
+//
+// Everything below writes raw bytes into a DataTexture. The other replay scenes paint theirs into a
+// canvas, which needs `document`; these are generated as bytes so the whole scene stays
+// constructible in Node and the pose and HUD contracts can be proven without a browser.
+
+/** A soft round contact patch. */
 function contactTexture(THREE) {
   const N = 64;
   const data = new Uint8Array(N * N * 4);
@@ -400,6 +417,93 @@ function contactTexture(THREE) {
   }
   const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
   tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * A 5x8 bitmap font, covering EXACTLY the ten glyphs the three approved robot names need
+ * (Donna / Jack / Rory) and nothing else. A face rather than a canvas because this file may not
+ * touch `document`; ten glyphs rather than an alphabet because the names are frozen copy and a
+ * font nobody can read at 30 px of tag is a bigger problem than a font that only spells three
+ * words. An unknown character renders as blank space rather than as tofu.
+ */
+const GLYPHS = {
+  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.', '.....'],
+  J: ['..###', '....#', '....#', '....#', '#...#', '#...#', '.###.', '.....'],
+  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#', '.....'],
+  a: ['.....', '.....', '.###.', '....#', '.####', '#...#', '.####', '.....'],
+  c: ['.....', '.....', '.###.', '#...#', '#....', '#...#', '.###.', '.....'],
+  k: ['#....', '#....', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '.....'],
+  n: ['.....', '.....', '#.##.', '##..#', '#...#', '#...#', '#...#', '.....'],
+  o: ['.....', '.....', '.###.', '#...#', '#...#', '#...#', '.###.', '.....'],
+  r: ['.....', '.....', '#.##.', '##..#', '#....', '#....', '#....', '.....'],
+  y: ['.....', '.....', '#...#', '#...#', '#...#', '.####', '....#', '.###.'],
+};
+const GLYPH_W = 5;
+const GLYPH_H = 8;
+
+/**
+ * A robot's floating name tag as a DataTexture: dark plate, the name in the accent-lit ink, one
+ * accent rule under it. Drawn at 4x so the sprite has resolution to spare at follow-cam distance
+ * without any of the glyph edges being resampled into mush.
+ */
+function nameTagTexture(THREE, name, accent) {
+  const PX = 4;
+  const PAD = 6;
+  const advance = GLYPH_W + 1;
+  const inkW = name.length * advance - 1;
+  const W = PAD * 2 + inkW * PX;
+  const H = PAD * 2 + (GLYPH_H + 2) * PX;
+  const data = new Uint8Array(W * H * 4);
+  const ar = (accent >> 16) & 255;
+  const ag = (accent >> 8) & 255;
+  const ab = accent & 255;
+  const ir = (TAG_INK >> 16) & 255;
+  const ig = (TAG_INK >> 8) & 255;
+  const ib = TAG_INK & 255;
+
+  // plate
+  for (let i = 0; i < W * H; i++) {
+    data[i * 4] = TAG_BACK[0];
+    data[i * 4 + 1] = TAG_BACK[1];
+    data[i * 4 + 2] = TAG_BACK[2];
+    data[i * 4 + 3] = TAG_BACK[3];
+  }
+  const put = (x, y, r, g, b, a) => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    // the DataTexture's first row is the BOTTOM row in three's UV convention, so the glyph rows
+    // (which are authored top-down like every bitmap font) are flipped on the way in
+    const k = ((H - 1 - y) * W + x) * 4;
+    data[k] = r;
+    data[k + 1] = g;
+    data[k + 2] = b;
+    data[k + 3] = a;
+  };
+  const block = (px, py, r, g, b, a) => {
+    for (let dy = 0; dy < PX; dy++) for (let dx = 0; dx < PX; dx++) put(PAD + px * PX + dx, PAD + py * PX + dy, r, g, b, a);
+  };
+
+  for (let c = 0; c < name.length; c++) {
+    const rows = GLYPHS[name[c]];
+    if (!rows) continue;
+    for (let y = 0; y < GLYPH_H; y++) {
+      const row = rows[y];
+      for (let x = 0; x < GLYPH_W; x++) {
+        if (row[x] !== '#') continue;
+        block(c * advance + x, y, ir, ig, ib, 255);
+      }
+    }
+  }
+  // the accent rule, one glyph-pixel tall, the full width of the ink
+  for (let x = 0; x < inkW; x++) block(x, GLYPH_H + 1, ar, ag, ab, 255);
+
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  tex.userData = { aspect: W / H };
   return tex;
 }
 
@@ -432,25 +536,19 @@ export function buildScene(THREE, mount) {
 
   let D = null; // decoded payload, once update() hands it over
   let built = false;
-  let links = null; // link name -> { node, vis }
-  let joints = null; // rig rows resolved to nodes + precomputed fixed rotations
-  let robot = null; // the group carrying field pose + heading
-  let torso = null; // the link node carrying the tilt quaternion
+  // Whether the CAD baked into the merged geometry came from the DECIMATED PROXY lane. Set once at
+  // build() from the payload the geometry was built from, and never re-read afterwards, because a
+  // later rebind swaps tracks and not vertices. See proxyMesh().
+  let isProxy = false;
+  let bots = null; // per-robot runtime, in ROBOTS order
   let ball = null;
-  let contact = null;
-  let halo = null;
-  let shellMats = [];
-  let accentMats = [];
-  let contactPts = []; // { node, x, y, z } in each link's own frame
-  let evPenaltyT = 0;
-  let evGoal = null;
-  let evBlip = null;
-  let evWhistleT = Infinity;
+  let evGoal1 = null;
+  let evGoal2 = null;
   let highlight = null;
   let lastFocus = null;
   let heroFocus = null;
   // The follow spring asks cameraFocus() for the SAME instant update() was just handed, so the
-  // posed moment is cached: without it every frame poses the whole rig twice.
+  // posed moment is cached: without it every frame poses three whole rigs twice.
   let lastPoseT = null;
 
   const vTmp = new THREE.Vector3();
@@ -460,15 +558,21 @@ export function buildScene(THREE, mount) {
   const focusOut = { x: 0, y: 0.3, z: 0 };
   const heroOut = { x: 0, y: 0.3, z: 0 };
 
-  // Allocated ONCE and mutated in place, exactly like battle's: the strip renders off `version`,
-  // and a producer that reallocated would churn a fresh object sixty times a second for a string
-  // that changes a handful of times a minute.
+  // Allocated ONCE and mutated in place: the strip renders off `version`, and a producer that
+  // reallocated would churn a fresh object sixty times a second for a string that changes a handful
+  // of times a minute.
   //
   // Note which keys are ABSENT. RoboCup Humanoid League has no yellow/red card state, no timeout
-  // count and no max-bots limit on this wire, and the log exports no goalkeeper id and no half
+  // count and no max-bots limit on this wire, and the logs export no goalkeeper id and no half
   // indicator, so `cards`, `reds`, `timeouts`, `maxBots`, `keeper` and `stage` are not on these
   // objects at all. viewer.js renders nothing for a field a team does not define, and sending any
   // of them as a zero would put a truthful-looking "0Y" on the strip for a league with no cards.
+  //
+  // `chips` and `chipsAbi` are the ADDITION this mission makes to the strip contract. Three robots
+  // replayed from three logs need three presence statements, and one shared `state.note` cannot
+  // carry them. `chipsAbi` is the version guard viewer.js checks: a viewer that does not know the
+  // chip ABI ignores both keys and renders exactly the strip it always did, and the six missions
+  // that do not send chips never reach the chip code path at all.
   const hud = {
     version: '',
     clock: '--:--',
@@ -477,6 +581,8 @@ export function buildScene(THREE, mount) {
       { name: 'Bit-Bots', color: 'blue', score: 0 },
       { name: 'Opponent', color: 'red', score: 0 },
     ],
+    chipsAbi: 1,
+    chips: ROBOTS.map((r) => ({ name: r.label, state: '', note: '', tone: 'live' })),
   };
 
   // ------------------------------------------------------------------ the field
@@ -593,38 +699,194 @@ export function buildScene(THREE, mount) {
     root.add(netMesh);
   }
 
-  // ------------------------------------------------------------------ the rig
+  // ------------------------------------------------------------------ the CAD body
 
   /**
-   * Build the kinematic tree, then hang the shell off it.
+   * Does this payload's mesh come from the decimated PROXY lane rather than the full CAD?
    *
-   * Every link gets TWO nodes: the joint node, whose transform is exactly the URDF's fixed origin
-   * composed with the rotation about the joint axis, and a `vis` child whose rotation is the
-   * INVERSE of that link's zero-pose rotation relative to the torso. The vis frame is therefore
-   * torso-aligned at the zero pose, which means every shell dimension below can be authored in
-   * plain ROS body axes (x forward, y left, z up) with no per-link frame algebra, while the
-   * kinematics stay bit-for-bit the URDF's. Get the rig wrong and the pose test fails; get the
-   * shell wrong and it only looks wrong.
+   * It matters for exactly one reason, and the reason is a measured defect rather than a taste
+   * call: the proxy decimation leaves 14 of the 52 parts with boundary or non-manifold edges and
+   * two parts (`torso_bottom`, `lower_leg_spacer`) with inverted or zero signed volume, so a
+   * single-sided material renders them with holes where a backface faces the camera. The full mesh
+   * is clean and stays FrontSide, which is a real saving at 63k triangles across three bodies.
+   *
+   * The flag is read off BOTH surfaces a producer could reasonably put it on - the decoded mesh
+   * object (`data.mesh.proxy`, which decodeMesh sets from the module's declared mesh format) and
+   * the module's own `META.mesh` - and the preview lane really does ship a proxy today:
+   * `preview-data.js` declares `META.mesh.proxy = true` with format
+   * `wolfgang-mesh-columns-proxy/1` (645 vertices, 1072 triangles), so the picker's preview takes
+   * this branch and renders every body material DoubleSide. The full module stays
+   * `wolfgang-mesh-columns/1` (4361 vertices, 8922 triangles) with `proxy = false`, so the viewer
+   * renders it FrontSide.
    */
-  function buildRig() {
-    links = {};
-    joints = [];
+  function proxyMesh(data) {
+    return !!((data.mesh && data.mesh.proxy) || (data.meta && data.meta.mesh && data.meta.mesh.proxy));
+  }
+
+  /**
+   * 26 directions on the unit sphere: the 3x3x3 integer lattice without its centre. Used to pull a
+   * bucket's EXTREME vertices out of the decoded CAD as ground-contact candidates.
+   */
+  const HULL_DIRS = (() => {
+    const out = [];
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        for (let k = -1; k <= 1; k++) {
+          if (!i && !j && !k) continue;
+          const len = Math.hypot(i, j, k);
+          out.push([i / len, j / len, k / len]);
+        }
+      }
+    }
+    return out;
+  })();
+
+  /**
+   * Merge the 133 pre-composed visual instances into one geometry per (driven bucket, material
+   * class), and pull each bucket's ground-contact candidates out of the merged vertices.
+   *
+   * THE CONTRACT. `META.mesh.visualInstances.convention` states
+   * `instance_world = bone_world[driven_ancestor] @ T(translation, quaternion_wxyz)`, with every
+   * FIXED joint between the driven ancestor and the visual origin already baked into that stored
+   * transform. `bone_world[<joint>]` is the joint's child-link frame AFTER its revolute rotation,
+   * which is exactly the node buildRig() creates for that joint; `bone_world[ROOT/TORSO]` is the
+   * base pose, which is exactly the torso node the field pose and the IMU tilt drive.
+   *
+   * So the transform is applied HERE, once, to the vertices, and the merged result is parented to
+   * that node. Same world matrix, 42 draw calls per body instead of 133, and one geometry set
+   * shared by all three robots instead of three copies of the same 20,902 triangles.
+   *
+   * The merged geometries are returned UNSHADED: material choice is per robot, because each robot
+   * carries its own accent tint and its own highlight state.
+   */
+  function buildMeshLibrary(mesh, buckets) {
+    const lib = {};
+    const bucketNames = Object.keys(buckets);
+    for (const bucket of bucketNames) lib[bucket] = { geo: {}, contacts: [] };
+
+    // group instances by bucket, then by material class
+    const grouped = {};
+    for (const inst of mesh.instances) {
+      const b = grouped[inst.bucket] || (grouped[inst.bucket] = {});
+      (b[inst.materialClass] || (b[inst.materialClass] = [])).push(inst);
+    }
+
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const v = new THREE.Vector3();
+    const one = new THREE.Vector3(1, 1, 1);
+
+    for (const bucket of bucketNames) {
+      const byClass = grouped[bucket] || {};
+      // every vertex of this bucket, in bucket-local space, for the contact solve
+      const allX = [];
+      const allY = [];
+      const allZ = [];
+      for (const cls of Object.keys(byClass)) {
+        const list = byClass[cls];
+        let nVerts = 0;
+        let nIdx = 0;
+        for (const inst of list) {
+          const part = mesh.parts[inst.part];
+          nVerts += part.positions.length / 3;
+          nIdx += part.indices.length;
+        }
+        const positions = new Float32Array(nVerts * 3);
+        const normals = new Float32Array(nVerts * 3);
+        const indices = nVerts > 65535 ? new Uint32Array(nIdx) : new Uint16Array(nIdx);
+        let vo = 0; // vertex offset, in vertices
+        let io = 0; // index offset
+        for (const inst of list) {
+          const part = mesh.parts[inst.part];
+          const t = inst.translation;
+          const qw = inst.quaternionWxyz;
+          q.set(qw[1], qw[2], qw[3], qw[0]);
+          v.set(t[0], t[1], t[2]);
+          m4.compose(v, q, one);
+          const n = part.positions.length / 3;
+          for (let i = 0; i < n; i++) {
+            vTmp.set(part.positions[i * 3], part.positions[i * 3 + 1], part.positions[i * 3 + 2]);
+            vTmp.applyMatrix4(m4);
+            positions[(vo + i) * 3] = vTmp.x;
+            positions[(vo + i) * 3 + 1] = vTmp.y;
+            positions[(vo + i) * 3 + 2] = vTmp.z;
+            allX.push(vTmp.x);
+            allY.push(vTmp.y);
+            allZ.push(vTmp.z);
+            // the pre-composed transform is a pure rotation plus a translation, so a normal is
+            // rotated and nothing else - no inverse-transpose, no renormalisation
+            vTmp.set(part.normals[i * 3], part.normals[i * 3 + 1], part.normals[i * 3 + 2]);
+            vTmp.applyQuaternion(q);
+            normals[(vo + i) * 3] = vTmp.x;
+            normals[(vo + i) * 3 + 1] = vTmp.y;
+            normals[(vo + i) * 3 + 2] = vTmp.z;
+          }
+          // index order and winding are binding (FORMAT-V2 `uint16-absolute-le`): the source stream
+          // is copied through with nothing but the vertex-base offset added
+          for (let i = 0; i < part.indices.length; i++) indices[io + i] = part.indices[i] + vo;
+          vo += n;
+          io += part.indices.length;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        g.setIndex(new THREE.BufferAttribute(indices, 1));
+        lib[bucket].geo[cls] = keep(g);
+      }
+
+      // ---- ground-contact candidates.
+      //
+      // The extreme vertex of this bucket along each of 26 directions, de-duplicated. They are REAL
+      // vertices of the real CAD, never bounding-box corners: a box corner sits below the surface
+      // it bounds, and a solve that took its minimum over box corners would lift the body off the
+      // pitch by the error. A 26-direction sample can UNDER-lift by a millimetre or two when the
+      // true lowest vertex sits between two sampled directions, which is the forgiving side of the
+      // trade, and it is a rendering choice either way (see groundOffset()).
+      const seen = new Set();
+      for (const d of HULL_DIRS) {
+        let best = -Infinity;
+        let bi = -1;
+        for (let i = 0; i < allX.length; i++) {
+          const dot = allX[i] * d[0] + allY[i] * d[1] + allZ[i] * d[2];
+          if (dot > best) {
+            best = dot;
+            bi = i;
+          }
+        }
+        if (bi >= 0 && !seen.has(bi)) {
+          seen.add(bi);
+          lib[bucket].contacts.push([allX[bi], allY[bi], allZ[bi]]);
+        }
+      }
+    }
+    return lib;
+  }
+
+  /**
+   * The kinematic tree: one node per revolute joint, whose transform is exactly the URDF's fixed
+   * origin composed with the rotation about the joint axis, hung off a torso node that carries the
+   * base pose and the IMU tilt. That is the whole runtime rig - 20 revolute joints plus the root
+   * bucket - because every fixed-joint chain in the 47-link URDF is already baked into the
+   * pre-composed instance transforms.
+   */
+  function buildRig(key) {
+    const links = {};
+    const joints = [];
     const torsoNode = new THREE.Group();
-    torsoNode.name = 'donna:torso';
-    links.torso = { node: torsoNode, vis: null };
+    torsoNode.name = `${key}:torso`;
+    links.torso = torsoNode;
 
     for (const [name, parent, child, xyz, rpy, axis] of RIG) {
-      const p = links[parent];
       const node = new THREE.Group();
-      node.name = `donna:${child}`;
+      node.name = `${key}:${child}`;
       node.position.set(xyz[0], xyz[1], xyz[2]);
       // URDF rpy is R = Rz(yaw) Ry(pitch) Rx(roll), which is three's Euler order 'ZYX'
       const qFixed = new THREE.Quaternion().setFromEuler(
         new THREE.Euler(rpy[0], rpy[1], rpy[2], 'ZYX')
       );
       node.quaternion.copy(qFixed);
-      p.node.add(node);
-      links[child] = { node, vis: null };
+      links[parent].add(node);
+      links[child] = node;
       joints.push({
         name,
         node,
@@ -633,186 +895,7 @@ export function buildScene(THREE, mount) {
         q: 0,
       });
     }
-
-    // Zero pose, then freeze each link's torso-relative rotation so the vis frames can undo it.
-    torsoNode.updateMatrixWorld(true);
-    const zeroQ = {};
-    const zeroP = {};
-    for (const name of Object.keys(links)) {
-      const n = links[name].node;
-      zeroQ[name] = n.getWorldQuaternion(new THREE.Quaternion());
-      zeroP[name] = n.getWorldPosition(new THREE.Vector3());
-    }
-    for (const name of Object.keys(links)) {
-      const vis = new THREE.Group();
-      vis.name = `donna:${name}:vis`;
-      vis.quaternion.copy(zeroQ[name]).invert();
-      links[name].node.add(vis);
-      links[name].vis = vis;
-    }
-
-    // Child joint origins, expressed in each parent's (torso-aligned) vis frame. Because the vis
-    // frame is torso-aligned at the zero pose, that is just the difference of zero-pose positions.
-    const childOffsets = {};
-    for (const [, parent, child] of RIG) {
-      (childOffsets[parent] || (childOffsets[parent] = [])).push({
-        child,
-        d: [
-          zeroP[child].x - zeroP[parent].x,
-          zeroP[child].y - zeroP[parent].y,
-          zeroP[child].z - zeroP[parent].z,
-        ],
-      });
-    }
-
-    buildShell(childOffsets);
-    return torsoNode;
-  }
-
-  /** Cross-section of the shell drawn between a link and each of its child joints. */
-  const BONE_W = {
-    l_upper_arm: [0.05, 0.05],
-    r_upper_arm: [0.05, 0.05],
-    l_upper_leg: [0.075, 0.075],
-    r_upper_leg: [0.075, 0.075],
-    l_lower_leg: [0.065, 0.065],
-    r_lower_leg: [0.065, 0.065],
-    l_shoulder: [0.055, 0.055],
-    r_shoulder: [0.055, 0.055],
-    l_hip_1: [0.06, 0.06],
-    r_hip_1: [0.06, 0.06],
-    l_hip_2: [0.07, 0.07],
-    r_hip_2: [0.07, 0.07],
-    l_ankle: [0.06, 0.055],
-    r_ankle: [0.06, 0.055],
-    neck: [0.045, 0.045],
-  };
-
-  function addMesh(linkName, batch, mat, name) {
-    if (!batch.p.length) return null;
-    const mesh = new THREE.Mesh(keep(batch.build(THREE)), mat);
-    mesh.name = name;
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    links[linkName].vis.add(mesh);
-    return mesh;
-  }
-
-  /**
-   * The simplified Wolfgang-OP body: torso, head with its camera block, two arms, two legs, all of
-   * it boxes and bones authored in body axes. Deliberately NOT the URDF's meshes - this is the
-   * house line-art-adjacent 3D style the other two replay scenes use, at the rig's real dimensions.
-   */
-  function buildShell(childOffsets) {
-    const shellMat = keep(
-      new THREE.MeshStandardMaterial({ color: SHELL, roughness: 0.68, metalness: 0.22, emissive: 0x000000 })
-    );
-    const darkMat = keep(
-      new THREE.MeshStandardMaterial({ color: SHELL_DARK, roughness: 0.78, metalness: 0.15, emissive: 0x000000 })
-    );
-    const footMat = keep(
-      new THREE.MeshStandardMaterial({ color: FOOT, roughness: 0.92, metalness: 0.05, emissive: 0x000000 })
-    );
-    const accentMat = keep(
-      new THREE.MeshStandardMaterial({
-        color: ACCENT,
-        roughness: 0.45,
-        metalness: 0.2,
-        emissive: ACCENT,
-        emissiveIntensity: 0.35,
-      })
-    );
-    const lensMat = keep(
-      new THREE.MeshStandardMaterial({
-        color: 0x0a0c0f,
-        roughness: 0.22,
-        metalness: 0.5,
-        emissive: 0x9fd0ff,
-        emissiveIntensity: 0.5,
-      })
-    );
-    shellMats = [shellMat, darkMat, footMat];
-    accentMats = [accentMat];
-
-    // ---- bones, one batch per link
-    for (const linkName of Object.keys(childOffsets)) {
-      if (linkName === 'torso') continue; // the torso is a shell, not a set of bones
-      const [w, h] = BONE_W[linkName] || [0.05, 0.05];
-      const b = new Batch();
-      for (const { d } of childOffsets[linkName]) b.bone(0, 0, 0, d[0], d[1], d[2], w, h);
-      addMesh(linkName, b, darkMat, `donna:${linkName}:shell`);
-    }
-
-    // ---- torso: one shell from just under the hip line to just over the shoulder line, plus an
-    // accent chest plate and the two shoulder blocks the arms hang off.
-    const t = new Batch();
-    t.box(-0.005, 0, 0.1, 0.115, 0.15, 0.235);
-    t.box(-0.02, 0, 0.213, 0.09, 0.175, 0.05); // shoulder yoke
-    t.box(0, 0, -0.008, 0.1, 0.135, 0.05); // pelvis
-    addMesh('torso', t, shellMat, 'donna:torso:shell');
-    const ta = new Batch();
-    ta.box(0.056, 0, 0.115, 0.012, 0.085, 0.075); // chest plate
-    ta.box(-0.062, 0, 0.1, 0.012, 0.06, 0.13); // back pack face
-    addMesh('torso', ta, accentMat, 'donna:torso:accent');
-
-    // ---- head: a box with the forward-looking camera block and its lens, plus a thin accent
-    // visor band. The real machine's camera is what every ball estimate in this log came out of,
-    // so it is modelled rather than implied.
-    const h = new Batch();
-    h.box(0.005, 0, 0.028, 0.095, 0.105, 0.085);
-    addMesh('head', h, shellMat, 'donna:head:shell');
-    const hc = new Batch();
-    hc.box(0.056, 0, 0.03, 0.03, 0.06, 0.038); // camera block
-    addMesh('head', hc, darkMat, 'donna:head:camera');
-    const hl = new Batch();
-    hl.box(0.073, 0, 0.03, 0.006, 0.026, 0.026); // lens
-    addMesh('head', hl, lensMat, 'donna:head:lens');
-    const ha = new Batch();
-    ha.box(0.004, 0, 0.062, 0.09, 0.108, 0.008); // visor band
-    addMesh('head', ha, accentMat, 'donna:head:accent');
-
-    // ---- forearms, drawn on from the elbow. Terminal links, so there is no child origin to span.
-    for (const side of ['l', 'r']) {
-      const f = new Batch();
-      f.bone(0, 0, 0, 0, 0, -0.115, 0.042, 0.042);
-      f.box(0, 0, -0.135, 0.05, 0.05, 0.045); // hand block
-      addMesh(`${side}_lower_arm`, f, darkMat, `donna:${side}_lower_arm:shell`);
-    }
-
-    // ---- feet. Sole plates sized to a KidSize foot, hung under the ankle roll axis.
-    for (const side of ['l', 'r']) {
-      const f = new Batch();
-      f.box(0.018, 0, -0.021, 0.135, 0.088, 0.026); // sole
-      f.box(0, 0, -0.004, 0.06, 0.06, 0.02); // ankle block
-      addMesh(`${side}_foot`, f, footMat, `donna:${side}_foot:shell`);
-    }
-
-    // ---- contact candidates for the ground solve. Foot sole corners first, because in every
-    // upright frame they are the answer; the rest are what keeps a fallen robot ON the pitch
-    // instead of hovering over it by the length of its own legs.
-    contactPts = [];
-    const addPt = (linkName, x, y, z) => {
-      contactPts.push({ node: links[linkName].vis, x, y, z });
-    };
-    for (const side of ['l', 'r']) {
-      for (const sx of [-1, 1]) {
-        for (const sy of [-1, 1]) {
-          addPt(`${side}_foot`, 0.018 + sx * 0.0675, sy * 0.044, -0.034);
-        }
-      }
-      addPt(`${side}_lower_arm`, 0, 0, -0.155);
-      addPt(`${side}_lower_leg`, 0.04, 0, -0.02); // knee front
-      addPt(`${side}_upper_arm`, 0, 0, 0);
-    }
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        for (const sz of [-1, 1]) {
-          addPt('torso', -0.005 + sx * 0.0575, sy * 0.075, 0.1 + sz * 0.1175);
-        }
-      }
-    }
-    addPt('head', 0.005, 0, 0.028);
-    addPt('head', 0.073, 0, 0.03);
+    return { torsoNode, joints };
   }
 
   function buildBall() {
@@ -835,25 +918,115 @@ export function buildScene(THREE, mount) {
     return b;
   }
 
-  function buildGroundDecals() {
-    const tex = keep(contactTexture(THREE));
-    const cg = keep(new THREE.PlaneGeometry(0.44, 0.44));
+  /**
+   * One robot: rig, merged CAD body, name tag, ground decals, materials.
+   *
+   * The name tag is a SPRITE, which is the one thing in three that faces the camera without this
+   * file being handed one - buildScene() never sees the viewer's camera, and a fixed-orientation
+   * quad would read backwards the moment anybody orbited. It depth-tests like any other surface, so
+   * a body standing in front of a tag occludes it instead of the label floating through the robot.
+   */
+  function buildRobot(spec, lib, contactTex) {
+    const { torsoNode, joints } = buildRig(spec.key);
+
+    const group = new THREE.Group();
+    group.name = `${spec.key}:robot`;
+    group.add(torsoNode);
+    root.add(group);
+
+    // The CAD's two material classes, per robot so each body can carry its own accent and its own
+    // highlight. The light shell is tinted 10% toward the accent: enough that three identical
+    // machines are three identifiable machines at follow-cam distance, little enough that the body
+    // still reads as the near-white printed shell the CAD actually is.
+    // `side` is the ONLY thing the proxy branch changes. Everything else about these two materials
+    // is identical on both lanes, so a proxy body is the same body with its backfaces filled in.
+    const side = isProxy ? THREE.DoubleSide : THREE.FrontSide;
+    const light = keep(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(SHELL_LIGHT).lerp(new THREE.Color(spec.accent), 0.1),
+        roughness: 0.52,
+        metalness: 0.14,
+        emissive: 0x000000,
+        side,
+      })
+    );
+    const dark = keep(
+      new THREE.MeshStandardMaterial({
+        color: SHELL_DARK,
+        roughness: 0.7,
+        metalness: 0.28,
+        emissive: 0x000000,
+        side,
+      })
+    );
+    const mats = { light, dark };
+
+    const bucketNodes = { [ROOT_BUCKET]: torsoNode };
+    for (const j of joints) bucketNodes[j.name] = j.node;
+
+    const contactPts = [];
+    for (const bucket of Object.keys(lib)) {
+      const node = bucketNodes[bucket];
+      if (!node) continue; // a bucket with no node would be a rig/manifest disagreement
+      for (const cls of Object.keys(lib[bucket].geo)) {
+        const mesh = new THREE.Mesh(lib[bucket].geo[cls], mats[cls] || light);
+        mesh.name = `${spec.key}:${bucket}:${cls}`;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        node.add(mesh);
+      }
+      for (const c of lib[bucket].contacts) contactPts.push({ node, x: c[0], y: c[1], z: c[2] });
+    }
+
+    // ---- floating name tag
+    const tagTex = keep(nameTagTexture(THREE, spec.label, spec.accent));
+    const tagMat = keep(
+      new THREE.SpriteMaterial({ map: tagTex, transparent: true, depthWrite: false, fog: false })
+    );
+    const tag = new THREE.Sprite(tagMat);
+    tag.name = `${spec.key}:tag`;
+    const TAG_H = 0.13;
+    tag.scale.set(TAG_H * tagTex.userData.aspect, TAG_H, 1);
+    // The group's origin is the robot's base pose, which groundOffset() lifts to hip height, and
+    // the CAD's head tops out ~0.38 m above it standing. 0.50 clears that by a comfortable margin
+    // and rides DOWN with the body when a robot falls, so the label follows its machine instead of
+    // hanging at a fixed altitude over an empty patch of pitch.
+    tag.position.set(0, 0, 0.5);
+    tag.renderOrder = 4;
+    group.add(tag);
+
+    // ---- ground decals: the soft contact patch every replay scene grounds its subject with, plus
+    // a thin accent ring so a robot's identity survives the tag being occluded.
     const cm = keep(
       new THREE.MeshBasicMaterial({
         color: 0x000000,
-        alphaMap: tex,
+        alphaMap: contactTex,
         transparent: true,
         opacity: 0.46,
         depthWrite: false,
       })
     );
-    contact = new THREE.Mesh(cg, cm);
-    contact.name = 'donna:contact';
+    const contact = new THREE.Mesh(keep(new THREE.PlaneGeometry(0.44, 0.44)), cm);
+    contact.name = `${spec.key}:contact`;
     contact.position.z = Z_CONTACT;
     contact.renderOrder = 1;
     root.add(contact);
 
-    const hg = keep(new THREE.RingGeometry(0.26, 0.34, 48));
+    const rm = keep(
+      new THREE.MeshBasicMaterial({
+        color: spec.accent,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    const ring = new THREE.Mesh(keep(new THREE.RingGeometry(0.2, 0.225, 40)), rm);
+    ring.name = `${spec.key}:ring`;
+    ring.position.z = Z_RING;
+    ring.renderOrder = 2;
+    root.add(ring);
+
     const hm = keep(
       new THREE.MeshBasicMaterial({
         color: ALERT,
@@ -863,33 +1036,110 @@ export function buildScene(THREE, mount) {
         side: THREE.DoubleSide,
       })
     );
-    halo = new THREE.Mesh(hg, hm);
-    halo.name = 'donna:halo';
+    const halo = new THREE.Mesh(keep(new THREE.RingGeometry(0.28, 0.36, 48)), hm);
+    halo.name = `${spec.key}:halo`;
     halo.position.z = Z_HALO;
     halo.renderOrder = 3;
     halo.visible = false;
     root.add(halo);
+
+    return {
+      key: spec.key,
+      label: spec.label,
+      accent: spec.accent,
+      group,
+      torso: torsoNode,
+      joints,
+      mats,
+      contactPts,
+      tag,
+      contact,
+      ring,
+      halo,
+      // filled by bindTracks()
+      presence: null,
+      poseSegs: null,
+      jointsSpec: null,
+      jointsCols: null,
+      quatSpec: null,
+      quatCols: null,
+      stateT: null,
+      stateV: null,
+      hudCols: null,
+      mode: 'LIVE',
+      x: 0,
+      y: 0,
+    };
+  }
+
+  // ------------------------------------------------------------------ track binding
+
+  /**
+   * Point the runtime at a decoded payload's tracks.
+   *
+   * Separate from build() because the two decoded variants carry the SAME 133-instance CAD and the
+   * same rig but different tracks: the picker card stages this scene off the 6 s preview module and
+   * the demo route re-binds it to the full 250 s match the moment that module resolves. Geometry is
+   * built once; only these references move.
+   *
+   * The preview ships only the pose SEGMENTS its window touches (donnaPose1, jackPose3, roryPose0),
+   * so segments are discovered from the tracks that exist rather than assumed from the presence
+   * table, and a time with no shipped segment falls through to the same hold rule an outage uses.
+   */
+  function bindTracks(data) {
+    D = data;
+    const ev = {};
+    for (const row of data.events || []) ev[row.id] = row;
+    evGoal1 = ev[EV_GOAL_1] || null;
+    evGoal2 = ev[EV_GOAL_2] || null;
+
+    for (const bot of bots) {
+      const k = bot.key;
+      bot.presence = data.presence[k];
+      bot.jointsSpec = data.meta.tracks[`${k}Joints`];
+      bot.jointsCols = data.tracks[`${k}Joints`];
+      bot.quatSpec = data.meta.tracks[`${k}TorsoQuaternion`];
+      bot.quatCols = data.tracks[`${k}TorsoQuaternion`];
+      bot.stateT = data.tracks[`${k}RobotState`].t10ms;
+      bot.stateV = data.tracks[`${k}RobotState`].state;
+      bot.hudCols = data.tracks[`${k}Hud`];
+
+      const segs = [];
+      for (const name of Object.keys(data.meta.tracks)) {
+        const m = new RegExp(`^${k}Pose(\\d+)$`).exec(name);
+        if (!m) continue;
+        const spec = data.meta.tracks[name];
+        const cols = data.tracks[name];
+        const base = spec.timing.segmentStart10ms;
+        // absolute mission ticks, so a hold/interpolate decision never has to remember a base
+        const ticks = new Float64Array(cols.t10ms.length);
+        for (let i = 0; i < ticks.length; i++) ticks[i] = base + cols.t10ms[i];
+        segs.push({
+          index: Number(m[1]),
+          ticks,
+          x: cols.xM,
+          y: cols.yM,
+          yaw: cols.yawRad,
+          startTick: ticks[0],
+          endTick: ticks[ticks.length - 1],
+        });
+      }
+      segs.sort((a, b) => a.startTick - b.startTick);
+      bot.poseSegs = segs;
+    }
+    lastPoseT = null;
   }
 
   // ------------------------------------------------------------------ lazy build
 
   function build(data) {
-    D = data;
-    const ev = {};
-    for (const row of data.events || []) ev[row.id] = row;
-    evPenaltyT = ev[EV_PENALTY] ? ev[EV_PENALTY].t : 0;
-    evGoal = ev[EV_GOAL] || null;
-    evBlip = ev[EV_BLIP] || null;
-    evWhistleT = ev[EV_WHISTLE] ? ev[EV_WHISTLE].t : Infinity;
-
+    isProxy = proxyMesh(data);
     buildField();
-    robot = new THREE.Group();
-    robot.name = 'donna:robot';
-    root.add(robot);
-    torso = buildRig();
-    robot.add(torso);
+    const lib = buildMeshLibrary(data.mesh, data.meta.mesh.visualInstances.buckets);
+    const contactTex = keep(contactTexture(THREE));
+    bots = ROBOTS.map((spec) => buildRobot(spec, lib, contactTex));
     ball = buildBall();
-    buildGroundDecals();
+    bindTracks(data);
 
     built = true;
     root.traverse((o) => {
@@ -897,14 +1147,14 @@ export function buildScene(THREE, mount) {
       o.receiveShadow = false;
     });
     // Pose once at the frozen hero moment so cameraFocus() has an answer before the first update,
-    // which is what the picker card asks for when it stages this robot.
+    // which is what the picker card asks for when it stages this mission.
     pose(clampT(HERO_T));
     heroFocus = readFocus(heroOut);
     if (highlight) applyHighlight();
   }
 
   const clampT = (t) => {
-    const w = (D && D.meta && D.meta.window) || [0, 306];
+    const w = (D && D.meta && D.meta.window) || [0, 250];
     return t < w[0] ? w[0] : t > w[1] ? w[1] : t;
   };
 
@@ -917,21 +1167,25 @@ export function buildScene(THREE, mount) {
   }
 
   /**
-   * Joint angles at t: the 25 Hz grid, linearly interpolated.
+   * Joint angles at t: this robot's own grid (Donna 25 Hz, teammates 10 Hz), linearly interpolated.
    *
-   * Linear rather than the cubic the other replay scenes use on their pose tracks. A joint column
-   * is a recorded joint-state position measurement sampled at 25 Hz; a Catmull-Rom through it
-   * overshoots at every stride reversal, which on a knee is a bend the machine never made.
+   * Linear rather than cubic. A joint column is a recorded joint-state position MEASUREMENT; a
+   * Catmull-Rom through it overshoots at every stride reversal, which on a knee is a bend the
+   * machine never made. That matters more at the teammates' 10 Hz, not less.
+   *
+   * Joints replay through an outage. During Jack's three falls his localization drops but his
+   * `/joint_states` keeps streaming, so the recorded fall animation is real data and plays; only
+   * the ROOT pose is held. See poseField().
    */
-  function poseJoints(t) {
-    const spec = D.meta.tracks.joints;
+  function poseJoints(bot, t) {
+    const spec = bot.jointsSpec;
     const x = uniformIndex(spec, t);
     const i0 = Math.floor(x);
     const i1 = Math.min(i0 + 1, spec.count - 1);
     const s = x - i0;
-    const cols = D.tracks.joints;
-    for (let k = 0; k < joints.length; k++) {
-      const j = joints[k];
+    const cols = bot.jointsCols;
+    for (let k = 0; k < bot.joints.length; k++) {
+      const j = bot.joints[k];
       const col = cols[j.name];
       if (!col) continue;
       const q = col[i0] + (col[i1] - col[i0]) * s;
@@ -941,106 +1195,145 @@ export function buildScene(THREE, mount) {
     }
   }
 
-  /** Torso attitude at t: the yaw-free tilt quaternion, slerped on the same 25 Hz grid. */
-  function poseTorso(t) {
-    const spec = D.meta.tracks.torsoQuaternion;
+  /** Torso attitude at t: the yaw-free tilt quaternion, slerped on the shared 20 Hz grid. */
+  function poseTorso(bot, t) {
+    const spec = bot.quatSpec;
     const x = uniformIndex(spec, t);
     const i0 = Math.floor(x);
     const i1 = Math.min(i0 + 1, spec.count - 1);
     const s = x - i0;
-    const c = D.tracks.torsoQuaternion;
+    const c = bot.quatCols;
     qA.set(c.qx[i0], c.qy[i0], c.qz[i0], c.qw[i0]).normalize();
     qB.set(c.qx[i1], c.qy[i1], c.qz[i1], c.qw[i1]).normalize();
     qA.slerp(qB, s);
-    torso.quaternion.copy(qA);
+    bot.torso.quaternion.copy(qA);
+  }
+
+  /** The presence row covering t. The table is a continuous partition of the module window. */
+  function presenceAt(bot, t) {
+    const segs = bot.presence;
+    let out = segs[0];
+    for (let i = 0; i < segs.length; i++) {
+      if (t >= segs[i].startT) out = segs[i];
+      else break;
+    }
+    return out;
   }
 
   /**
-   * Field pose at t: HOLD THEN JUMP.
+   * Field pose at t: interpolate INSIDE a live segment, HOLD across everything else.
    *
-   * The pose track is the localization output at its native 7.59 Hz, carved into segments at the
-   * nine motion-drop warnings, at every covariance spike over the frozen threshold, and around
-   * each fall. Inside a segment the estimate is continuous and is interpolated; across a boundary
-   * it is NOT, because the filter teleported, and a replay that lerped across the jump would draw
-   * a smooth 40 cm slide the robot never walked. So the pose holds at the last sample of the old
-   * segment and jumps when the new one starts, which is the frozen consumer rule in FORMAT.md.
+   * Each pose track is one live localization segment. Inside a segment the estimate is continuous
+   * and is interpolated; across a boundary it is NOT, because the filter teleported (Donna moved
+   * ~1.98 m while her pose stream was dark for the whole of her penalty), and a replay that lerped
+   * across the jump would draw a smooth slide the robot never walked. So the pose holds at the last
+   * sample of the old segment and jumps when the new one starts, which is the frozen consumer rule
+   * in FORMAT-V2 ("Consumers may interpolate only inside one pose segment").
+   *
+   * A HOLD outage - Jack's falls - lands in exactly the same branch: no segment contains t, so the
+   * root freezes at the last observed sample while the joints and the IMU keep replaying. That is
+   * the disclosed behaviour, not an accident of the lookup, and the HUD chip says "fallen" for
+   * precisely that interval.
    */
-  function poseField(t) {
-    const p = D.tracks.pose;
-    const originMs = D.meta.tracks.pose.timing.timeOriginMs;
-    const tMs = t * 1000 - originMs;
-    const n = p.tMs.length;
-    let i = holdIndexMs(p.tMs, tMs);
-    if (i < 0) i = 0; // before the first localization sample: hold the first pose
-    const j = Math.min(i + 1, n - 1);
-    let x = p.xM[i];
-    let y = p.yM[i];
-    let yaw = p.yawRad[i];
-    if (j !== i && p.segment[j] === p.segment[i]) {
-      const span = p.tMs[j] - p.tMs[i];
-      const s = span > 0 ? clamp01((tMs - p.tMs[i]) / span) : 0;
-      x += (p.xM[j] - x) * s;
-      y += (p.yM[j] - y) * s;
-      yaw = lerpRad(yaw, p.yawRad[j], s);
+  function poseField(bot, t) {
+    const tick = t * 100;
+    const segs = bot.poseSegs;
+    let hit = null;
+    let prev = null;
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      if (tick >= s.startTick && tick <= s.endTick) {
+        hit = s;
+        break;
+      }
+      if (s.endTick < tick) prev = s;
     }
-    robot.position.set(x, y, 0);
-    robot.rotation.set(0, 0, yaw);
-  }
-
-  /** Last index of a t-ascending array at or before t. -1 when t precedes all of them. */
-  function holdIndexMs(arr, t) {
-    if (!arr.length || t < arr[0]) return -1;
-    let lo = 0;
-    let hi = arr.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (arr[mid] <= t) lo = mid;
-      else hi = mid - 1;
+    let x;
+    let y;
+    let yaw;
+    if (hit) {
+      const i = Math.max(0, holdIndex(hit.ticks, tick));
+      const j = Math.min(i + 1, hit.ticks.length - 1);
+      x = hit.x[i];
+      y = hit.y[i];
+      yaw = hit.yaw[i];
+      if (j !== i) {
+        const span = hit.ticks[j] - hit.ticks[i];
+        const s = span > 0 ? clamp01((tick - hit.ticks[i]) / span) : 0;
+        x += (hit.x[j] - x) * s;
+        y += (hit.y[j] - y) * s;
+        yaw = lerpRad(yaw, hit.yaw[j], s);
+      }
+    } else {
+      // outage, or a preview module that ships only the segments its window touches
+      const s = prev || segs[0];
+      const i = prev ? s.ticks.length - 1 : 0;
+      x = s.x[i];
+      y = s.y[i];
+      yaw = s.yaw[i];
     }
-    return lo;
+    bot.x = x;
+    bot.y = y;
+    bot.group.position.set(x, y, 0);
+    bot.group.rotation.set(0, 0, yaw);
   }
 
   /**
-   * Rest the body on the pitch.
+   * Rest a body on the pitch.
    *
-   * The recording carries joints, torso attitude and a field (x, y, yaw). It does NOT carry the
-   * torso's height off the ground - no channel in this log measures it - so the height is DERIVED
-   * here by dropping the assembled body until its lowest contact candidate touches z = 0. That is
-   * a rendering choice, not recorded data and not physics: nothing here integrates a contact
-   * force, and the robot's pose is whatever the servos actually reported.
+   * The recordings carry joints, torso attitude and a field (x, y, yaw). They do NOT carry the
+   * torso's height off the ground - no channel in these logs measures it - so the height is DERIVED
+   * here by dropping the assembled body until its lowest contact candidate touches z = 0. That is a
+   * rendering choice, not recorded data and not physics: nothing here integrates a contact force,
+   * and the robot's pose is whatever its servos actually reported.
+   *
+   * The candidates are the real CAD's extreme vertices per driven bucket (see buildMeshLibrary), so
+   * a fallen robot rests on whatever part of it is actually lowest rather than hovering by the
+   * length of its own legs.
    */
-  function groundOffset() {
-    robot.position.z = 0;
+  function groundOffset(bot) {
+    bot.group.position.z = 0;
     // Ancestors FIRST: the frame map lives on the root, and reading a world height before the root
     // has a world matrix would measure the ROS lateral axis instead of the vertical one. Then the
     // rig, downward. Both calls are surgical rather than a whole-scene update, and neither
     // allocates.
     root.updateWorldMatrix(true, false);
-    robot.updateWorldMatrix(false, true);
+    bot.group.updateWorldMatrix(false, true);
     let minY = Infinity;
-    for (let k = 0; k < contactPts.length; k++) {
-      const c = contactPts[k];
+    const pts = bot.contactPts;
+    for (let k = 0; k < pts.length; k++) {
+      const c = pts[k];
       vTmp.set(c.x, c.y, c.z).applyMatrix4(c.node.matrixWorld);
       if (vTmp.y < minY) minY = vTmp.y;
     }
-    // world +y is ROS +z through the root's frame map, and the root is a pure rotation, so the
-    // lift measured in world height applies unchanged as a local z translation
-    if (Number.isFinite(minY)) robot.position.z = -minY;
-    robot.updateWorldMatrix(false, true);
+    // world +y is ROS +z through the root's frame map, and the root is a pure rotation, so the lift
+    // measured in world height applies unchanged as a local z translation
+    if (Number.isFinite(minY)) bot.group.position.z = -minY;
+    bot.group.updateWorldMatrix(false, true);
   }
 
-  function poseBall(t) {
-    const spec = D.meta.tracks.ballField;
+  /**
+   * The ball at t, from Donna's filtered map-frame estimate.
+   *
+   * `donnaBallField` is already in the map (field) frame, so there is no pose to transform through
+   * and none is applied - the FORMAT-V2 track is the validated estimate itself. Two masks:
+   *
+   *   * `ballSeen`. A masked tick carries filler ZEROS, so interpolating into one would walk the
+   *     ball to the centre spot and holding the last seen one would keep drawing an estimate the
+   *     filter did not have. Either bracketing tick clear means hidden, full stop.
+   *   * Donna's presence. The track deliberately does NOT require her localization to be valid, so
+   *     it still carries estimates published while she was off the field serving her penalty. Those
+   *     are not observations of play, and this replay does not draw them: no Donna on the pitch,
+   *     no ball marker.
+   */
+  function poseBall(t, donnaVisible) {
+    const spec = D.meta.tracks.donnaBallField;
     const x = uniformIndex(spec, t);
     const i0 = Math.floor(x);
     const i1 = Math.min(i0 + 1, spec.count - 1);
     const s = x - i0;
-    const b = D.tracks.ballField;
-    // The marker is drawn only between two ticks the mask says the filter actually had an estimate
-    // at. A masked tick carries filler ZEROS, so interpolating into one would walk the ball to the
-    // centre spot, and holding the last seen one would keep drawing an estimate the filter did not
-    // have. Either bracketing tick clear means hidden, full stop.
-    if (!(b.ballSeen[i0] > 0.5) || !(b.ballSeen[i1] > 0.5)) {
+    const b = D.tracks.donnaBallField;
+    if (!donnaVisible || !(b.ballSeen[i0] > 0.5) || !(b.ballSeen[i1] > 0.5)) {
       ball.visible = false;
       return;
     }
@@ -1056,21 +1349,65 @@ export function buildScene(THREE, mount) {
   function pose(t) {
     if (t === lastPoseT) return;
     lastPoseT = t;
-    poseJoints(t);
-    poseTorso(t);
-    poseField(t);
-    groundOffset();
-    poseBall(t);
-    contact.position.set(robot.position.x, robot.position.y, Z_CONTACT);
-    if (halo.visible) halo.position.set(robot.position.x, robot.position.y, Z_HALO);
+    let donnaVisible = false;
+    for (let i = 0; i < bots.length; i++) {
+      const bot = bots[i];
+      const seg = presenceAt(bot, t);
+      bot.mode = seg.renderMode;
+      const shown = seg.renderMode !== 'HIDDEN';
+      bot.group.visible = shown;
+      bot.contact.visible = shown;
+      bot.ring.visible = shown;
+      if (bot.key === 'donna') donnaVisible = shown;
+      if (!shown) {
+        if (bot.halo.visible) bot.halo.visible = false;
+        continue;
+      }
+      poseJoints(bot, t);
+      poseTorso(bot, t);
+      poseField(bot, t);
+      groundOffset(bot);
+      bot.contact.position.set(bot.x, bot.y, Z_CONTACT);
+      bot.ring.position.set(bot.x, bot.y, Z_RING);
+      if (highlightHits(bot)) {
+        bot.halo.visible = true;
+        bot.halo.position.set(bot.x, bot.y, Z_HALO);
+      } else {
+        bot.halo.visible = false;
+      }
+    }
+    poseBall(t, donnaVisible);
   }
 
-  /** Where the shot should sit: the torso, in THREE world coordinates. */
+  /**
+   * Where the shot should sit: the centroid of the torsos that are actually ON the pitch, in THREE
+   * world coordinates. Three robots spread over five metres have no single subject, and a follow
+   * that locked onto one of them would walk the other two out of frame. A robot in a HIDDEN outage
+   * does not vote, which is why the shot recentres when Donna is carried off for her penalty rather
+   * than holding a gap where she is not.
+   */
   function readFocus(out) {
-    torso.getWorldPosition(vTmp);
-    out.x = vTmp.x;
-    out.y = vTmp.y;
-    out.z = vTmp.z;
+    let n = 0;
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    for (let i = 0; i < bots.length; i++) {
+      if (!bots[i].group.visible) continue;
+      bots[i].torso.getWorldPosition(vTmp);
+      sx += vTmp.x;
+      sy += vTmp.y;
+      sz += vTmp.z;
+      n++;
+    }
+    if (!n) {
+      out.x = 0;
+      out.y = 0.4;
+      out.z = 0;
+      return out;
+    }
+    out.x = sx / n;
+    out.y = sy / n;
+    out.z = sz / n;
     return out;
   }
 
@@ -1078,8 +1415,22 @@ export function buildScene(THREE, mount) {
 
   function update(tSec, data) {
     if (!built) {
-      if (!data || !data.tracks || !data.tracks.joints || !data.meta || !data.meta.tracks || !data.events) return;
+      if (
+        !data ||
+        !data.tracks ||
+        !data.tracks.donnaJoints ||
+        !data.meta ||
+        !data.meta.tracks ||
+        !data.mesh ||
+        !data.presence ||
+        !data.events
+      ) {
+        return;
+      }
       build(data);
+    } else if (data && data !== D && data.tracks && data.tracks.donnaJoints && data.presence) {
+      // the picker card staged this off the preview module and the full match has now resolved
+      bindTracks(data);
     }
     const t = clampT(Number.isFinite(tSec) ? tSec : 0);
     pose(t);
@@ -1089,8 +1440,13 @@ export function buildScene(THREE, mount) {
 
   function driveHighlight(t) {
     const pulse = 0.3 + Math.abs(Math.sin(t * 4.2)) * 0.55;
-    halo.material.opacity = pulse * 0.8;
-    for (let i = 0; i < shellMats.length; i++) shellMats[i].emissiveIntensity = pulse * 0.5;
+    for (let i = 0; i < bots.length; i++) {
+      const bot = bots[i];
+      if (!highlightHits(bot)) continue;
+      bot.halo.material.opacity = pulse * 0.8;
+      bot.mats.light.emissiveIntensity = pulse * 0.45;
+      bot.mats.dark.emissiveIntensity = pulse * 0.45;
+    }
   }
 
   // ------------------------------------------------------------------ HUD contract
@@ -1098,54 +1454,79 @@ export function buildScene(THREE, mount) {
   /**
    * The referee strip at t, version-keyed so the viewer only touches the DOM on a transition.
    *
-   * WHERE EACH FIELD COMES FROM, because the two sources are not interchangeable:
-   *   * the NUMBERS - clock, both scores - are read off the recorded /game channel, the same 2 Hz
-   *     zero-order-held grid the chart plots. One source, so the strip and the chart can never
-   *     disagree about the score.
-   *   * the STATE MACHINE - penalized, READY/SET, FINISHED, and the goal callout - comes off the
-   *     frozen event ledger, because the exported /game columns carry no game-state enum at all.
-   * The ledger's instants are the recorded message times, so the goal note opens exactly at
-   * 278.197 s while the score digit turns over on the next 2 Hz tick that saw it. That half-second
-   * is the resampling grid, not a disagreement, and it is here in writing rather than tuned away.
+   * WHERE EACH FIELD COMES FROM, because the sources are not interchangeable:
+   *   * the NUMBERS and the MATCH STATE - clock, both scores, PLAYING/FINISHED - are read off
+   *     `donnaHud`, the 2 Hz zero-order-held grid carrying Donna's master gamestate. One source, so
+   *     the strip and the chart can never disagree about the score.
+   *   * each ROBOT CHIP's `penalized` flag is read off THAT robot's own HUD track, never inferred
+   *     from a teammate's array, which is the frozen rule in FORMAT-V2 ("Penalised must be
+   *     independently read for each robot").
+   *   * each chip's `state` is that robot's own recorded `RobotControlState`, zero-order held, and
+   *     its `tone` is that robot's own presence render mode.
+   *   * the GOAL CALLOUT comes off the frozen event ledger, because it is an instant and the 2 Hz
+   *     grid is a grid: the note opens exactly at the recorded message time while the score digit
+   *     turns over on the next tick that saw it. That half-second is the resampling grid, not a
+   *     disagreement, and it is here in writing rather than tuned away.
+   *
+   * WHY THE CHIPS EXIST. Three robots replayed from three independent logs are three different
+   * presence stories at any instant, and the strip's single `state.note` cannot carry three. A
+   * viewer that does not know the chip ABI drops both keys and renders the strip it always did.
    */
-  let hudGameI = -2;
+  const CHIP_NOTE = {
+    'penalty-outage': 'penalized',
+    'pre-first-fix': 'no fix',
+    'fall-outage': 'fallen',
+  };
+  let hudHudI = -2;
   let hudNote = null;
-  let hudLabel = null;
+  let hudChipKey = null;
   function hudState(tSec) {
     if (!built) return null;
     const t = clampT(Number.isFinite(tSec) ? tSec : 0);
-    const spec = D.meta.tracks.summaryGame;
-    const g = D.tracks.summaryGame;
-    // FLOOR, not nearest: /game is a zero-order-held grid, so the strip shows the last recorded
+    const spec = D.meta.tracks.donnaHud;
+    // FLOOR, not nearest: the HUD grid is zero-order held, so the strip shows the last recorded
     // tick at or before t. Rounding to the nearest would show a score half a second before the
     // recording knew it.
     const i = Math.floor(uniformIndex(spec, t) + 1e-6);
+    const g = D.tracks.donnaHud;
 
-    let label = 'PLAYING';
-    let tone = 'live';
+    const label = D.meta.codeTables.gameState[Math.round(g.gameState[i])] || 'UNKNOWN';
+    const tone = label === 'PLAYING' ? 'live' : label === 'READY' || label === 'SET' ? 'prep' : 'stop';
+
     let note = '';
-    if (t >= evWhistleT) {
-      label = 'FINISHED';
-      tone = 'goal';
-    } else if (evBlip && t >= evBlip.t && t <= evBlip.endT) {
-      label = 'READY/SET';
-      tone = 'prep';
-    }
-    if (t < evPenaltyT) {
-      // The opening window: the robot re-entered from a penalty at the ledger's first row, so
-      // everything before that instant is a penalized robot standing off the pitch's play.
-      note = 'penalized';
-    } else if (evGoal && t >= evGoal.t && t < evGoal.t + GOAL_NOTE_S) {
-      note = 'GOAL 2-0';
+    if (evGoal2 && t >= evGoal2.t && t < evGoal2.t + GOAL_NOTE_S) note = 'GOAL 6-0';
+    else if (evGoal1 && t >= evGoal1.t && t < evGoal1.t + GOAL_NOTE_S) note = 'GOAL 5-0';
+
+    // the chips move on presence class, robot state and the per-robot penalized flag, none of which
+    // are on the 2 Hz grid, so they get their own short-circuit key
+    let chipKey = '';
+    for (let k = 0; k < bots.length; k++) {
+      const bot = bots[k];
+      const seg = presenceAt(bot, t);
+      const si = Math.max(0, holdIndex(bot.stateT, t * 100));
+      const stateName = D.meta.codeTables.robotState[Math.round(bot.stateV[si])] || 'UNKNOWN';
+      const penalized = bot.hudCols.penalized[i] > 0.5;
+      // The presence class is the honest reason a body is or is not on the pitch, so it wins the
+      // chip note; the penalized flag is the fallback for a robot who is penalized while her own
+      // log still has her localized. Rory before her first map fix is BOTH (she is penalized until
+      // she re-enters at 28.07, and has no map pose until 28.27), and says so.
+      let chipNote = CHIP_NOTE[seg.className] || '';
+      if (seg.className === 'pre-first-fix' && penalized) chipNote = 'penalized, no fix';
+      else if (!chipNote && penalized) chipNote = 'penalized';
+      const chip = hud.chips[k];
+      chip.name = bot.label;
+      chip.state = stateName;
+      chip.note = chipNote;
+      chip.tone = seg.renderMode === 'LIVE' ? 'live' : seg.renderMode === 'HOLD' ? 'hold' : 'hidden';
+      chipKey += `|${chip.name}/${chip.state}/${chip.note}/${chip.tone}`;
     }
 
-    // Short-circuit on the three things any rendered field can move with: the /game tick, the note
-    // and the label. Without it this rebuilds five strings sixty times a second for a strip that
-    // changes a handful of times a minute.
-    if (i === hudGameI && note === hudNote && label === hudLabel) return hud;
-    hudGameI = i;
+    // Short-circuit on everything a rendered field can move with. Without it this rebuilds a dozen
+    // strings sixty times a second for a strip that changes a handful of times a minute.
+    if (i === hudHudI && note === hudNote && chipKey === hudChipKey) return hud;
+    hudHudI = i;
     hudNote = note;
-    hudLabel = label;
+    hudChipKey = chipKey;
 
     const own = Math.round(g.ownScore[i]);
     const rival = Math.round(g.rivalScore[i]);
@@ -1156,8 +1537,9 @@ export function buildScene(THREE, mount) {
     hud.state.tone = tone;
     hud.state.note = note;
 
-    // EVERY rendered field is in the key, the two constant names and dot colours included. A field
-    // that moved while the version did not would sit stale behind the viewer's short-circuit.
+    // EVERY rendered field is in the key, the two constant names, the dot colours and all three
+    // chips included. A field that moved while the version did not would sit stale behind the
+    // viewer's short-circuit.
     hud.version =
       hud.clock +
       '|' + own + ':' + rival +
@@ -1165,16 +1547,18 @@ export function buildScene(THREE, mount) {
       '|' + tone +
       '|' + note +
       '|' + hud.teams[0].name + '/' + hud.teams[0].color +
-      '|' + hud.teams[1].name + '/' + hud.teams[1].color;
+      '|' + hud.teams[1].name + '/' + hud.teams[1].color +
+      chipKey;
     return hud;
   }
 
   // ------------------------------------------------------------------ camera + highlight
 
   /**
-   * With an argument: where the robot is at that moment. Without one, this is the picker card
-   * asking where the machine IS at the moment it was just posed at, so it answers with the last
-   * update()'s focus and falls back to the frozen hero moment, which is upright and mid-walk.
+   * With an argument: where the robots are at that moment. Without one, this is the picker card
+   * asking where they ARE at the moment they were just posed at, so it answers with the last
+   * update()'s focus and falls back to the frozen hero moment, which has all three present, upright
+   * and un-penalized.
    */
   function cameraFocus(tSec) {
     if (!built) return null;
@@ -1185,33 +1569,43 @@ export function buildScene(THREE, mount) {
     return lastFocus || heroFocus;
   }
 
-  // One robot on a 9 x 6 m pitch, walking at well under 0.5 m/s, on a pose track that legitimately
-  // jumps at segment boundaries: a softer spring than battle's, and a snap threshold just above the
-  // largest honest frame-to-frame move so a localization jump cuts instead of whipping.
-  const followTuning = { omega: 2.6, lead: 0.18, snap: 0.9 };
+  // Three robots on a 9 x 6 m pitch, walking at well under 0.5 m/s, followed on a CENTROID that
+  // legitimately jumps when a robot enters or leaves a presence segment: a softer spring than
+  // battle's, and a snap threshold just above the largest honest frame-to-frame move so both a
+  // localization jump and a presence change cut instead of whipping.
+  const followTuning = { omega: 2.2, lead: 0.15, snap: 1.2 };
+
+  /** Does the current highlight select this robot? */
+  function highlightHits(bot) {
+    if (!highlight) return false;
+    return highlight === 'team' || highlight === bot.key;
+  }
 
   function applyHighlight() {
-    const on = !!highlight;
-    for (let i = 0; i < shellMats.length; i++) {
-      shellMats[i].emissive.setHex(on ? ALERT : 0x000000);
-      shellMats[i].emissiveIntensity = on ? 0.4 : 0;
+    for (let i = 0; i < bots.length; i++) {
+      const bot = bots[i];
+      const on = highlightHits(bot);
+      bot.mats.light.emissive.setHex(on ? ALERT : 0x000000);
+      bot.mats.dark.emissive.setHex(on ? ALERT : 0x000000);
+      bot.mats.light.emissiveIntensity = on ? 0.35 : 0;
+      bot.mats.dark.emissiveIntensity = on ? 0.35 : 0;
+      bot.halo.visible = on && bot.group.visible;
+      bot.halo.material.opacity = on ? 0.4 : 0;
+      if (bot.halo.visible) bot.halo.position.set(bot.x, bot.y, Z_HALO);
     }
-    for (let i = 0; i < accentMats.length; i++) {
-      accentMats[i].emissiveIntensity = on ? 0.6 : 0.35;
-    }
-    halo.visible = on;
-    halo.material.opacity = on ? 0.4 : 0;
-    if (on) halo.position.set(robot.position.x, robot.position.y, Z_HALO);
   }
 
   /**
-   * `body` is what every finding in data.js points at, and it is the honest granularity: the
-   * findings are falls, battery sag, servo clamps and a match result, none of which belong to one
-   * limb. `head`, `arms` and `legs` are accepted so a later finding can narrow without a scene
-   * change; anything else clears.
+   * `team` is what a finding about the match points at, and `donna` / `jack` / `rory` are what a
+   * finding about ONE robot points at - Jack's three falls are his, Donna's penalty is hers. That
+   * is the honest granularity: no finding in this mission belongs to one limb. Anything else
+   * clears, which is also how the four legacy part ids (`body`, `head`, `arms`, `legs`) are
+   * folded onto the whole team rather than silently selecting nothing.
    */
   function setHighlight(partId) {
-    highlight = partId && /^(body|head|arms|legs)$/.test(partId) ? partId : null;
+    if (partId === 'team' || partId === 'donna' || partId === 'jack' || partId === 'rory') highlight = partId;
+    else if (partId && /^(body|head|arms|legs)$/.test(partId)) highlight = 'team';
+    else highlight = null;
     if (built) applyHighlight();
   }
 
@@ -1225,27 +1619,19 @@ export function buildScene(THREE, mount) {
       }
     });
     disposables.forEach((d) => d.dispose && d.dispose());
-    links = null;
-    joints = null;
-    robot = null;
-    torso = null;
+    bots = null;
     ball = null;
-    contact = null;
-    halo = null;
-    shellMats = [];
-    accentMats = [];
-    contactPts = [];
-    evGoal = null;
-    evBlip = null;
-    evWhistleT = Infinity;
+    evGoal1 = null;
+    evGoal2 = null;
     lastFocus = null;
     heroFocus = null;
     highlight = null;
-    hudGameI = -2;
+    hudHudI = -2;
     hudNote = null;
-    hudLabel = null;
+    hudChipKey = null;
     lastPoseT = null;
     built = false;
+    isProxy = false;
     D = null;
   }
 
@@ -1260,12 +1646,15 @@ export function buildScene(THREE, mount) {
     // The viewer's default rig is wrong for an 11 x 8 m pitch with its own turf: an 80 m ground
     // plane and two 60 m grids would sit under the field, and a 1024^2 shadow map over an 18 m
     // frustum is ~18 mm/texel, which on a 0.09 m foot is a smear. Grounding is the baked contact
-    // patch instead, and every mesh here sets castShadow = false.
+    // patch instead, and every mesh here sets castShadow = false. `env` IS asked for, which v1 did
+    // not need: the CAD's motor housings and milled brackets carry real metalness, and with no IBL
+    // to reflect every one of them collapses to flat grey.
     rendering: {
       ground: false,
       grids: false,
       shadow: false,
-      fog: { color: 0x0e1114, near: 12, far: 42 },
+      env: true,
+      fog: { color: 0x0e1114, near: 14, far: 48 },
     },
   };
 }

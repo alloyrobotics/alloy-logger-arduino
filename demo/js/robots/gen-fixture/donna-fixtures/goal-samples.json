@@ -1,0 +1,64 @@
+{
+  "goals": [
+    {
+      "id": "goal-5-0",
+      "t": 36.268,
+      "samples": {
+        "donna": {
+          "alignedT": 36.267634,
+          "secondsRemaining": 162,
+          "ownScore": 5,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        },
+        "jack": {
+          "alignedT": 36.265277,
+          "secondsRemaining": 162,
+          "ownScore": 5,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        },
+        "rory": {
+          "alignedT": 36.268249,
+          "secondsRemaining": 162,
+          "ownScore": 5,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        }
+      }
+    },
+    {
+      "id": "goal-6-0",
+      "t": 229.598,
+      "samples": {
+        "donna": {
+          "alignedT": 229.59788,
+          "secondsRemaining": -31,
+          "ownScore": 6,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        },
+        "jack": {
+          "alignedT": 229.599611,
+          "secondsRemaining": -31,
+          "ownScore": 6,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        },
+        "rory": {
+          "alignedT": 229.598467,
+          "secondsRemaining": -31,
+          "ownScore": 6,
+          "rivalScore": 0,
+          "gameState": 1,
+          "secondaryState": 0
+        }
+      }
+    }
+  ]
+}

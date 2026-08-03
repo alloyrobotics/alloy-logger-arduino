@@ -1789,7 +1789,7 @@ test('the chat handler takes its role through normalizeRole and nowhere else', (
   // prove the BUILDER is safe, and this one proves the handler is wired to it rather than
   // interpolating `body.role` somewhere the builder never sees.
   assert.match(CHAT_SRC, /const role = normalizeRole\(body\?\.role\)/, 'the body reaches a whitelist first');
-  assert.match(CHAT_SRC, /system: buildSystemBlocks\(robot\.facts, role\)/, 'and the prompt is built from it');
+  assert.match(CHAT_SRC, /system: buildSystemBlocks\(robot\.facts, role, robotId\)/, 'and the prompt is built from it');
   assert.equal(
     CHAT_SRC.match(/body\?\.role|body\.role/g)?.length,
     1,

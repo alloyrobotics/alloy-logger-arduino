@@ -3,7 +3,7 @@
 //
 //   ANTHROPIC_API_KEY=$(pass show anthropic/alloylogger-demo) node worker/smoke.mjs
 //
-// Guard-rail checks are free; the grounded/persona checks spend ~9 Haiku calls (~$0.06). Answer
+// Guard-rail checks are free; the grounded/persona checks spend ~10 Haiku calls (~$0.07). Answer
 // text is printed for eyeballing; hard assertions stay loose enough to survive rewording.
 //
 // One of those calls is ADVERSARIAL and is graded, not eyeballed. See "the banned causal question".
@@ -162,9 +162,9 @@ const GROUNDED = {
   // A question the battle pack answers from its own findings; the misattribution trap for this
   // mission is asked below with its own grading, mirroring the ssl probe.
   battle: 'What went stale at 72 seconds?',
-  // Donna is a real onboard rosbag2 recording, converted offline for this demo. The dedicated probe
-  // below checks that the analyst never credits the AlloyLogger library or production pipeline.
-  donna: 'How many times did Donna fall during this mission, and how do you know?',
+  // Donna is the chart protagonist in a three-log replay. The dedicated probes below keep both the
+  // recording path and the chart-versus-scene source split honest.
+  donna: 'How many times did Jack fall, and did Donna or Rory fall too?',
 };
 
 origLog('\n== grounded answers ==');
@@ -325,6 +325,100 @@ origLog('\n== adversarial: the Donna recording question ==');
   check('donna adversarial no em dash', noEmDash(r.text));
   check(
     'donna adversarial evidence ids valid',
+    (r.done?.evidence || []).every((id) => FACTS.donna.evidenceIds.includes(id)),
+  );
+}
+
+// ------------------------------------------------ the Donna chart-source probe
+//
+// Three robots drive the scene, but Donna alone supplies the six telemetry charts and facts series.
+// A model that flattens "three onboard logs" into "three chart sources" would invent sensor evidence
+// for Jack and Rory, so this split gets its own graded question.
+
+origLog('\n== grounded: the Donna chart-source question ==');
+{
+  const q = "Which robot's sensors produced the charts, and what do Jack and Rory contribute?";
+  const r = await call(ask('donna', q));
+  origLog(`\n--- donna chart source: ${q}\n${r.text}\n`);
+  check('donna chart-source answered with done frame', r.status === 200 && !!r.done && r.text.length > 40);
+  check(
+    'the answer names Donna as the chart source',
+    /Donna[^.?!]{0,100}(?:chart|telemetry|sensor)|(?:chart|telemetry|sensor)[^.?!]{0,100}Donna/i.test(r.text),
+    r.text.slice(0, 400),
+  );
+  check(
+    'and assigns Jack and Rory to replay, scene or event evidence',
+    /Jack[^.?!]{0,160}Rory|Rory[^.?!]{0,160}Jack/i.test(r.text) &&
+      /scene|replay|body|pose|joint|event|ledger/i.test(r.text),
+    r.text.slice(0, 500),
+  );
+  const CLAIMS_TEAM_CHARTS =
+    /(?:charts?|telemetry series|sensor charts?)[^.?!]{0,80}(?:from|use|combine|produced by)[^.?!]{0,60}(?:Jack|Rory|all three)|(?:Jack|Rory|all three)[^.?!]{0,80}(?:produced|supplied|provided|drive)[^.?!]{0,50}(?:charts?|telemetry series)/i;
+  const teamCharts = CLAIMS_TEAM_CHARTS.exec(r.text);
+  check('and never claims Jack or Rory produced the charts', !teamCharts, teamCharts ? `"${teamCharts[0]}"` : '');
+  check('donna chart-source no em dash', noEmDash(r.text));
+  check(
+    'donna chart-source evidence ids valid',
+    (r.done?.evidence || []).every((id) => FACTS.donna.evidenceIds.includes(id)),
+  );
+}
+
+// ------------------------------------------------ the Donna lead sufficiency probe
+//
+// The lead register must preserve both levels of provenance when asked for fleet-scale conclusions:
+// one match has three independent onboard logs, while Donna alone supplies the chart telemetry.
+// Calling the mission "one log" contradicts the pack; treating all three logs as chart sources does too.
+
+origLog('\n== visitor role: Donna lead data sufficiency ==');
+{
+  const q = 'Is this enough data to say how often these problems happen across the fleet?';
+  const r = await call({ ...ask('donna', q), role: 'lead' });
+  origLog(`\n--- donna as lead: ${q}\n${r.text}\n`);
+  check('donna lead sufficiency answered with done frame', r.status === 200 && !!r.done && r.text.length > 40);
+
+  // Sentence-scoped and negation-aware (Codex R3-C2, same class as v1's grader
+  // lesson): "One log cannot establish a fleet rate; this mission has three
+  // onboard recordings" is a TRUTHFUL negation and must pass. A sentence only
+  // counts as a single-log CLAIM if it affirms the mission IS one log AND does
+  // not itself acknowledge the multi-log provenance.
+  const SENTENCES = r.text.split(/(?<=[.!?])\s+/);
+  const AFFIRMS_SINGLE_LOG =
+    /\b(?:this(?: mission)?|it)\s+(?:is|was|contains|has)\s+(?:only\s+)?(?:a\s+)?(?:single|one)\s+log\b|\b(?:we have|there (?:is|was))\s+(?:only\s+)?(?:a\s+)?(?:single|one)\s+log\b/i;
+  const ACKNOWLEDGES_MULTI =
+    /(?:three|3)\s+(?:independent\s+)?(?:onboard\s+)?(?:robots?(?:'s?)?\s+)?(?:logs?|recordings?)|recorded\s+(?:on|by|across)\s+(?:all\s+)?(?:the\s+)?(?:three|3)\s+robots/i;
+  const singleLogSentence = SENTENCES.find((s) => AFFIRMS_SINGLE_LOG.test(s) && !ACKNOWLEDGES_MULTI.test(s));
+  check(
+    'the Donna lead answer never claims the mission is a single log',
+    !singleLogSentence,
+    singleLogSentence ? `"${singleLogSentence.slice(0, 200)}"` : '',
+  );
+
+  // Paraphrase-tolerant: "recorded on three robots", "three robots' logs", and
+  // "three onboard logs" all truthfully acknowledge the multi-log provenance.
+  // A terse lead answer must not be failed for phrasing (v1 lesson: graders that
+  // string-match one wording reject correct answers).
+  const NAMES_THREE_LOGS =
+    /(?:three|3)\s+(?:independent\s+)?(?:onboard\s+)?(?:robots?(?:'s?)?\s+)?(?:logs?|recordings?)|recorded\s+(?:on|by|across)\s+(?:all\s+)?(?:the\s+)?(?:three|3)\s+robots/i;
+  check('the Donna lead answer acknowledges the three onboard logs', NAMES_THREE_LOGS.test(r.text), r.text.slice(0, 400));
+
+  // The register is terse; the requirement is the ABSENCE of a false chart-source
+  // claim, not an affirmative recital. Fail only if the answer attributes chart or
+  // telemetry data to Jack or Rory.
+  // Negation-aware (Codex R3-C2): "Jack and Rory add replay poses and event
+  // evidence, not chart telemetry" is the register's own truthful wording. A
+  // sentence fails only if it mentions a teammate with chart/telemetry AND
+  // carries no negating word scoping that attribution.
+  const TEAMMATE_CHART_SENTENCE = /(?:Jack|Rory)(?:'s)?[^.?!]*(?:chart|telemetry|sensor data)|(?:chart|telemetry)[^.?!]*(?:Jack|Rory)/i;
+  const NEGATES = /\b(?:not|never|no|without|rather than|instead of|only Donna|Donna(?:'s)? (?:alone|only|sensors alone))\b/i;
+  const falseAttribution = SENTENCES.find((s) => TEAMMATE_CHART_SENTENCE.test(s) && !NEGATES.test(s));
+  check(
+    'and never attributes chart telemetry to Jack or Rory',
+    !falseAttribution,
+    falseAttribution ? `"${falseAttribution.slice(0, 200)}"` : '',
+  );
+  check('donna lead sufficiency no em dash', noEmDash(r.text));
+  check(
+    'donna lead sufficiency evidence ids valid',
     (r.done?.evidence || []).every((id) => FACTS.donna.evidenceIds.includes(id)),
   );
 }

@@ -1,0 +1,30 @@
+{
+  "donna": [
+    [
+      86.851506,
+      123.922897
+    ]
+  ],
+  "rory": [
+    [
+      0.0,
+      28.071596
+    ]
+  ],
+  "donnaPoseOutage": [
+    {
+      "start_t": 86.854086,
+      "end_t": 124.099786,
+      "duration_sec": 37.2457,
+      "classification": "penalty-outage"
+    }
+  ],
+  "roryPreFirstFix": [
+    {
+      "start_t": 0.0,
+      "end_t": 28.268628,
+      "duration_sec": 28.268628,
+      "classification": "pre-first-fix"
+    }
+  ]
+}

@@ -1155,6 +1155,46 @@ const APPROVED_OCCURRENCES = [
     sha256: '0a4c0b21c9b258c4ada6c18e98aef075a1506e69f9e39afceff34e25dadb4c6f',
     why: "donna mission's Hugh-approved factual attribution; names donna's source, not the SSL match",
   },
+  {
+    file: 'demo/DESIGN.md',
+    sha256: '9574b77730fb565e3d14f97ccb488627003c05c7cf36465a8bc50f00f513cf9d',
+    why: "donna mission's public event description; names donna's attributed match, not the SSL source",
+  },
+  {
+    file: 'demo/DESIGN.md',
+    sha256: '2dbac26ed4b46e85a186861c3bebd6bd0c9fa266820ff628a14f52f047e4bef5',
+    why: "donna mission's Hugh-approved attribution string; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/scene.js',
+    sha256: '445f53233fe2fce654850a5928d2f1aaec1d9652ccce1d8c2254d7a224053f1d',
+    why: "donna scene header names donna's publicly attributed event, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: '0212a8631dc6be4c910e5d744191eccec02759b5aa980a766769b6348cde5e87',
+    why: "donna mission's Hugh-approved attribution string; names donna's source, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/donna/script.js',
+    sha256: '2c7424542946f757ae9ce5b799881d0110217ba7860d3252c215134e0c13904d',
+    why: "donna mission context names donna's publicly attributed event, not the SSL match",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: 'f72c511106385b0aa16d539bc0db43629e41c5f65bafb2fbf2aa1e4326960185',
+    why: "the Donna test freezes Hugh's approved attribution and names no SSL source",
+  },
+  {
+    file: 'demo/js/robots/gen-fixture/donna-script.test.mjs',
+    sha256: 'c9185a997e385ef369d73128773a0a027fbac549f36369a8abb3d75e5c0fac24',
+    why: "the Donna test asserts its own public event wording and names no SSL source",
+  },
+  {
+    file: 'worker/facts.generated.js',
+    sha256: 'cd6dab66fd2b620efb358c4f7dba48e3089b8c74f9be3dc3308e9ddac399e2d8',
+    why: "the generated Donna facts carry Hugh's approved attribution to the analyst, not an SSL source",
+  },
 ];
 
 /** The exact text an approval covers: the line, or a window around the hit on a megaline file. */

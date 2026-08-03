@@ -1,84 +1,38 @@
 {
-  "heroBall": {
-    "ballBearingDeg": 55.24,
-    "ballDistM": 0.265,
-    "ballSeen": true,
-    "frame": "derived Donna-relative from two map-frame estimates",
-    "poseAtTickMapXYYaw": [
-      2.3710860924893873,
-      -0.2385754644943666,
-      -0.007759026170205995
-    ],
-    "poseSegment": 30,
-    "rawBallCovarianceTrace": 1.0679848290961393,
-    "rawBallMapXYZ": [
-      2.5240305668257124,
-      -0.021804860706411994,
-      0.07543154383641681
-    ],
-    "rawBallSampleT": 240.291687965,
-    "rawBearingDeg": 55.23932958596081,
-    "rawDistanceM": 0.2652951316865977,
-    "rawPoseSourceCovarianceTraces": [
-      0.0221,
-      0.014
-    ],
-    "rawPoseSourceTimes": [
-      240.192096949,
-      240.337309122
-    ],
-    "t": 240.3
+  "format": "donna-known-poses/2",
+  "provenance": {
+    "module": "demo/js/robots/donna/donna-data.js",
+    "datasetHash": "71f4bb899e323d98663e303fa485e6835824b6466eb793911caf692806cb1836",
+    "formatVersion": "donna-team-v2",
+    "derivation": "Every value is read out of the emitted mission module and composed with an FK written from the URDF rig table, never from donna/scene.js. Sample-exactness of the module against the raw MCAPs is the Phase 1 verifier and donna-decode.test.mjs gate, not this one; this fixture freezes what the module says so the SCENE can be held to it.",
+    "torsoLocalFrame": "visualInstances[].torsoLocalXYZ are ROS metres in the TORSO LINK frame: bone_local[bucket] * pre_composed * vertex. Field pose, ground lift, heading and the ROS->three frame map are deliberately excluded so a wrong-frame attachment cannot hide behind them.",
+    "fixtureCount": "EXACTLY FOUR, and no more are possible: Donna and Rory never fall inside the mission window (window fall counts 0/3/0), so a donna-fallen or rory-fallen fixture would have to be invented. Jack owns every fall.",
+    "fallenChoice": "jack-fallen is sampled at t=7.5 s, inside fall 1. The recorded FALLEN enum interval is only 7.137796-7.159246 s (21 ms), which is too narrow to sample robustly, so the fixture binds the prone ATTITUDE at the deepest point of the fall and records the enum honestly (GETTING_UP). The 21 ms FALLEN interval itself is asserted separately by the test."
   },
   "poses": [
     {
+      "name": "donna-upright",
+      "robot": "donna",
+      "targetT": 187.6,
+      "tiltDeg": 10.3137,
+      "tiltMetric": "angle between the torso up axis and world vertical, from the decoded yaw-free torso quaternion",
       "assertion": {
-        "degrees": 20.0,
-        "operator": "<="
+        "operator": "<=",
+        "degrees": 20
       },
-      "decodedJointRad": [
-        -1.511,
-        -0.1764,
-        -0.0291,
-        0.1427,
-        0.7459,
-        1.4319,
-        -0.6305,
-        0.1443,
-        0.0491,
-        -0.2684,
-        -0.6964,
-        -1.333,
-        0.6016,
-        -0.293,
-        -0.7915,
-        0.7842,
-        0.0,
-        0.0,
-        -0.247,
-        0.2517
-      ],
-      "jointInt16": [
-        -15110,
-        -1764,
-        -291,
-        1427,
-        7459,
-        14319,
-        -6305,
-        1443,
-        491,
-        -2684,
-        -6964,
-        -13330,
-        6016,
-        -2930,
-        -7915,
-        7842,
-        0,
-        0,
-        -2470,
-        2517
-      ],
+      "presence": {
+        "className": "live",
+        "renderMode": "LIVE",
+        "startT": 124.1,
+        "endT": 250
+      },
+      "robotState": "WALKING",
+      "fieldPose": {
+        "xM": -1.327385,
+        "yM": 0.445308,
+        "yawRad": -1.0044,
+        "interpolated": true
+      },
       "jointNames": [
         "HeadPan",
         "HeadTilt",
@@ -101,90 +55,257 @@
         "RElbow",
         "LElbow"
       ],
-      "name": "upright",
-      "rawImuSampleT": 240.3011868,
-      "rawJointRad": [
-        -1.5109710693359375,
-        -0.1764077991247177,
-        -0.029145635664463043,
-        0.14272990822792053,
-        0.7458788752555847,
-        1.4319032430648804,
-        -0.630466103553772,
-        0.14426463842391968,
-        0.049111366271972656,
-        -0.2684466540813446,
-        -0.6964272856712341,
-        -1.3330293893814087,
-        0.601614236831665,
-        -0.2929903268814087,
-        -0.7915341258049011,
-        0.7842471599578857,
-        0.0,
-        0.0,
-        -0.24697090685367584,
-        0.25169575214385986
+      "jointGridIndex": 4690,
+      "jointQ10000AtGridIndex": [
+        445,
+        -10538,
+        952,
+        1458,
+        5955,
+        13874,
+        -7041,
+        1289,
+        -660,
+        -767,
+        -6013,
+        -14082,
+        7305,
+        -813,
+        -7885,
+        7827,
+        77,
+        46,
+        -2470,
+        2425
       ],
-      "rawJointSampleT": 240.302055359,
-      "rawQuaternion": [
-        0.13395427415755157,
-        0.025637511639247067,
-        -0.9811561885579745,
-        -0.13686308518464582
+      "decodedJointRad": [
+        0.0445,
+        -1.0538,
+        0.0952,
+        0.1458,
+        0.5955,
+        1.3874,
+        -0.7041,
+        0.1289,
+        -0.066,
+        -0.0767,
+        -0.6013,
+        -1.4082,
+        0.7305,
+        -0.0813,
+        -0.7885,
+        0.7827,
+        0.0077,
+        0.0046,
+        -0.247,
+        0.2425
       ],
-      "targetT": 240.3,
-      "tiltDeg": 15.6775,
-      "tiltMetric": "angle between torso up axis and world vertical from the full IMU quaternion"
+      "kneeAnkleRad": {
+        "LKnee": 1.3874,
+        "RKnee": -1.4082,
+        "LAnklePitch": -0.7041,
+        "RAnklePitch": 0.7305
+      },
+      "visualInstances": [
+        {
+          "instanceId": "torso#0",
+          "link": "torso",
+          "mesh": "mx-64-body",
+          "materialClass": "dark",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            43,
+            85
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.014499435,
+              0.070000004,
+              0.217999896
+            ],
+            [
+              0.041000055,
+              0.065499773,
+              0.214399574
+            ],
+            [
+              0.046600435,
+              0.069999842,
+              0.183400131
+            ]
+          ]
+        },
+        {
+          "instanceId": "torso#23",
+          "link": "torso",
+          "mesh": "battery_cage",
+          "materialClass": "light",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            126,
+            251
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.058999685,
+              -0.005999853,
+              0.04800022
+            ],
+            [
+              -0.058999617,
+              -0.024499891,
+              0.005999641
+            ],
+            [
+              -0.057499505,
+              -0.073499351,
+              0.0295
+            ]
+          ]
+        },
+        {
+          "instanceId": "llb#0",
+          "link": "llb",
+          "mesh": "flex_stollen",
+          "materialClass": "dark",
+          "bucket": "LAnkleRoll",
+          "vertexIndices": [
+            0,
+            140,
+            279
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.033664736,
+              0.160711598,
+              -0.384178086
+            ],
+            [
+              -0.023133237,
+              0.161126554,
+              -0.386323172
+            ],
+            [
+              -0.029601758,
+              0.161164202,
+              -0.372801325
+            ]
+          ]
+        },
+        {
+          "instanceId": "head#5",
+          "link": "head",
+          "mesh": "basler_ace_gige_c-mount_v01",
+          "materialClass": "dark",
+          "bucket": "HeadTilt",
+          "vertexIndices": [
+            0,
+            34,
+            68
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.110224534,
+              -0.00918286,
+              0.302353549
+            ],
+            [
+              0.088195656,
+              0.018865136,
+              0.338864666
+            ],
+            [
+              0.102912431,
+              0.005005621,
+              0.284755234
+            ]
+          ]
+        },
+        {
+          "instanceId": "r_lower_arm#2",
+          "link": "r_lower_arm",
+          "mesh": "hand",
+          "materialClass": "light",
+          "bucket": "RElbow",
+          "vertexIndices": [
+            0,
+            52,
+            103
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.005229664,
+              -0.101982972,
+              0.015541005
+            ],
+            [
+              0.022561677,
+              -0.135643983,
+              0.060696569
+            ],
+            [
+              0.013288728,
+              -0.136091548,
+              -0.012365284
+            ]
+          ]
+        },
+        {
+          "instanceId": "l_lower_leg#6",
+          "link": "l_lower_leg",
+          "mesh": "lower_leg",
+          "materialClass": "light",
+          "bucket": "LKnee",
+          "vertexIndices": [
+            0,
+            54,
+            107
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.130676008,
+              0.038519014,
+              -0.203560045
+            ],
+            [
+              0.096320542,
+              0.040149652,
+              -0.192373658
+            ],
+            [
+              0.026010509,
+              0.069908818,
+              -0.348601775
+            ]
+          ]
+        }
+      ]
     },
     {
+      "name": "jack-upright",
+      "robot": "jack",
+      "targetT": 187.6,
+      "tiltDeg": 11.3946,
+      "tiltMetric": "angle between the torso up axis and world vertical, from the decoded yaw-free torso quaternion",
       "assertion": {
-        "degrees": 60.0,
-        "operator": ">="
+        "operator": "<=",
+        "degrees": 20
       },
-      "decodedJointRad": [
-        -0.0046,
-        -0.7793,
-        0.0015,
-        -0.0015,
-        0.8779,
-        1.1142,
-        -0.5031,
-        -0.0031,
-        0.02,
-        -0.0184,
-        -0.8498,
-        -1.0692,
-        0.4819,
-        -0.069,
-        -0.0077,
-        0.0246,
-        0.0015,
-        0.0031,
-        -0.7885,
-        0.7858
-      ],
-      "jointInt16": [
-        -46,
-        -7793,
-        15,
-        -15,
-        8779,
-        11142,
-        -5031,
-        -31,
-        200,
-        -184,
-        -8498,
-        -10692,
-        4819,
-        -690,
-        -77,
-        246,
-        15,
-        31,
-        -7885,
-        7858
-      ],
+      "presence": {
+        "className": "live",
+        "renderMode": "LIVE",
+        "startT": 150.31,
+        "endT": 249.99
+      },
+      "robotState": "WALKING",
+      "fieldPose": {
+        "xM": 2.037769,
+        "yM": 1.2,
+        "yawRad": -0.428123,
+        "interpolated": true
+      },
       "jointNames": [
         "HeadPan",
         "HeadTilt",
@@ -207,40 +328,785 @@
         "RElbow",
         "LElbow"
       ],
-      "name": "fallen",
-      "rawImuSampleT": 95.830722094,
-      "rawJointRad": [
-        -0.004601942375302315,
-        -0.7792622447013855,
-        0.0015347301959991455,
-        -0.0015339808305725455,
-        0.8778656721115112,
-        1.1142141819000244,
-        -0.503145694732666,
-        -0.003067961661145091,
-        0.01995149254798889,
-        -0.01840776950120926,
-        -0.849825382232666,
-        -1.06918466091156,
-        0.4819053113460541,
-        -0.06902913749217987,
-        -0.0076699042692780495,
-        0.024555683135986328,
-        0.0015347301959991455,
-        0.003069460391998291,
-        -0.7884661555290222,
-        0.7857818603515625
+      "jointGridIndex": 1876,
+      "jointQ10000AtGridIndex": [
+        292,
+        -10492,
+        -476,
+        2532,
+        8119,
+        17097,
+        -8728,
+        2578,
+        200,
+        -399,
+        -6872,
+        -14435,
+        7213,
+        -920,
+        -7854,
+        7796,
+        31,
+        15,
+        -2470,
+        2425
       ],
-      "rawJointSampleT": 95.831522942,
-      "rawQuaternion": [
-        -0.48244684395298726,
-        0.26724523007145023,
-        -0.747256449452208,
-        -0.37071933927964845
+      "decodedJointRad": [
+        0.0292,
+        -1.0492,
+        -0.0476,
+        0.2532,
+        0.8119,
+        1.7097,
+        -0.8728,
+        0.2578,
+        0.02,
+        -0.0399,
+        -0.6872,
+        -1.4435,
+        0.7213,
+        -0.092,
+        -0.7854,
+        0.7796,
+        0.0031,
+        0.0015,
+        -0.247,
+        0.2425
       ],
-      "targetT": 95.83,
-      "tiltDeg": 66.9428,
-      "tiltMetric": "angle between torso up axis and world vertical from the full IMU quaternion"
+      "kneeAnkleRad": {
+        "LKnee": 1.7097,
+        "RKnee": -1.4435,
+        "LAnklePitch": -0.8728,
+        "RAnklePitch": 0.7213
+      },
+      "visualInstances": [
+        {
+          "instanceId": "torso#0",
+          "link": "torso",
+          "mesh": "mx-64-body",
+          "materialClass": "dark",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            43,
+            85
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.014499435,
+              0.070000004,
+              0.217999896
+            ],
+            [
+              0.041000055,
+              0.065499773,
+              0.214399574
+            ],
+            [
+              0.046600435,
+              0.069999842,
+              0.183400131
+            ]
+          ]
+        },
+        {
+          "instanceId": "torso#23",
+          "link": "torso",
+          "mesh": "battery_cage",
+          "materialClass": "light",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            126,
+            251
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.058999685,
+              -0.005999853,
+              0.04800022
+            ],
+            [
+              -0.058999617,
+              -0.024499891,
+              0.005999641
+            ],
+            [
+              -0.057499505,
+              -0.073499351,
+              0.0295
+            ]
+          ]
+        },
+        {
+          "instanceId": "llb#0",
+          "link": "llb",
+          "mesh": "flex_stollen",
+          "materialClass": "dark",
+          "bucket": "LAnkleRoll",
+          "vertexIndices": [
+            0,
+            140,
+            279
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.030419238,
+              0.179453527,
+              -0.351509529
+            ],
+            [
+              -0.019883061,
+              0.180933834,
+              -0.353085507
+            ],
+            [
+              -0.027076777,
+              0.180525794,
+              -0.339941404
+            ]
+          ]
+        },
+        {
+          "instanceId": "head#5",
+          "link": "head",
+          "mesh": "basler_ace_gige_c-mount_v01",
+          "materialClass": "dark",
+          "bucket": "HeadTilt",
+          "vertexIndices": [
+            0,
+            34,
+            68
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.109867512,
+              -0.011019414,
+              0.302735788
+            ],
+            [
+              0.088102671,
+              0.017357431,
+              0.339151027
+            ],
+            [
+              0.102854327,
+              0.003281643,
+              0.28510696
+            ]
+          ]
+        },
+        {
+          "instanceId": "r_lower_arm#2",
+          "link": "r_lower_arm",
+          "mesh": "hand",
+          "materialClass": "light",
+          "bucket": "RElbow",
+          "vertexIndices": [
+            0,
+            52,
+            103
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.005866985,
+              -0.101395633,
+              0.015617449
+            ],
+            [
+              0.022949114,
+              -0.135259258,
+              0.060716707
+            ],
+            [
+              0.013901679,
+              -0.135439655,
+              -0.012374562
+            ]
+          ]
+        },
+        {
+          "instanceId": "l_lower_leg#6",
+          "link": "l_lower_leg",
+          "mesh": "lower_leg",
+          "materialClass": "light",
+          "bucket": "LKnee",
+          "vertexIndices": [
+            0,
+            54,
+            107
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.157522902,
+              0.070642201,
+              -0.182603711
+            ],
+            [
+              0.124770191,
+              0.065351869,
+              -0.168203551
+            ],
+            [
+              0.033988019,
+              0.098475458,
+              -0.312764121
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "rory-upright",
+      "robot": "rory",
+      "targetT": 187.6,
+      "tiltDeg": 8.8107,
+      "tiltMetric": "angle between the torso up axis and world vertical, from the decoded yaw-free torso quaternion",
+      "assertion": {
+        "operator": "<=",
+        "degrees": 20
+      },
+      "presence": {
+        "className": "live",
+        "renderMode": "LIVE",
+        "startT": 28.27,
+        "endT": 249.95
+      },
+      "robotState": "CONTROLLABLE",
+      "fieldPose": {
+        "xM": -3.104,
+        "yM": -0.125385,
+        "yawRad": 0.0898,
+        "interpolated": true
+      },
+      "jointNames": [
+        "HeadPan",
+        "HeadTilt",
+        "LHipYaw",
+        "LHipRoll",
+        "LHipPitch",
+        "LKnee",
+        "LAnklePitch",
+        "LAnkleRoll",
+        "RHipYaw",
+        "RHipRoll",
+        "RHipPitch",
+        "RKnee",
+        "RAnklePitch",
+        "RAnkleRoll",
+        "RShoulderPitch",
+        "LShoulderPitch",
+        "RShoulderRoll",
+        "LShoulderRoll",
+        "RElbow",
+        "LElbow"
+      ],
+      "jointGridIndex": 1876,
+      "jointQ10000AtGridIndex": [
+        -3988,
+        -7532,
+        -153,
+        936,
+        6922,
+        14273,
+        -7010,
+        1044,
+        184,
+        -951,
+        -6857,
+        -14312,
+        6876,
+        -1150,
+        -7839,
+        7766,
+        61,
+        -46,
+        -2485,
+        2425
+      ],
+      "decodedJointRad": [
+        -0.3988,
+        -0.7532,
+        -0.0153,
+        0.0936,
+        0.6922,
+        1.4273,
+        -0.701,
+        0.1044,
+        0.0184,
+        -0.0951,
+        -0.6857,
+        -1.4312,
+        0.6876,
+        -0.115,
+        -0.7839,
+        0.7766,
+        0.0061,
+        -0.0046,
+        -0.2485,
+        0.2425
+      ],
+      "kneeAnkleRad": {
+        "LKnee": 1.4273,
+        "RKnee": -1.4312,
+        "LAnklePitch": -0.701,
+        "RAnklePitch": 0.6876
+      },
+      "visualInstances": [
+        {
+          "instanceId": "torso#0",
+          "link": "torso",
+          "mesh": "mx-64-body",
+          "materialClass": "dark",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            43,
+            85
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.014499435,
+              0.070000004,
+              0.217999896
+            ],
+            [
+              0.041000055,
+              0.065499773,
+              0.214399574
+            ],
+            [
+              0.046600435,
+              0.069999842,
+              0.183400131
+            ]
+          ]
+        },
+        {
+          "instanceId": "torso#23",
+          "link": "torso",
+          "mesh": "battery_cage",
+          "materialClass": "light",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            126,
+            251
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.058999685,
+              -0.005999853,
+              0.04800022
+            ],
+            [
+              -0.058999617,
+              -0.024499891,
+              0.005999641
+            ],
+            [
+              -0.057499505,
+              -0.073499351,
+              0.0295
+            ]
+          ]
+        },
+        {
+          "instanceId": "llb#0",
+          "link": "llb",
+          "mesh": "flex_stollen",
+          "materialClass": "dark",
+          "bucket": "LAnkleRoll",
+          "vertexIndices": [
+            0,
+            140,
+            279
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.019789163,
+              0.139743797,
+              -0.386601175
+            ],
+            [
+              -0.009263012,
+              0.141249783,
+              -0.388219257
+            ],
+            [
+              -0.01642208,
+              0.14094954,
+              -0.375053349
+            ]
+          ]
+        },
+        {
+          "instanceId": "head#5",
+          "link": "head",
+          "mesh": "basler_ace_gige_c-mount_v01",
+          "materialClass": "dark",
+          "bucket": "HeadTilt",
+          "vertexIndices": [
+            0,
+            34,
+            68
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.079309746,
+              -0.053157029,
+              0.325021225
+            ],
+            [
+              0.062336065,
+              -0.014534979,
+              0.353748471
+            ],
+            [
+              0.083867776,
+              -0.03934326,
+              0.306236
+            ]
+          ]
+        },
+        {
+          "instanceId": "r_lower_arm#2",
+          "link": "r_lower_arm",
+          "mesh": "hand",
+          "materialClass": "light",
+          "bucket": "RElbow",
+          "vertexIndices": [
+            0,
+            52,
+            103
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.006248568,
+              -0.101777314,
+              0.015763873
+            ],
+            [
+              0.023267023,
+              -0.135509063,
+              0.060985866
+            ],
+            [
+              0.014439469,
+              -0.135863285,
+              -0.01213165
+            ]
+          ]
+        },
+        {
+          "instanceId": "l_lower_leg#6",
+          "link": "l_lower_leg",
+          "mesh": "lower_leg",
+          "materialClass": "light",
+          "bucket": "LKnee",
+          "vertexIndices": [
+            0,
+            54,
+            107
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.146116564,
+              0.043814555,
+              -0.192699194
+            ],
+            [
+              0.111192655,
+              0.042407507,
+              -0.183402252
+            ],
+            [
+              0.047229753,
+              0.056551377,
+              -0.344476866
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "jack-fallen",
+      "robot": "jack",
+      "targetT": 7.5,
+      "tiltDeg": 105.5606,
+      "tiltMetric": "angle between the torso up axis and world vertical, from the decoded yaw-free torso quaternion",
+      "assertion": {
+        "operator": ">=",
+        "degrees": 60
+      },
+      "presence": {
+        "className": "fall-outage",
+        "renderMode": "HOLD",
+        "startT": 6.35,
+        "endT": 10.58
+      },
+      "robotState": "GETTING_UP",
+      "fieldPose": {
+        "xM": -2.561,
+        "yM": 0.423,
+        "yawRad": 0.1444,
+        "interpolated": false
+      },
+      "jointNames": [
+        "HeadPan",
+        "HeadTilt",
+        "LHipYaw",
+        "LHipRoll",
+        "LHipPitch",
+        "LKnee",
+        "LAnklePitch",
+        "LAnkleRoll",
+        "RHipYaw",
+        "RHipRoll",
+        "RHipPitch",
+        "RKnee",
+        "RAnklePitch",
+        "RAnkleRoll",
+        "RShoulderPitch",
+        "LShoulderPitch",
+        "RShoulderRoll",
+        "LShoulderRoll",
+        "RElbow",
+        "LElbow"
+      ],
+      "jointGridIndex": 75,
+      "jointQ10000AtGridIndex": [
+        -15,
+        7735,
+        61,
+        -77,
+        10682,
+        13475,
+        -13775,
+        660,
+        138,
+        77,
+        -10416,
+        -13806,
+        13736,
+        -660,
+        -5400,
+        4512,
+        31,
+        -31,
+        -7639,
+        7566
+      ],
+      "decodedJointRad": [
+        -0.0015,
+        0.7735,
+        0.0061,
+        -0.0077,
+        1.0682,
+        1.3475,
+        -1.3775,
+        0.066,
+        0.0138,
+        0.0077,
+        -1.0416,
+        -1.3806,
+        1.3736,
+        -0.066,
+        -0.54,
+        0.4512,
+        0.0031,
+        -0.0031,
+        -0.7639,
+        0.7566
+      ],
+      "kneeAnkleRad": {
+        "LKnee": 1.3475,
+        "RKnee": -1.3806,
+        "LAnklePitch": -1.3775,
+        "RAnklePitch": 1.3736
+      },
+      "visualInstances": [
+        {
+          "instanceId": "torso#0",
+          "link": "torso",
+          "mesh": "mx-64-body",
+          "materialClass": "dark",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            43,
+            85
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.014499435,
+              0.070000004,
+              0.217999896
+            ],
+            [
+              0.041000055,
+              0.065499773,
+              0.214399574
+            ],
+            [
+              0.046600435,
+              0.069999842,
+              0.183400131
+            ]
+          ]
+        },
+        {
+          "instanceId": "torso#23",
+          "link": "torso",
+          "mesh": "battery_cage",
+          "materialClass": "light",
+          "bucket": "ROOT/TORSO",
+          "vertexIndices": [
+            0,
+            126,
+            251
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.058999685,
+              -0.005999853,
+              0.04800022
+            ],
+            [
+              -0.058999617,
+              -0.024499891,
+              0.005999641
+            ],
+            [
+              -0.057499505,
+              -0.073499351,
+              0.0295
+            ]
+          ]
+        },
+        {
+          "instanceId": "llb#0",
+          "link": "llb",
+          "mesh": "flex_stollen",
+          "materialClass": "dark",
+          "bucket": "LAnkleRoll",
+          "vertexIndices": [
+            0,
+            140,
+            279
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.196330192,
+              0.105436915,
+              -0.387166589
+            ],
+            [
+              0.202341989,
+              0.106811344,
+              -0.378354366
+            ],
+            [
+              0.187391078,
+              0.10738254,
+              -0.37926405
+            ]
+          ]
+        },
+        {
+          "instanceId": "head#5",
+          "link": "head",
+          "mesh": "basler_ace_gige_c-mount_v01",
+          "materialClass": "dark",
+          "bucket": "HeadTilt",
+          "vertexIndices": [
+            0,
+            34,
+            68
+          ],
+          "torsoLocalXYZ": [
+            [
+              -0.037047787,
+              -0.014458421,
+              0.327849797
+            ],
+            [
+              -0.067054215,
+              0.014586744,
+              0.298506726
+            ],
+            [
+              -0.018310408,
+              0.000013221,
+              0.32585913
+            ]
+          ]
+        },
+        {
+          "instanceId": "r_lower_arm#2",
+          "link": "r_lower_arm",
+          "mesh": "hand",
+          "materialClass": "light",
+          "bucket": "RElbow",
+          "vertexIndices": [
+            0,
+            52,
+            103
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.063771775,
+              -0.101180327,
+              0.096376886
+            ],
+            [
+              0.045033244,
+              -0.13509222,
+              0.140776641
+            ],
+            [
+              0.088965616,
+              -0.135179466,
+              0.081665209
+            ]
+          ]
+        },
+        {
+          "instanceId": "l_lower_leg#6",
+          "link": "l_lower_leg",
+          "mesh": "lower_leg",
+          "materialClass": "light",
+          "bucket": "LKnee",
+          "vertexIndices": [
+            0,
+            54,
+            107
+          ],
+          "torsoLocalXYZ": [
+            [
+              0.192646584,
+              0.025615133,
+              -0.133146014
+            ],
+            [
+              0.157162437,
+              0.025777833,
+              -0.140141811
+            ],
+            [
+              0.171135801,
+              0.024357459,
+              -0.313459614
+            ]
+          ]
+        }
+      ]
     }
-  ]
+  ],
+  "fallenEnumWindow": {
+    "robot": "jack",
+    "fall": 1,
+    "fallenT": 7.137796,
+    "gettingUpT": 7.159246
+  }
 }
