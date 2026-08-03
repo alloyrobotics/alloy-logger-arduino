@@ -16,7 +16,7 @@ import {
   rateNotes,
   buildData,
   findings,
-  loadSceneData,
+  loadSceneData as loadRoundData,
   isSceneDataLoaded,
   getSceneData,
   previewData,
@@ -34,7 +34,27 @@ import { buildScene } from './scene.js';
 const T_HERO_MATCH_S = 45.0;
 const T_HERO_PREVIEW_S = 40.5;
 
-export default {
+/**
+ * The guided flow's beat copy, behind a dynamic import because only the demo screen reads it;
+ * `guided.js` says why and carries the merge. A rejection leaves `choreo` unset, which is the full
+ * non-guided layout and not a broken scene, so it is swallowed and never reaches the loading card.
+ */
+let guidedPromise = null;
+function loadGuided() {
+  if (!guidedPromise) {
+    guidedPromise = import('./guided.js').then(
+      (mod) => {
+        if (mod && mod.applyGuided) mod.applyGuided(def);
+      },
+      (err) => {
+        console.warn('[battle] guided beats unavailable; the full layout opens instead', err);
+      },
+    );
+  }
+  return guidedPromise;
+}
+
+const def = {
   id: 'battle',
   name: '2v2 Arena Battle',
   device: 'RoboMaster AI Challenge ruleset (ICRA 2019) · simulated round',
@@ -132,7 +152,9 @@ export default {
   // The round replay loads lazily: data.js ships channel metadata and a 6 s preview slice, and the
   // full-round module arrives only on the demo route. app.js awaits this before ensureData.
   previewData,
-  loadSceneData,
+  // Round module AND guided beats in one promise, so the demo route's single await still covers
+  // everything that screen reads. Both halves stay deduplicated by their own caches.
+  loadSceneData: () => loadRoundData().then((d) => loadGuided().then(() => d)),
   isSceneDataLoaded,
   getSceneData,
   // Def-owned loading-card copy: this mission is simulated and has no ball, and the shared card
@@ -260,3 +282,5 @@ The channel names and units follow the open-source software real teams ran, so t
   ],
   buildScene,
 };
+
+export default def;

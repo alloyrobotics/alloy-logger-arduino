@@ -10,18 +10,25 @@
 // pulled into the unit test without dragging the Anthropic SDK in behind chat.js.
 //
 // THE LIST IS A WHITELIST, NOT A SUGGESTION. `normalizeRole` is the only way either route turns a
-// caller-supplied string into a role, and it can only ever return one of these three or null. That
+// caller-supplied string into a role, and it can only ever return one of these four or null. That
 // is what stops a posted `role` becoming free text in a system prompt (chat.js) or an unbounded
 // string in the leads table (signup-lead.js).
 
 /**
- * The three registers the demo's picker offers, in the order it offers them.
+ * The four registers the demo's picker offers, in the order it offers them.
  *
- * - `engineer`: the default, and what the analyst has always been. Deep detail, exact values.
- * - `operator`: runs the robot, does not read the logs. Wants the consequence, not the channel.
+ * ROLES v2 (2026-08-03) splits the vocabulary by WORK FUNCTION rather than by seniority, because
+ * that is the axis the answer's altitude actually turns on:
+ *
+ * - `hobbyist`: builds their own robots. Technical and curious, no team behind them.
+ * - `engineer`: does this professionally, and the default. Deep detail, exact values.
  * - `lead`: owns the fleet and the schedule. Wants scale, risk and what to do next.
+ * - `marketing`: marketing or CS. Not an engineer, has to explain the robot to somebody else.
+ *
+ * v1's `operator` ("keeps robots running: support, CS, field ops") turned out to be two different
+ * people wearing one id, and it is retired: see ROLE_ALIASES.
  */
-export const VISITOR_ROLES = Object.freeze(['engineer', 'operator', 'lead']);
+export const VISITOR_ROLES = Object.freeze(['hobbyist', 'engineer', 'lead', 'marketing']);
 
 /** The default register. `engineer` is what every answer was before roles existed. */
 export const DEFAULT_ROLE = 'engineer';
@@ -31,19 +38,24 @@ const ROLE_SET = new Set(VISITOR_ROLES);
 /**
  * Ids the client may post that are not canonical names, and the canonical name each one means.
  *
- * `support` is the id `demo/js/core/role.js` gives the middle card ("I keep robots running:
- * support, CS, field ops"). This module calls that same person `operator`. One of the two names
- * has to be the one that reaches the leads table, or the export ends up holding both and neither
- * can be counted, so the canonical name wins and the client's id is translated on the way in.
+ * Both entries are v1's retired middle card. `operator` was the canonical name this module used
+ * until ROLES v2 and is therefore the value already sitting in the leads table and in every
+ * visitor's `alloy_demo_role`; `support` is the id `demo/js/core/role.js` gave that same card. v2
+ * has no single successor for either, so both DEGRADE to `engineer`: it is the register every
+ * mission has authored scripts for, and the one the whole route falls back to anyway.
  *
- * An alias is deliberately cheaper than a rename: renaming the card's id would break the stored
- * `alloy_demo_role` of every visitor who already picked one, and renaming the canonical value
- * would split the export across a migration. A line here costs nothing and is reversible.
+ * Degrading beats dropping. A visitor who picked that card weeks ago still has it in localStorage,
+ * and their next question posts it; dropping it would be correct but would hand them the default
+ * register through a null, which is the same answer with a lost analytics row attached. Degrading
+ * beats a rename for the same reason it did in v1: renaming would either break every stored value
+ * or split the export across a migration, and a line here costs nothing and is reversible.
  *
  * ALIASES ARE INPUT ONLY. Nothing downstream ever sees one: `normalizeRole` returns a canonical
  * name or null, so the register lookup, the stored column and the export all speak one vocabulary.
+ * Rows captured before 2026-08-03 still hold the literal `operator`, and those are history, not a
+ * value this function can mint any more.
  */
-const ROLE_ALIASES = Object.freeze({ support: 'operator' });
+const ROLE_ALIASES = Object.freeze({ operator: 'engineer', support: 'engineer' });
 
 /**
  * Longest string we will even look at. The whitelist below would reject a long one anyway, but a

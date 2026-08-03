@@ -13,9 +13,9 @@
 // The pack is the cached prefix (see PERSONA + facts below), so repeat questions on the same
 // robot read it back at ~1/10th the input price instead of re-paying for it every turn.
 //
-// A request may also carry a `role` (engineer, operator, lead) from the demo's picker. It changes
-// the ALTITUDE of the answer and never the facts, and it is delivered as a second system block
-// placed after the cache breakpoint, so every role shares one cache entry per robot. See
+// A request may also carry a `role` (hobbyist, engineer, lead, marketing) from the demo's picker.
+// It changes the ALTITUDE of the answer and never the facts, and it is delivered as a second system
+// block placed after the cache breakpoint, so every role shares one cache entry per robot. See
 // ROLE_REGISTERS / buildSystemBlocks.
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -96,32 +96,35 @@ MISSION DATA
  * THIS IS THE WHOLE POINT OF THE SHAPE. The cached prefix is block 0, `PERSONA + robot.facts`,
  * and the breakpoint is at its end. A prefix cache matches on bytes from the start of the request
  * up to a breakpoint, so anything placed after that breakpoint can vary per request without
- * invalidating it: all three roles asking about the same robot read back the SAME cache entry, and
+ * invalidating it: all four roles asking about the same robot read back the SAME cache entry, and
  * a role switch mid-conversation costs the ~40 tokens of this block rather than re-writing the
  * whole pack. Interpolating the register INTO the persona, which is the obvious way to write this,
- * would give every role its own cache entry per robot and triple the cache-write bill for the
- * exact same answers.
+ * would give every role its own cache entry per robot and quadruple the cache-write bill for the
+ * exact same answers. ROLES v2 added two more registers and changed nothing about this shape,
+ * which is the point of it: a fifth role is a string in this table and no new cache entries.
  *
  * `engineer` is deliberately NO BLOCK AT ALL rather than a block that describes the default. The
  * persona above already IS the engineer register (lead with the finding, quote exact values with
  * units), so an engineer request is byte-for-byte the request this route sent before roles existed:
  * the majority path pays nothing, adds no second block, and cannot regress on a prompt edit here.
+ * v1's retired `operator` degrades to `engineer` in worker/roles.js, so it lands here too and a
+ * stale client never gets a missing register, it gets the default one.
  *
  * Each register says what to DO with the same facts, never what facts to use. None of them may
  * loosen the persona's grounding rules: no number that is not in the pack, no invented channel, no
- * softened synthesis disclosure. An operator answer is a shorter answer, not a vaguer one.
+ * softened synthesis disclosure. A marketing answer is a shorter answer, not a vaguer one.
  */
 const ROLE_REGISTERS = {
   engineer: null,
-  operator: `## This visitor
-This visitor keeps robots running, they do not read the logs. Support, field ops, the person who
-gets the robot after it has already broken. Same facts, different altitude.
+  hobbyist: `## This visitor
+This visitor builds their own robots. A bench at home, weekend projects, no team and no fleet behind
+them. Technical and curious, just not doing this professionally. Same facts, different altitude.
 
-- Lead with what happened in plain language: what the robot did, when, and whether it recovered.
-- Then say what to do about it. Every answer should leave them with a next action or a thing to check.
-- Name the moment before any number, and keep at most one or two numbers per answer.
-- Skip the channel names, the sample rates and the field-level provenance unless they are asked for.
-- Still cite evidence. The chip that seeks the replay to the moment is worth more to them than to anyone.`,
+- Explain the mechanism, not only the reading. One sentence on WHY the number means what it means.
+- Name a channel the first time you use it and say in a few words what it measures.
+- Keep to the one or two numbers the finding actually turns on. Drop the rest.
+- End on something they could change on their own robot: a gain, a mount, a rate, a wire.
+- Still cite evidence. Watching the moment is how this lands for someone learning the system.`,
   lead: `## This visitor
 This visitor owns the fleet and the schedule, not this one run. Same facts, different altitude.
 
@@ -131,6 +134,17 @@ This visitor owns the fleet and the schedule, not this one run. Same facts, diff
 - Close on the decision it points at: what to check, instrument or change next.
 - Never extrapolate a rate, a fleet number or a cost that the mission data does not contain. If they
   ask how often, say what this log shows and that one log cannot answer it.`,
+  marketing: `## This visitor
+This visitor is not an engineer. Marketing or customer support: the person who has to explain this
+robot to somebody else, often to the customer it happened to. Same facts, different altitude.
+
+- Plain language first: what the robot did, when, and whether it recovered. No channel names, no
+  sample rates, no field level provenance unless they ask for them.
+- At most one number per answer, and say what it means right beside it.
+- Give them the sentence they can repeat: what went wrong, and what it means for whoever is asking.
+- Never soften a failure into something it was not, and never offer a cause the data does not show.
+- Still cite evidence. The chip that seeks the replay shows them the thing itself, which is worth
+  more than any description of it.`,
 };
 
 /**

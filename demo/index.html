@@ -89,9 +89,9 @@ input { font: inherit; color: inherit; }
 .topbar-link:hover { color: var(--tx); }
 
 /* ==================================================================== 0. start (role fork)
-   The first screen: one question, three full-bleed tappable cards, one tap to advance. Built by
+   The first screen: one question, four full-bleed tappable cards, one tap to advance. Built by
    js/core/start.js; every class below is a `st-` hook that module writes and this file styles.
-   HARD RULE at 390px: the three cards and the escape link all fit in ONE viewport, so the fork is
+   HARD RULE at 390px: all four cards and the escape link fit in ONE viewport, so the fork is
    a choice and never a scroll. */
 #screen-start { min-height: 100%; display: flex; flex-direction: column; }
 .start-body {
@@ -100,7 +100,7 @@ input { font: inherit; color: inherit; }
 }
 #start-mount { width: 100%; display: flex; justify-content: center; }
 
-.st { width: min(1000px, 100%); display: flex; flex-direction: column; gap: 26px; }
+.st { width: min(1180px, 100%); display: flex; flex-direction: column; gap: 26px; }
 .st-head { text-align: center; }
 .st-kicker { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tx-mute); }
 .st-title {
@@ -109,12 +109,14 @@ input { font: inherit; color: inherit; }
 }
 .st-sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 14px auto 0; max-width: 44ch; }
 
-.st-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+/* FOUR cards since roles v2. One row on a desktop viewport: a 2x2 grid put the fourth seat below
+   the fold on a laptop, and the fork only works when every seat is visible at once. */
+.st-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .st-card {
   position: relative; overflow: hidden; text-align: left;
   display: flex; flex-direction: column; align-items: flex-start; gap: 9px;
   background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 20px 18px 17px;
+  padding: 19px 17px 16px;
   transition: transform .18s cubic-bezier(.16,1,.3,1), border-color .18s ease, background .18s ease;
 }
 .st-card::after {
@@ -129,8 +131,8 @@ input { font: inherit; color: inherit; }
 }
 .st-glyph svg { width: 20px; height: 20px; }
 .st-kick { font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--tx-mute); }
-.st-label { font-size: 17px; font-weight: 500; letter-spacing: -0.018em; line-height: 1.25; color: var(--tx); }
-.st-blurb { font-size: 12.5px; line-height: 1.45; color: var(--tx-body); }
+.st-label { font-size: 16px; font-weight: 500; letter-spacing: -0.018em; line-height: 1.25; color: var(--tx); }
+.st-blurb { font-size: 12px; line-height: 1.45; color: var(--tx-body); }
 .st-go { margin-top: auto; padding-top: 12px; font-size: 11px; letter-spacing: 0.02em; color: var(--blue-hi); }
 /* the seat this visitor already took: marked, never auto-advanced */
 .st-card.is-current { border-color: color-mix(in srgb, var(--blue-hi) 45%, var(--line)); }
@@ -155,18 +157,18 @@ input { font: inherit; color: inherit; }
   .st { gap: 18px; }
   .st-title { font-size: clamp(28px, 8.2vw, 36px); margin-top: 10px; }
   .st-sub { font-size: 14.5px; margin-top: 10px; }
-  .st-cards { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  /* stacked and full width, and compact enough that all three plus the escape sit in one 390x844
+  .st-cards { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+  /* stacked and full width, and compact enough that all four plus the escape sit in one 390x844
      viewport: glyph on the left, the sentence in the middle, the affordance on the right */
   .st-card {
     display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center; gap: 2px 13px; padding: 14px 15px; border-radius: 14px;
+    align-items: center; gap: 2px 12px; padding: 12px 14px; border-radius: 14px;
   }
-  .st-glyph { grid-row: 1 / span 2; width: 34px; height: 34px; }
-  .st-glyph svg { width: 18px; height: 18px; }
+  .st-glyph { grid-row: 1 / span 2; width: 32px; height: 32px; }
+  .st-glyph svg { width: 17px; height: 17px; }
   .st-kick { display: none; }
-  .st-label { grid-column: 2; font-size: 15.5px; }
-  .st-blurb { grid-column: 2; font-size: 12px; line-height: 1.4; }
+  .st-label { grid-column: 2; font-size: 15px; }
+  .st-blurb { grid-column: 2; font-size: 11.5px; line-height: 1.4; }
   .st-go { grid-column: 3; grid-row: 1 / span 2; margin-top: 0; padding-top: 0; font-size: 10.5px; }
   .st-hint { font-size: 12px; }
 }
@@ -526,6 +528,413 @@ input { font: inherit; color: inherit; }
   .ctx-fly { transform: none !important; }
 }
 
+/* ============================================== 2c. BRIEF v2, the guided missions only
+   `.ctx.is-guided` (context.js sets it for the missions the role cards lead into: sbr, ssl, battle).
+   Same screen, decluttered to two moving parts:
+     row 1  a full-bleed mock of the incumbent tool THIS ROLE is handed, streaming the mission's own
+            channels. It is the centrepiece and the whole "raw tooling is not enough" argument.
+     row 2  the 3D hero, demoted to a corner presence, beside one system line and the composer pill.
+   The hero's box is the ONLY thing that changed about the entrance: `.ctx-stage` still measures
+   itself and the fly still solves a pure transform off that rect, so a 132px stage flies exactly the
+   way a 560px one did. HARD RULE from 2b still stands: `.ctx-stage` must never clip.
+   The wrapper's height is FIXED rather than derived from the mock, because the mock arrives on a
+   dynamic import: a wrapper that grew when it landed would move the stage after the entrance had
+   already measured it. */
+.ctx.is-guided {
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto;
+  gap: 20px; align-items: stretch; align-content: center;
+}
+.ctx-mockwrap {
+  min-width: 0; height: min(56dvh, 500px);
+  background: #131313; border: 1px solid var(--line); border-radius: 16px;
+  padding: 14px 16px;
+  /* the mock pins its own walls to their own bottoms, so this box has to clip. The hero is NOT in
+     here: it lives in the foot row, where nothing clips it mid-flight. */
+  overflow: hidden;
+}
+.ctx-mock { height: 100%; min-height: 0; min-width: 0; display: flex; }
+.ctx-mock > .mk { flex: 1 1 auto; min-width: 0; }
+.ctx.is-guided .ctx-foot {
+  display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: center;
+}
+.ctx.is-guided .ctx-stage { height: 132px; border-radius: 14px; }
+.ctx.is-guided .ctx-copy { gap: 11px; }
+/* one line, and it is the brightest thing in the copy column: everything else that used to be here
+   is said by the analyst in beat 1 of the demo now */
+.ctx.is-guided .ctx-system {
+  font-size: 15px; font-weight: 500; letter-spacing: -0.012em; color: rgba(255,255,255,0.94);
+}
+.ctx.is-guided .ctx-prov { margin-top: -3px; font-size: 11.5px; }
+.ctx.is-guided .ctx-ask { margin-top: 2px; }
+
+/* ============================================== 2d. the incumbent-tool mocks (js/core/mocks/*)
+   Four chromes, one kit. Each one evokes a TOOL CLASS and never a product: generic dark chrome, no
+   vendor name, no logo, no imitation of anybody's typeface. Every class here is written by a module
+   in js/core/mocks/ and nothing in those modules sets a colour, a size or a layout.
+   The plots carry a fixed viewBox with `preserveAspectRatio="none"`, so they are sized entirely
+   here and no module ever measures the DOM. */
+.mk {
+  display: flex; flex-direction: column; gap: 9px;
+  min-width: 0; min-height: 0; height: 100%;
+}
+.mk-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 0 0 auto; }
+.mk-tool {
+  flex: 0 0 auto; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--tx-body);
+}
+.mk-port {
+  min-width: 0; flex: 1; text-align: right; font-size: 10px; color: var(--tx-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-caption { flex: 0 0 auto; font-size: 14px; line-height: 1.42; color: rgba(255,255,255,0.9); }
+.mk-cost { flex: 0 0 auto; font-size: 10.5px; line-height: 1.5; color: var(--tx-mute); }
+/* one printed record, never wrapped: a wrapped log line reads as a paragraph, and the point is
+   that this is a firehose */
+.mk-row { display: flex; gap: 8px; white-space: nowrap; min-width: 0; }
+.mk-t { flex: 0 0 auto; color: rgba(255,255,255,0.30); }
+.mk-arrow { flex: 0 0 auto; color: rgba(255,255,255,0.20); }
+.mk-txt { color: var(--tx-body); }
+/* the fade is at the TOP of a wall: the newest line is at the bottom and must stay legible */
+.mk-fade {
+  position: absolute; left: 0; right: 0; top: 0; height: 40px; pointer-events: none;
+  background: linear-gradient(180deg, #0d0d0d 6%, rgba(13,13,13,0) 100%);
+}
+/* The trace palette, carried as one custom property so a swatch (an <i>) and a trace (a polyline)
+   read the same colour without two parallel rule sets. Traces 2 and 3 are FIXED rather than brand
+   colours: `--acc` is per robot, and the sage green that separated cleanly from sbr's blue was a
+   second green next to ssl's accent. Grey and amber collide with no accent this demo ships. */
+.mk-plot-trace-1, .mk-ard-chip-1 { --tc: var(--acc, var(--blue-hi)); }
+.mk-plot-trace-2, .mk-ard-chip-2 { --tc: #cfd5dd; }
+.mk-plot-trace-3, .mk-ard-chip-3 { --tc: var(--warn); }
+.mk-plot-svg { display: block; width: 100%; height: 100%; }
+.mk-plot-grid line { stroke: rgba(255,255,255,0.06); stroke-width: 1; }
+.mk-plot-trace {
+  stroke: var(--tc, var(--blue-hi)); stroke-width: 1.6; vector-effect: non-scaling-stroke;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+.mk-spark-svg { display: block; width: 100%; height: 22px; }
+.mk-spark-trace {
+  stroke: var(--acc, var(--blue-hi)); stroke-width: 1.4; vector-effect: non-scaling-stroke;
+}
+/* a streaming wall gets a cursor; a filled one (reduced motion, or skip) does not */
+.mk.mk-live .mk-ard-out::after, .mk.mk-live .mk-inbox-wall::after {
+  content: ""; position: absolute; right: 11px; bottom: 10px;
+  width: 6px; height: 12px; background: var(--acc, var(--blue-hi)); opacity: .8;
+  animation: blink .9s step-end infinite;
+}
+.mk.mk-filled .mk-ard-out::after, .mk.mk-filled .mk-inbox-wall::after { display: none; }
+
+/* ---- family: serial monitor with a plotter strip (mocks/arduino.js) ---- */
+.mk-ard-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 8px; background: var(--elev); border: 1px solid var(--line); border-radius: 8px;
+}
+.mk-ard-send { flex: 1 1 190px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mk-ard-input {
+  flex: 1; min-width: 0; padding: 5px 9px; font-size: 10.5px; color: var(--tx-mute);
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-ard-sendbtn {
+  flex: 0 0 auto; padding: 5px 12px; font-size: 10.5px; color: var(--tx-body);
+  background: rgba(255,255,255,0.08); border-radius: 6px;
+}
+.mk-ard-toggles {
+  display: flex; align-items: center; gap: 12px; font-size: 10px; color: var(--tx-mute);
+}
+.mk-ard-check { display: inline-flex; align-items: center; gap: 5px; }
+.mk-ard-box {
+  display: block; width: 9px; height: 9px; border: 1px solid var(--line-hi); border-radius: 2px;
+}
+.mk-ard-check.is-on .mk-ard-box { background: var(--blue); border-color: var(--blue); }
+.mk-ard-out {
+  position: relative; flex: 1 1 auto; min-height: 76px; overflow: hidden;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+}
+/* the right edge is masked so a clipped line reads as "there is more of this" */
+.mk-ard-rows, .mk-inbox-rows {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 34px), rgba(0,0,0,0.06));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 34px), rgba(0,0,0,0.06));
+}
+.mk-ard-rows { font-size: 10.5px; line-height: 1.62; }
+.mk-ard-plot { flex: 0 0 auto; }
+.mk-ard-plot .mk-plot-svg {
+  height: 72px; background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px;
+}
+.mk-ard-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 10px;
+}
+.mk-ard-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.mk-ard-swatch {
+  display: block; flex: 0 0 auto; width: 9px; height: 2px; border-radius: 2px;
+  background: var(--tc, var(--blue-hi));
+}
+.mk-ard-key { color: var(--tx-mute); }
+.mk-ard-val { color: var(--tx-body); }
+.mk-ard-status {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 7px; font-size: 10px;
+  color: var(--tx-mute);
+}
+.mk-ard-sep { opacity: .45; }
+/* a mission with nothing numeric printed gets no axis box rather than an empty one */
+.mk-noplot .mk-ard-plot { display: none; }
+
+/* ---- family: telemetry plotter (mocks/viz.js) ---- */
+.mk-viz-body {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: grid; grid-template-columns: 172px minmax(0, 1fr); gap: 10px;
+}
+/* the rail lists every channel and every field, so it always has more in it than the pane is tall.
+   It bleeds out at the bottom rather than stopping on a hard edge, because a list that ends in a
+   clean border reads as a list that ended. */
+.mk-viz-tree {
+  overflow: hidden; min-width: 0; font-size: 10px; color: var(--tx-mute);
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px; padding: 8px 9px;
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 26px), rgba(0,0,0,0.08));
+  mask-image: linear-gradient(180deg, #000 calc(100% - 26px), rgba(0,0,0,0.08));
+}
+.mk-viz-treehead {
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 6px;
+}
+.mk-viz-group { margin-bottom: 7px; }
+.mk-viz-grouphead { display: flex; align-items: center; gap: 5px; color: var(--tx-body); }
+.mk-viz-caret { flex: 0 0 auto; font-size: 8px; color: var(--tx-mute); }
+.mk-viz-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-viz-count { flex: 0 0 auto; color: var(--tx-mute); }
+.mk-viz-grouplabel { padding-left: 13px; font-size: 9.5px; color: rgba(255,255,255,0.26); }
+.mk-viz-leaf { display: flex; align-items: center; gap: 6px; padding-left: 13px; }
+.mk-viz-box {
+  display: block; flex: 0 0 auto; width: 8px; height: 8px;
+  border: 1px solid var(--line-hi); border-radius: 2px;
+}
+.mk-viz-leaf.is-on .mk-viz-box { background: var(--blue); border-color: var(--blue); }
+.mk-viz-leafkey { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-viz-leafunit { flex: 0 0 auto; color: rgba(255,255,255,0.24); }
+.mk-viz-panes {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0;
+}
+.mk-viz-pane {
+  flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 4px;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px 8px;
+}
+.mk-viz-panehead { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--tx-mute); }
+.mk-viz-swatch {
+  display: block; flex: 0 0 auto; width: 9px; height: 2px; border-radius: 2px;
+  background: var(--tc, var(--blue-hi));
+}
+.mk-viz-name {
+  flex: 1; min-width: 0; color: var(--tx-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-viz-last { flex: 0 0 auto; color: var(--tx); }
+.mk-viz-unit { flex: 0 0 auto; }
+.mk-viz-plot {
+  flex: 1 1 auto; min-height: 40px; display: grid; grid-template-columns: 42px minmax(0, 1fr);
+  gap: 6px;
+}
+.mk-viz-axis {
+  display: flex; flex-direction: column; justify-content: space-between;
+  font-size: 9px; text-align: right; color: rgba(255,255,255,0.30);
+}
+/* the playhead only ever sits on the newest sample, because this tool cannot go back */
+.mk-viz-cursor { stroke: rgba(255,255,255,0.32); stroke-width: 1; }
+.mk-viz-empty { font-size: 10.5px; color: var(--tx-mute); padding: 10px; }
+.mk-viz-transport {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 9px; font-size: 10px;
+  color: var(--tx-mute);
+}
+.mk-viz-play { flex: 0 0 auto; width: 11px; height: 11px; color: var(--tx-body); }
+.mk-viz-track {
+  position: relative; flex: 1; height: 3px; border-radius: 3px;
+  background: rgba(255,255,255,0.09); overflow: hidden;
+}
+.mk-viz-fill { position: absolute; left: 0; top: 0; bottom: 0; display: block; background: var(--acc, var(--blue-hi)); }
+.mk-viz-live { color: var(--sage); }
+
+/* ---- family: fleet dashboard (mocks/fleet.js) ---- */
+.mk-fleet-scope { flex: 0 0 auto; display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+.mk-fleet-name { flex: 0 0 auto; font-size: 13px; font-weight: 500; color: var(--tx); }
+.mk-fleet-device {
+  flex: 1; min-width: 0; font-size: 10px; color: var(--tx-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-fleet-pill {
+  flex: 0 0 auto; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 60px; color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 14%, transparent);
+}
+.mk-fleet-tiles {
+  flex: 0 0 auto; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px;
+}
+.mk-fleet-tile {
+  min-width: 0; background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px;
+  padding: 7px 10px 8px;
+}
+.mk-fleet-tilelabel {
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tx-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-fleet-tileval { font-size: 17px; line-height: 1.25; color: var(--tx); margin-top: 1px; }
+.mk-fleet-table {
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px;
+}
+.mk-fleet-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1.5fr) minmax(0, 0.9fr) 58px 116px 88px;
+  align-items: center; gap: 9px; padding: 6px 11px; font-size: 11px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.mk-fleet-row:last-child { border-bottom: 0; }
+.mk-fleet-head {
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tx-mute);
+}
+/* every row is green and every counter is climbing: that IS the argument */
+.mk-fleet-dot { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--tx-mute); }
+.mk-fleet-dot.is-ok {
+  background: var(--sage); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sage) 16%, transparent);
+}
+.mk-fleet-c-name { display: flex; flex-direction: column; min-width: 0; }
+.mk-fleet-path {
+  font-size: 10.5px; color: var(--tx-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-fleet-sub {
+  font-size: 9.5px; color: rgba(255,255,255,0.26);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-fleet-c-last { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.mk-fleet-val { color: var(--tx); }
+.mk-fleet-unit { font-size: 9.5px; color: var(--tx-mute); }
+.mk-fleet-c-n { text-align: right; color: var(--tx-body); }
+.mk-fleet-c-spark { display: block; min-width: 0; }
+.mk-fleet-c-seen { text-align: right; font-size: 10px; color: var(--tx-mute); }
+
+/* ---- family: ticket inbox (mocks/inbox.js) ---- */
+.mk-inbox-body {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: 10px;
+}
+.mk-inbox-list {
+  overflow: hidden; min-width: 0;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px;
+}
+.mk-inbox-item {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 7px; padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.mk-inbox-item:last-child { border-bottom: 0; }
+.mk-inbox-item.is-selected { background: rgba(255,255,255,0.045); }
+.mk-inbox-unread { display: block; width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; }
+.mk-inbox-item.is-unread .mk-inbox-unread { background: var(--blue-hi); }
+.mk-inbox-itemmain { min-width: 0; }
+.mk-inbox-itemtop { display: flex; align-items: baseline; gap: 8px; }
+.mk-inbox-from {
+  flex: 1; min-width: 0; font-size: 11.5px; color: var(--tx);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-inbox-time { flex: 0 0 auto; font-size: 9.5px; color: var(--tx-mute); }
+.mk-inbox-subject {
+  font-size: 11px; color: var(--tx-body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-inbox-snippet {
+  font-size: 10.5px; color: var(--tx-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-inbox-thread {
+  min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 8px;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px 12px;
+}
+.mk-inbox-threadsubject {
+  flex: 0 0 auto; font-size: 14px; font-weight: 500; letter-spacing: -0.012em; color: var(--tx);
+}
+.mk-inbox-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--tx-mute); }
+.mk-inbox-avatar {
+  display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  font-size: 9.5px; color: var(--tx-body); background: rgba(255,255,255,0.08);
+}
+.mk-inbox-metafrom { color: var(--tx-body); }
+.mk-inbox-metatime { margin-left: auto; }
+.mk-inbox-prose { flex: 0 0 auto; }
+.mk-inbox-prose p { font-size: 11.5px; line-height: 1.55; color: var(--tx-body); }
+.mk-inbox-prose p + p { margin-top: 6px; }
+.mk-inbox-attach {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.03);
+}
+.mk-inbox-clip { flex: 0 0 auto; width: 14px; height: 14px; color: var(--tx-mute); }
+.mk-inbox-file {
+  flex: 0 0 auto; font-size: 11px; color: var(--tx); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-inbox-size {
+  flex: 1; min-width: 0; font-size: 10px; color: var(--tx-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mk-inbox-dl { flex: 0 0 auto; font-size: 10px; color: var(--blue-hi); }
+.mk-inbox-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 5px; }
+.mk-inbox-panehead {
+  flex: 0 0 auto; display: flex; align-items: baseline; gap: 8px; font-size: 9.5px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--tx-mute);
+}
+.mk-inbox-panenote { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.mk-inbox-wall {
+  position: relative; flex: 1 1 auto; min-height: 58px; overflow: hidden;
+  background: #0b0b0b; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+}
+.mk-inbox-wall .mk-fade { background: linear-gradient(180deg, #0b0b0b 6%, rgba(11,11,11,0) 100%); }
+.mk-inbox-rows { font-size: 10px; line-height: 1.6; }
+
+@media (max-width: 899px) {
+  .ctx.is-guided { gap: 14px; }
+  .ctx-mockwrap { height: 50dvh; padding: 11px 12px; border-radius: 14px; }
+  .ctx.is-guided .ctx-foot { grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
+  .ctx.is-guided .ctx-stage { height: 82px; }
+  .ctx.is-guided .ctx-system { font-size: 13.5px; }
+  .ctx.is-guided .ctx-prov { font-size: 11px; }
+  .mk { gap: 7px; }
+  .mk-caption { font-size: 12.5px; }
+  .mk-cost { font-size: 9.5px; }
+  .mk-ard-toggles { display: none; }
+  .mk-ard-rows { font-size: 10px; line-height: 1.55; }
+  /* the wall may shrink below its desktop floor here: the caption and the cost line are the two
+     things on this panel that must never be clipped, and they are the panel's argument */
+  .mk-ard-out { min-height: 54px; }
+  .mk-ard-plot .mk-plot-svg { height: 46px; }
+  /* the timestamp column goes on a phone: 390px of line length is better spent on the channel and
+     its fields than on a wall clock nobody reads */
+  .mk-t { display: none; }
+  .mk-viz-body { grid-template-columns: 112px minmax(0, 1fr); gap: 8px; }
+  .mk-viz-tree { padding: 7px 8px; }
+  .mk-viz-grouplabel, .mk-viz-leafunit { display: none; }
+  .mk-viz-plot { grid-template-columns: 34px minmax(0, 1fr); }
+  .mk-viz-panehead { font-size: 9.5px; }
+  /* one compact row of tiles, not two: a second row of KPIs costs three table rows, and the rows
+     are what carry "every one of these is green" */
+  .mk-fleet-tiles { gap: 5px; }
+  .mk-fleet-tile { padding: 5px 7px; border-radius: 8px; }
+  .mk-fleet-tilelabel { font-size: 8px; letter-spacing: 0.06em; }
+  .mk-fleet-tileval { font-size: 12.5px; }
+  .mk-fleet-table {
+    -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 24px), rgba(0,0,0,0.08));
+    mask-image: linear-gradient(180deg, #000 calc(100% - 24px), rgba(0,0,0,0.08));
+  }
+  /* the sparkline and the last-seen clock are the first two columns a narrow dashboard drops */
+  .mk-fleet-row { grid-template-columns: 14px minmax(0, 1.4fr) minmax(0, 1fr) 52px; gap: 8px; padding: 5px 10px; }
+  .mk-fleet-c-spark, .mk-fleet-c-seen { display: none; }
+  .mk-fleet-sub { display: none; }
+  /* the thread IS the argument on a phone: the queue beside it would leave neither readable */
+  .mk-inbox-body { grid-template-columns: minmax(0, 1fr); }
+  .mk-inbox-list { display: none; }
+  .mk-inbox-prose p:nth-child(n+2) { display: none; }
+}
+
+/* nothing here animates except the wall cursor, and a static mock has already landed in full */
+@media (prefers-reduced-motion: reduce) {
+  .mk.mk-live .mk-ard-out::after, .mk.mk-live .mk-inbox-wall::after { animation: none; }
+}
+
 /* ==================================================================== 3. demo */
 #screen-demo { height: 100dvh; display: flex; flex-direction: column; }
 .demo-head { flex: 0 0 auto; }
@@ -820,6 +1229,67 @@ input { font: inherit; color: inherit; }
 }
 .chat-send:hover { background: var(--blue-hi); }
 
+/* ============================================ 3b. the guided walk (js/core/guide.js)
+   `data-guide` on #screen-demo is the WHOLE progressive reveal, and its value is the furthest the
+   layout has been opened: chat -> chart -> stage, after which the attribute is REMOVED and nothing
+   in this block applies any more (the settled demo is byte-for-byte the layout every other mission
+   has always had).
+
+   It ships in the MARKUP as "chat" and app.js deletes it before the screen is shown for any
+   mission that is not guided. That direction matters: the hidden state has to be the one the
+   browser lays out on the very first frame, because a panel hidden by JS after a forced layout
+   gets its reveal transition on ENTRY instead of on the beat it belongs to.
+
+   The panels are `display:none` rather than moved or faded, which is also what keeps the reveal
+   honest: there is no invisible canvas soaking up frames behind the chat, and both viewer.js and
+   chart.js already re-measure off a ResizeObserver, so each one sizes itself the moment its beat
+   puts it in the layout. */
+
+/* beat 1: chat only, one column, and a reading measure - a 1440px-wide line of analyst prose is
+   not a chat panel, it is a wall */
+#screen-demo[data-guide="chat"] .demo-main { grid-template-columns: minmax(0, 1fr); }
+#screen-demo[data-guide="chat"] .right-col { display: none; }
+#screen-demo[data-guide="chat"] .chat-col { border-right: 0; }
+#screen-demo[data-guide="chat"] #chat-mount { width: 100%; max-width: 760px; margin: 0 auto; }
+
+/* beat 2: the plot arrives and has the right column to itself; the stage is still to come */
+#screen-demo[data-guide="chart"] .right-col { grid-template-rows: minmax(0, 1fr); }
+#screen-demo[data-guide="chart"] .viewer-panel { display: none; }
+
+@keyframes guideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+#screen-demo[data-guide="chart"] .chart-panel,
+#screen-demo[data-guide="stage"] .viewer-panel { animation: guideIn .4s cubic-bezier(.16,1,.3,1) both; }
+
+/* While a beat is open the CTA is the ONLY live control in the panel. The composer and the
+   suggestion chips come back at the handover, with the full layout; until then this is a walk, and
+   an input box on screen is an invitation to leave it.
+
+   The evidence chips are a different case and are left rendered but inert: they are the answer's
+   CITATION and beat 1 would be dishonest without them, but clicking one before the chart and the
+   stage exist would seek a replay nobody can see AND mint `evidence_user_clicked`, which is the
+   aha metric. It is not an aha if there was nothing on screen to see. */
+#screen-demo[data-guide] .sugg,
+#screen-demo[data-guide] .chat-form { display: none; }
+#screen-demo[data-guide] .chat-foot { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+#screen-demo[data-guide] .chat-log .ev-chip { pointer-events: none; }
+
+/* The one control a beat leaves behind. It stays in the transcript once used, disabled and
+   outlined, because it reads as a step the visitor chose rather than a button that vanished. */
+.msg.guide-act { align-items: flex-start; }
+.guide-cta {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 13.5px; font-weight: 500; letter-spacing: -0.005em;
+  color: #fff; background: var(--blue); border: 1px solid transparent;
+  border-radius: 60px; padding: 9px 17px; text-align: left;
+  transition: background .15s, transform .15s, color .15s, border-color .15s;
+}
+.guide-cta::after { content: '\203A'; font-size: 15px; line-height: 1; opacity: .8; }
+.guide-cta:hover { background: var(--blue-hi); transform: translateY(-1px); }
+.guide-cta:disabled {
+  background: none; border-color: var(--line); color: var(--tx-mute);
+  cursor: default; transform: none;
+}
+
 /* ================================================================= signup popup */
 /* The modal sits over a still-running demo: nothing here pauses the timeline, so the scrim stays
    translucent and the demo keeps moving behind it. The card itself is near fullscreen, because
@@ -1020,6 +1490,10 @@ input { font: inherit; color: inherit; }
      (and its input) off the bottom of the screen. */
   .chart-panel .chart-mount { flex: 0 0 0px; height: 0; overflow: hidden; }
   .chart-panel.open .chart-mount { flex: 0 0 19dvh; height: 19dvh; border-top: 1px solid var(--line); }
+  /* The guided walk reveals the panels STACKED, in beat order: the chart lands above the chat with
+     the 3D stage still to come, so on that one beat it gets the height the viewer is about to take
+     back. 19 dvh is the height of a plot sharing a phone with a 46 dvh 3D stage; here it is not. */
+  #screen-demo[data-guide="chart"] .chart-panel.open .chart-mount { flex: 0 0 38dvh; height: 38dvh; }
   /* one scrollable row of field chips instead of three stacked rows eating the plot */
   .field-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 5px 0 4px; }
   .field-chips::-webkit-scrollbar { display: none; }
@@ -1109,7 +1583,12 @@ input { font: inherit; color: inherit; }
 </section>
 
 <!-- ============================================================ 3. DEMO  #/demo/:id -->
-<section id="screen-demo" hidden>
+<!-- `data-guide="chat"` is the GUIDED entry state, and it is authored here rather than set by JS on
+     purpose: js/core/guide.js walks sbr, ssl and battle one beat at a time, and the chart and the
+     3D stage must be out of the layout in this section's first painted frame. app.js deletes the
+     attribute before the screen is shown for every mission that is not guided, and again at the
+     walk's handover, which is the moment the layout below becomes the one every mission shares. -->
+<section id="screen-demo" data-guide="chat" hidden>
   <header class="topbar demo-head">
     <a class="back" href="#/missions" aria-label="Back to all missions">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.5 2.5L4 7l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -47,6 +47,18 @@ const QUIET_MS = 6000;
  * this long, arming signals are honoured on their own.
  */
 const BEAT_GRACE_MS = 15000;
+/**
+ * The same belt and braces on a GUIDED mission, where the beat is announced by core/guide.js at
+ * the end of a three-tap walk the visitor paces themselves.
+ *
+ * 15 s is the right floor for a mission whose whole choreography is one 420 ms opener; on a guided
+ * mission it expires somewhere inside beat 1, and the evidence chip sitting in that first answer
+ * would then be able to arm the popup over a walk that has not shown the visitor the replay yet.
+ * The spec's rule is explicit: the popup arms after the 3D beat, on a user interaction. So the
+ * grace here is only a floor under a choreography that has broken outright, and it is long enough
+ * that a visitor reading at any human pace reaches the handover first.
+ */
+const GUIDED_BEAT_GRACE_MS = 120000;
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([tabindex="-1"]), [tabindex="0"]';
@@ -454,6 +466,7 @@ export function createSignupPopup(host, ctx = {}) {
  *   popup: { open:(t?:string)=>boolean, close:(r?:string)=>void, shown:boolean },
  *   isDemoRoute?: () => boolean,
  *   isStreaming?: () => boolean,
+ *   guided?: boolean,
  * }} ctx
  * @returns {{ chatSettled:()=>void, dispose:()=>void, state:string, holds:string[] }}
  */
@@ -462,6 +475,8 @@ export function createSignupTriggers(ctx = {}) {
   const popup = ctx.popup || null;
   const isDemoRoute = typeof ctx.isDemoRoute === 'function' ? ctx.isDemoRoute : () => true;
   const isStreaming = typeof ctx.isStreaming === 'function' ? ctx.isStreaming : () => false;
+  /** Whether core/guide.js is walking this mission, which moves who announces the beat and when. */
+  const guided = !!ctx.guided;
 
   /** 'idle' | 'armed' | 'timerPending' | 'shown'. Reset by dispose(); `everShown` is not. */
   let state = 'idle';
@@ -697,10 +712,11 @@ export function createSignupTriggers(ctx = {}) {
   // event on the one path that really seeks.
   on(chartCanvas, 'chart:seek', () => bump());
 
-  // The beat, from chat.js. Delegated on the mount rather than the panel: the chat element is
-  // rebuilt with the demo, the mount is not.
+  // The beat, from chat.js on a non-guided mission and from core/guide.js's handover on a guided
+  // one. Delegated on the mount rather than the panel: the chat element is rebuilt with the demo,
+  // the mount is not.
   on(chatMount, 'chat:autobeat', () => beatFinished());
-  graceTimer = window.setTimeout(beatFinished, BEAT_GRACE_MS);
+  graceTimer = window.setTimeout(beatFinished, guided ? GUIDED_BEAT_GRACE_MS : BEAT_GRACE_MS);
 
   // THE arming signals: a chip the visitor clicked, a suggestion they chose, a question they
   // typed. Evidence chips and suggestion chips are created as answers stream, so this is

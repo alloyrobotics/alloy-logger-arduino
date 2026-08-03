@@ -16,6 +16,14 @@
 // The beat is announced on the DOM as `chat:autobeat` (bubbling, so it reaches #chat-mount). The
 // signup trigger machine waits for it before it will arm on anything: an ask that fires before the
 // demo has shown what a chip does is not an aha, it is a visitor still being taught.
+//
+// ---------------------------------------------------------------------------- the guided walk
+// The three missions the role fork routes into (sbr, ssl, battle) do not use the opener path at
+// all: core/guide.js walks the visitor through the mission a beat at a time and this panel is the
+// surface it writes to (`say`, `askScripted`, `addNote`, `addAction`, `addCoach`, `announceBeat`).
+// The choreography owns when the chart and the 3D stage move, so nothing on that path auto-fires
+// evidence, and the handover event is raised by the walk instead of by the opener. Every other
+// mission is untouched, opener and all.
 
 import { renderMarkdown } from './markdown.js';
 import { matchEntry as matchEntryIn } from './matcher.js';
@@ -307,18 +315,67 @@ export function createChat(mount, robotDef, hooks = {}) {
   }
 
   /**
-   * The coach line. Styled as a system note, not as the analyst talking: the analyst cites data,
-   * and this is the demo explaining its own interface. One line, once per session per robot.
+   * A system note in the transcript: the demo explaining its own interface, or the choreography
+   * naming what the panel that just appeared can do. Deliberately NOT styled as the analyst
+   * talking - the analyst only ever says things it can cite, and neither of these is a citation.
+   *
+   * @param {string} text
    */
-  function addCoach() {
+  function addNote(text) {
+    const t = String(text || '').trim();
+    if (!t) return;
     const row = document.createElement('div');
     row.className = 'msg coach';
     const p = document.createElement('p');
     p.className = 'coach-note';
-    p.textContent = COACH_LINE;
+    p.textContent = t;
     row.appendChild(p);
     log.appendChild(row);
     scrollDown(true);
+  }
+
+  /**
+   * The coach line. One line, once per session per robot: after the auto-played chip on a
+   * non-guided mission, and at the guided walk's handover on a guided one, which is the same
+   * moment in both flows - the demo has just shown what a chip does and is giving the controls up.
+   */
+  function addCoach() {
+    addNote(COACH_LINE);
+  }
+
+  /**
+   * The one control a choreography beat leaves behind: the visitor's own tap, and the only thing
+   * that advances the walk.
+   *
+   * It is a `.guide-cta`, deliberately not an `.ev-chip` or a `.sugg-chip`: signup.js arms off
+   * those two class names, and advancing the guided flow is the demo doing its job, not the
+   * visitor going off-script. It stays in the transcript once used, disabled, because it reads as
+   * a thing they chose.
+   *
+   * @param {string} label
+   * @param {()=>void} onClick
+   * @returns {HTMLElement} the button
+   */
+  function addAction(label, onClick) {
+    const row = document.createElement('div');
+    row.className = 'msg guide-act';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'guide-cta';
+    b.textContent = String(label || '');
+    b.addEventListener('click', () => {
+      if (b.disabled) return;
+      b.disabled = true;
+      try {
+        onClick();
+      } catch (err) {
+        console.warn('[chat] guided action threw', err);
+      }
+    });
+    row.appendChild(b);
+    log.appendChild(row);
+    scrollDown(true);
+    return b;
   }
 
   /**
@@ -443,9 +500,12 @@ export function createChat(mount, robotDef, hooks = {}) {
    * once close() says no more text is coming.
    *
    * @param {number} [reqId] the logical answer this stream is rendering, for onSettled
+   * @param {(row:HTMLElement)=>void} [onDone] per-call completion, for the choreography engine.
+   *   Runs on the same terminal path onSettled does (so a reader who clicked to skip the
+   *   typewriter advances immediately) and never on a superseded answer.
    * @returns {{push:(t:string)=>void, close:(entry?:object)=>void, get length():number}}
    */
-  function startStream(reqId) {
+  function startStream(reqId, onDone) {
     const row = addAssistantShell();
     const body = row.querySelector('.bot-body');
     let src = '';
@@ -478,6 +538,15 @@ export function createChat(mount, robotDef, hooks = {}) {
       // they asked for takes the interaction away from them at the exact moment it became theirs.
       if (reqId && reqId === openerReqId) openerSettled(row, f);
       settleRequest(reqId);
+      // Last, and contained. The guided walk's next step hangs off this, and a throw inside it
+      // must not unwind back through the typewriter that has already finished its job.
+      if (onDone) {
+        try {
+          onDone(row);
+        } catch (err) {
+          console.warn('[chat] guided continuation threw', err);
+        }
+      }
     };
 
     // A skip while the network is still delivering can only skip what has arrived; the walker
@@ -732,6 +801,83 @@ export function createChat(mount, robotDef, hooks = {}) {
     return reqId;
   }
 
+  // ---------- the guided walk ----------
+  // core/guide.js drives a beat at a time and needs to put AUTHORED text on screen without going
+  // through ask(): a beat's line is not a question, it must not reach the analyst endpoint, and it
+  // must never auto-fire evidence (the choreography owns when the chart and the stage move, and
+  // firing a chip into a hidden panel would spend the aha on something nobody can see).
+  //
+  // These three are the whole surface. Everything they use - the shell, the typewriter, the
+  // markdown, the chip hydration, the settle bookkeeping - is the same code every other answer
+  // runs through, so a guided message and an asked one are the same object on screen.
+
+  /** @param {string} id @returns {object|null} a script entry by id, for a beat's `answer` ref */
+  function entryById(id) {
+    if (!id) return null;
+    return (robotDef.script || []).find((e) => e && e.id === id) || null;
+  }
+
+  /**
+   * Stream one authored line into the log as the analyst.
+   *
+   * @param {string} text
+   * @param {{entry?:object|null, delay?:number, onDone?:(row:HTMLElement)=>void}} [opts]
+   *   `entry` hydrates evidence chips (beat 1's citation); omit it for the agent's own narration,
+   *   which cites nothing. `delay` is the think beat before the caret appears.
+   * @returns {number} the logical answer id
+   */
+  function say(text, opts = {}) {
+    const body = String(text == null ? '' : text);
+    const reqId = ++reqSeq;
+    const begin = () => {
+      if (disposed) return;
+      const s = startStream(reqId, opts.onDone);
+      s.push(body);
+      s.close(opts.entry || null);
+    };
+    const delay = opts.delay == null ? 220 : opts.delay;
+    // Reuses the same pending timer ask() owns, so dispose() clears it and a visitor who asks
+    // something mid-beat cannot end up with two typewriters on one shell.
+    if (pendingTimer) {
+      window.clearTimeout(pendingTimer);
+      pendingTimer = 0;
+    }
+    if (delay > 0) {
+      pendingTimer = window.setTimeout(() => {
+        pendingTimer = 0;
+        begin();
+      }, delay);
+    } else {
+      begin();
+    }
+    return reqId;
+  }
+
+  /**
+   * Beat 1: the question this mission was written around, and its authored answer.
+   *
+   * The question goes up as the visitor's own bubble because that is whose question it is - the
+   * demo is asking it on their behalf, exactly as the 420 ms opener did. The answer comes from
+   * `answerFor`, so the register follows the role, and the pair is remembered so a follow-up the
+   * visitor types after the walk has the opener as context.
+   *
+   * Deliberately NOT `ask({opener:true})`: that path plays its own evidence chip, and on a guided
+   * mission the chart and the stage are not on screen yet.
+   *
+   * @param {string} question
+   * @param {object|null} entry a script entry
+   * @param {{delay?:number, onDone?:(row:HTMLElement)=>void}} [opts]
+   * @returns {number} the logical answer id
+   */
+  function askScripted(question, entry, opts = {}) {
+    const q = String(question || '').trim();
+    if (q) addUser(q);
+    const body = answerFor(entry);
+    const reqId = say(body, { entry: entry || null, delay: opts.delay, onDone: opts.onDone });
+    if (q) remember(q, body);
+    return reqId;
+  }
+
   function askFirstQuestion() {
     // The opener fires on a 420 ms timer from app.js; a quick visitor can beat it by clicking a
     // suggestion. Their question wins: firing the opener anyway would abort their live call and
@@ -762,6 +908,21 @@ export function createChat(mount, robotDef, hooks = {}) {
     matchEntry,
     answerFor,
     finishStreaming,
+    // the guided walk's surface (core/guide.js)
+    say,
+    askScripted,
+    entryById,
+    addNote,
+    addCoach,
+    addAction,
+    /**
+     * Hand the controls over. On a non-guided mission chat.js raises this itself when the opener's
+     * beat resolves; on a guided one the choreography raises it when the walk ends, which is the
+     * equivalent moment. Idempotent, so both can call it.
+     */
+    announceBeat() {
+      announceBeat(true);
+    },
     get streaming() {
       return streaming;
     },

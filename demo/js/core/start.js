@@ -1,10 +1,13 @@
-// start.js - `#/start`, the first screen. One question, one tap, three cards.
+// start.js - `#/start`, the first screen. One question, one tap, four cards.
 //
 // The fork is by WORK FUNCTION, never by identity: what the visitor does with robots decides the
-// register the analyst answers in, which mission they are guided into, and how beat 2's old-way
-// panel is captioned. There is no multi-select and no Continue button, because a form is a gate
-// and this screen is a doorway: the tap IS the submit. The escape hatch ("just exploring") goes
-// straight to the seven-mission picker and leaves no role behind.
+// register the analyst answers in, which mission they are guided into, and which incumbent tool the
+// brief mocks up in front of them. There is no multi-select and no Continue button, because a form
+// is a gate and this screen is a doorway: the tap IS the submit. The escape hatch ("just exploring")
+// goes straight to the seven-mission picker and leaves no role behind.
+//
+// The cards are `ROLES` in order and nothing here knows how many there are: v2 went from three to
+// four as a data edit in role.js plus a grid column in index.html, and this file did not change.
 //
 //   const start = createStart({
 //     onPick: (role) => { location.hash = `#/connect/${role.mission}`; },
@@ -152,7 +155,7 @@ export function createStart(mountOrOpts, maybeOpts) {
     choose(card.dataset.role);
   }
 
-  /** Left/right (and up/down) walk the three cards. Tab and Enter already work: these are buttons. */
+  /** Left/right (and up/down) walk the cards. Tab and Enter already work: these are buttons. */
   function onKey(e) {
     const key = e.key;
     const fwd = key === 'ArrowRight' || key === 'ArrowDown';

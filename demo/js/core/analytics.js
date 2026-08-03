@@ -1,4 +1,4 @@
-// analytics.js - the demo's funnel instrumentation. One module, one token, nine events.
+// analytics.js - the demo's funnel instrumentation. One module, one token, twelve events.
 //
 // The question this exists to answer is a single number: how long from landing to the visitor
 // clicking an evidence chip THEMSELVES (`evidence_user_clicked`). That is the aha. Everything else
@@ -44,6 +44,10 @@ export const EVENTS = Object.freeze({
   QUESTION_ASKED: 'question_asked',
   POPUP_SHOWN: 'popup_shown',
   LEAD_SUBMITTED: 'lead_submitted',
+  // round 2: the brief's incumbent-tool mock, and the guided walk that replaced the 420 ms opener
+  MOCK_VIEWED: 'mock_viewed',
+  BEAT_SHOWN: 'beat_shown',
+  BEAT_CTA_CLICKED: 'beat_cta_clicked',
 });
 
 /** localStorage kill switch, for QA sessions that must not pollute the funnel. */
@@ -339,8 +343,8 @@ export function identifyLead(email, props = {}) {
 }
 
 /**
- * The nine funnel calls, with their property contracts baked in. Call sites should use these
- * rather than `capture(EVENTS.X, …)` so a property is named the same way at every call site.
+ * The funnel calls, with their property contracts baked in. Call sites should use these rather
+ * than `capture(EVENTS.X, …)` so a property is named the same way at every call site.
  */
 export const track = {
   /** @param {string|{id:string,mission?:string}} role @param {object} [extra] */
@@ -386,6 +390,38 @@ export const track = {
       ...(first ? { ms_to_aha: msSinceLand() } : {}),
       ...extra,
     });
+  },
+
+  /**
+   * The brief's incumbent-tool mock actually started streaming on screen, which is the round-2
+   * successor to `oldway_seen` on the three guided missions. Same shape, different centrepiece:
+   * `mock` is the family (arduino|viz|fleet|inbox), so the drop-off can be read per chrome.
+   *
+   * @param {string} robot @param {{mock?:string, synthesized?:boolean, sampled?:boolean}} [extra]
+   */
+  mockViewed(robot, extra = {}) {
+    capture(EVENTS.MOCK_VIEWED, { robot, ...extra });
+  },
+
+  /**
+   * A choreography beat came on screen. `beat` is the def's own stable beat id (answer|chart|
+   * replay) and never a position, so re-ordering the walk does not rewrite history. The role rides
+   * every event as a super-prop already; it is repeated here so the beat funnel reads on its own.
+   *
+   * @param {string} robot @param {{beat:string, role?:string|null, step?:number}} extra
+   */
+  beatShown(robot, extra = {}) {
+    capture(EVENTS.BEAT_SHOWN, { robot, ...extra });
+  },
+
+  /**
+   * The visitor tapped the beat's CTA. This is the engagement measure the guided flow lives or
+   * dies on: `beat_shown` minus `beat_cta_clicked` per beat is exactly where the walk loses people.
+   *
+   * @param {string} robot @param {{beat:string, role?:string|null, step?:number}} extra
+   */
+  beatCtaClicked(robot, extra = {}) {
+    capture(EVENTS.BEAT_CTA_CLICKED, { robot, ...extra });
   },
 
   /** @param {string} robot @param {{source?:string, length?:number}} [extra] source: chip|composer */

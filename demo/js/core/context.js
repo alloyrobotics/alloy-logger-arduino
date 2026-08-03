@@ -24,11 +24,33 @@
 //   3. the ask       - the charge, then the robot's own first question as a pill   (data-stage 3/4)
 // Beat 2 is the one that makes beat 3 land: an answer with a citation is only impressive next to
 // the evening in a serial monitor it replaces. core/oldway.js owns that panel.
+//
+// ---------------------------------------------------------------------------------------------
+// BRIEF v2, for the GUIDED missions only (role.js's `isGuidedMission`, which is exactly the set of
+// missions the four role cards lead into). Round 1's brief said everything it knew: a system line, a
+// provenance line, a mission paragraph, a fault paragraph, a wall, a volume line, a charge and a
+// pill. Read end to end that is six paragraphs before the visitor has seen a single thing happen.
+//
+// So on a guided mission the brief keeps its job and loses its furniture:
+//   * the CENTREPIECE is a full-bleed mock of the incumbent tool THIS ROLE is actually handed
+//     (core/mocks/*), streaming the mission's own channels. It replaces the old-way wall, it is the
+//     whole "raw tooling is not enough" beat, and it is the only thing on the screen doing anything.
+//   * the 3D hero is demoted to a corner presence beside the copy. The card-to-hero fly-in is
+//     UNCHANGED: the entrance is solved from the stage's own rect, so a small stage flies exactly
+//     the same way a big one did, and the no-hand-off path (a direct URL, reduced motion) still
+//     settles in place.
+//   * the copy is ONE short system line, the honesty line where a mission has one, and the composer
+//     pill. The mission and fault paragraphs, the volume line and the old-way wall are GONE from
+//     here: contextualisation is beat 1 of the demo's own choreography now, said by the analyst.
+//
+// Everything else - rescue, donna, arm6, drone, and every generated demo - takes the identical code
+// path it took yesterday, down to the markup order and the events fired.
 
 import * as THREE from 'three';
 import { ROBOT_ICONS } from '../robots/index.js';
 import { createOldWay } from './oldway.js';
-import { track } from './analytics.js';
+import { track, capture } from './analytics.js';
+import { effectiveRole, isGuidedMission } from './role.js';
 // The staging solve (WebGL probe, light rig, hero pose, orbit-safe fit) is shared with the picker
 // cards' previews, so it lives in stage3d.js and both screens frame the same rigs the same way.
 import {
@@ -91,6 +113,27 @@ function markBriefSeen(id) {
   }
 }
 
+/**
+ * The mock families, behind a dynamic import each.
+ *
+ * A visitor is one role and therefore sees exactly one of these, so the other three have no
+ * business in the boot graph: the brief is the screen whose whole job is to be instant. The wrapper
+ * that holds the panel is sized in CSS, so the layout is final before the module lands and the
+ * hero's entrance is never measured against a rect the mock is about to change.
+ *
+ * A rejection is swallowed to a warning, exactly as the lazy role-openers are: a side module that
+ * will not load costs the brief its centrepiece, never the screen.
+ */
+const MOCK_LOADERS = {
+  arduino: () => import('./mocks/arduino.js'),
+  viz: () => import('./mocks/viz.js'),
+  fleet: () => import('./mocks/fleet.js'),
+  inbox: () => import('./mocks/inbox.js'),
+};
+
+/** The family a role with no `mock` block falls back to. Every shipped role has one. */
+const DEFAULT_MOCK_FAMILY = 'arduino';
+
 /** Per-stage reveal delay, ms. Read into `--d` on each staged child. */
 const STAGE_DELAY = { 1: 260, 2: 520, 3: 780, 4: 1020 };
 /** Added to every stage delay when a fly runs, so the copy lands as the machine settles. */
@@ -98,6 +141,20 @@ const FLY_STAGE_DELAY = 450;
 
 const num = (v) => (Number.isFinite(v) ? v : 0);
 const loc = (v) => num(v).toLocaleString('en-US');
+
+/**
+ * The first sentence of a paragraph, or the whole thing when it has no terminator.
+ *
+ * The guided brief gets ONE system line, and `context.system` is authored to brief an analyst: the
+ * battle round's runs to four clauses about a rules manual. Its first sentence is the one that says
+ * what the machine is, which is all this screen still claims to say.
+ */
+function firstSentence(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (!t) return '';
+  const m = t.match(/^[^.!?]*[.!?]/);
+  return (m ? m[0] : t).trim();
+}
 
 /** Capitalise, and terminate with a period unless it already ends in terminal punctuation. */
 function sentence(s) {
@@ -263,6 +320,13 @@ export function createContext(mount, robotDef, opts = {}) {
   const onDone = typeof opts.onDone === 'function' ? opts.onDone : () => {};
   const def = robotDef || {};
   const b = briefOf(def);
+  // The guided missions are exactly the missions the role cards lead into, so this is one question
+  // asked of role.js rather than a second list of robot ids that could drift from the first.
+  const guided = isGuidedMission(def.id);
+  const role = effectiveRole();
+  const mockFamily =
+    (guided && role.mock && MOCK_LOADERS[role.mock.family] ? role.mock.family : null) ||
+    (guided ? DEFAULT_MOCK_FAMILY : null);
   const handoff = normaliseHandoff(opts.handoff);
   const reduceMotion =
     typeof window.matchMedia === 'function' &&
@@ -274,16 +338,21 @@ export function createContext(mount, robotDef, opts = {}) {
   const mayEnter = !!(handoff && !reduceMotion);
 
   const el = document.createElement('div');
-  el.className = 'ctx';
+  el.className = guided ? 'ctx is-guided' : 'ctx';
   el.style.setProperty('--acc', def.accent || '#2f78ff');
 
   // Nothing is ever rendered as a zero: a robot that shipped no rows gets no volume line at all,
-  // because "0 datapoints" undersells the product instead of selling it.
-  const hasVolume = b.datapoints > 0 && b.channelCount > 0;
-  const hasMission = !!b.mission;
-  const hasFault = !!b.fault;
+  // because "0 datapoints" undersells the product instead of selling it. On a guided brief all
+  // three are off outright: those paragraphs are beat 1 of the demo now, in the analyst's voice.
+  const hasVolume = !guided && b.datapoints > 0 && b.channelCount > 0;
+  const hasMission = !guided && !!b.mission;
+  const hasFault = !guided && !!b.fault;
 
-  el.innerHTML = `
+  // The hero panel. Identical markup in both briefs, so the entrance solves against the same three
+  // nodes; only its box changes, and its box is CSS. The skip pill is the one difference: a guided
+  // brief is two lines and a pill, so a control whose whole job is "there is more of this below"
+  // would be furniture arguing with the declutter.
+  const stageHtml = `
     <div class="ctx-stage${mayEnter ? ' entering' : ''}">
       <div class="ctx-fly">
         <svg class="ctx-ghost" style="opacity:0" viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -291,19 +360,14 @@ export function createContext(mount, robotDef, opts = {}) {
           ${ROBOT_ICONS[def.id] || GENERIC_ICON}
         </svg>
       </div>
-      <button class="ctx-skip mono" type="button">skip to the demo &rsaquo;</button>
-    </div>
-    <div class="ctx-copy">
-      <p class="ctx-system" data-stage="1"></p>
-      ${b.provenance ? '<p class="ctx-prov" data-stage="1"></p>' : ''}
-      ${hasMission ? '<p class="ctx-mission" data-stage="1"></p>' : ''}
-      ${hasFault ? '<p class="ctx-fault" data-stage="1"></p>' : ''}
-      <div class="ctx-oldway" data-stage="2"></div>
-      ${hasVolume ? '<p class="ctx-volume" data-stage="2"></p>' : ''}
-      <p class="ctx-charge" data-stage="3">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
-      ${
-        b.question
-          ? `<button class="ctx-ask" type="button" data-stage="4">
+      ${guided ? '' : '<button class="ctx-skip mono" type="button">skip to the demo &rsaquo;</button>'}
+    </div>`;
+
+  // The pill IS the CTA wherever the def ships a first question; a plain button otherwise. Its
+  // stage number differs between the two briefs only because the guided one has fewer stages.
+  const ctaHtml = (stage) =>
+    b.question
+      ? `<button class="ctx-ask" type="button" data-stage="${stage}">
         <span class="ctx-ask-q"></span>
         <span class="ctx-ask-send" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9"
@@ -312,13 +376,43 @@ export function createContext(mount, robotDef, opts = {}) {
           </svg>
         </span>
       </button>`
-          : `<button class="btn ctx-go" type="button" data-stage="4">Hand it the logs <span aria-hidden="true">&rarr;</span></button>`
-      }
+      : `<button class="btn ctx-go" type="button" data-stage="${stage}">Hand it the logs <span aria-hidden="true">&rarr;</span></button>`;
+
+  el.innerHTML = guided
+    ? `
+    <div class="ctx-mockwrap" data-stage="1">
+      <div class="ctx-mock"></div>
+    </div>
+    <div class="ctx-foot">
+      ${stageHtml}
+      <div class="ctx-copy">
+        <p class="ctx-system" data-stage="2"></p>
+        ${b.provenance ? '<p class="ctx-prov" data-stage="2"></p>' : ''}
+        ${ctaHtml(3)}
+        <a class="ctx-more mono" data-stage="3" href="#/missions">Other missions <span aria-hidden="true">&rsaquo;</span></a>
+      </div>
+    </div>`
+    : `
+    ${stageHtml}
+    <div class="ctx-copy">
+      <p class="ctx-system" data-stage="1"></p>
+      ${b.provenance ? '<p class="ctx-prov" data-stage="1"></p>' : ''}
+      ${hasMission ? '<p class="ctx-mission" data-stage="1"></p>' : ''}
+      ${hasFault ? '<p class="ctx-fault" data-stage="1"></p>' : ''}
+      <div class="ctx-oldway" data-stage="2"></div>
+      ${hasVolume ? '<p class="ctx-volume" data-stage="2"></p>' : ''}
+      <p class="ctx-charge" data-stage="3">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
+      ${ctaHtml(4)}
       <a class="ctx-more mono" data-stage="4" href="#/missions">Other missions <span aria-hidden="true">&rsaquo;</span></a>
     </div>`;
 
   const q = (sel) => el.querySelector(sel);
-  q('.ctx-system').textContent = b.system;
+  // One short line on a guided brief: what this machine is, and nothing else. The rest of
+  // `context.system` is a paragraph written to brief an analyst, and the analyst gets it in beat 1.
+  q('.ctx-system').textContent = guided ? firstSentence(b.system) : b.system;
+  // The honesty line is NOT decluttered away. It is the sentence that says which parts of this
+  // mission are real and which are synthesized overlays, and a screen streaming a mission's own
+  // values with that line removed is making a claim it did not mean to make.
   if (b.provenance) q('.ctx-prov').textContent = b.provenance;
   // Verbatim, both of them. `context.mission` and `context.fault` have been authored on every def
   // since the briefs were written and were never once rendered: the screen had the two sentences
@@ -366,46 +460,114 @@ export function createContext(mount, robotDef, opts = {}) {
   // missions derive their channels from a payload this screen must not pull in, and those three
   // author a slice of their own values (`context.oldwaySample`) for the module to print instead.
   let oldway = null;
-  try {
-    oldway = createOldWay(q('.ctx-oldway'), def, {
-      data: def.data || null,
-      onSeen: (info) => {
-        // `sampled` rides along so the funnel can tell the authored-slice wall from the built one;
-        // `synthesized` stays the flag that means the numbers on screen are stand-ins.
-        track.oldwaySeen(def.id, {
-          synthesized: !!(info && info.synthesized),
-          sampled: !!(info && info.sampled),
-        });
-      },
-    });
-  } catch (err) {
-    // A missing wall costs the brief one beat. A throw here would cost it the whole screen, and
-    // the screen is what sells the product.
-    console.warn('[ctx] old-way panel failed for', def.id, err);
-    oldway = null;
-  }
-  // A def with no channels at all (a stub, a half-built generated demo) has nothing to scroll, and
-  // an empty terminal frame under a caption about how unreadable it is makes the opposite argument.
-  if (!oldway || !oldway.lines || !oldway.lines.length) {
-    if (oldway) oldway.dispose();
-    oldway = null;
-    const slot = q('.ctx-oldway');
-    if (slot) slot.remove();
+  /** The guided brief's centrepiece. Null until its family module lands, and on a non-guided brief. */
+  let mock = null;
+  if (!guided) {
+    try {
+      oldway = createOldWay(q('.ctx-oldway'), def, {
+        data: def.data || null,
+        onSeen: (info) => {
+          // `sampled` rides along so the funnel can tell the authored-slice wall from the built one;
+          // `synthesized` stays the flag that means the numbers on screen are stand-ins.
+          track.oldwaySeen(def.id, {
+            synthesized: !!(info && info.synthesized),
+            sampled: !!(info && info.sampled),
+          });
+        },
+      });
+    } catch (err) {
+      // A missing wall costs the brief one beat. A throw here would cost it the whole screen, and
+      // the screen is what sells the product.
+      console.warn('[ctx] old-way panel failed for', def.id, err);
+      oldway = null;
+    }
+    // A def with no channels at all (a stub, a half-built generated demo) has nothing to scroll, and
+    // an empty terminal frame under a caption about how unreadable it is makes the opposite argument.
+    if (!oldway || !oldway.lines || !oldway.lines.length) {
+      if (oldway) oldway.dispose();
+      oldway = null;
+      const slot = q('.ctx-oldway');
+      if (slot) slot.remove();
+    }
   }
 
   // This tab has now been told what this mission is, so a later `?robot=` or link back into it
   // goes straight to the demo instead of making the same argument twice.
   markBriefSeen(def.id);
-  track.briefViewed(def.id, { synthetic_wall: !!(oldway && oldway.synthesized) });
+  track.briefViewed(
+    def.id,
+    guided
+      ? { guided: true, mock: mockFamily, role: role.id }
+      : { synthetic_wall: !!(oldway && oldway.synthesized) },
+  );
 
   const copy = q('.ctx-copy');
   // the question card is the CTA when the def ships a first question; a plain button otherwise
   const goBtn = q('.ctx-ask') || q('.ctx-go');
+  // null on a guided brief, which ships no skip pill
   const skipBtn = q('.ctx-skip');
 
   let done = false;
   let disposed = false;
   let revealed = false;
+
+  // ---- the guided brief's centrepiece -------------------------------------------------------
+  // Loaded after the panel is in the document, for the same reason the old-way wall is: the mock
+  // starts itself when it is actually on screen (an IntersectionObserver inside mocks/base.js) and a
+  // detached node never intersects anything. Telemetry is passed only if it already exists; the
+  // three lazy-payload missions author `context.oldwaySample` and the mock prints that instead. The
+  // TRIPWIRE is the same one the wall has: this screen never pulls a robot's scene payload.
+  if (guided && mockFamily) {
+    MOCK_LOADERS[mockFamily]().then(
+      (mod) => {
+        if (disposed) return;
+        const slot = q('.ctx-mock');
+        const create = mod && typeof mod.default === 'function' ? mod.default : null;
+        try {
+          if (!slot || !create) throw new Error(`mocks/${mockFamily}.js has no default export`);
+          mock = create(slot, def, {
+            role,
+            data: def.data || null,
+            // The role owns the caption because it is a sentence about the visitor's working life;
+            // the FAMILY owns the tool label, and the module already defaults to its own.
+            caption: (role.mock && role.mock.caption) || '',
+            onSeen: (info) => {
+              // Fired when the panel has actually started streaming on screen, which is the only
+              // honest moment to count it as viewed. `synthesized` is the flag that means the
+              // numbers are stand-ins in this mission's own format.
+              capture('mock_viewed', {
+                robot: def.id,
+                mock: (info && info.family) || mockFamily,
+                role: (info && info.role) || role.id,
+                synthesized: !!(info && info.synthesized),
+                sampled: !!(info && info.sampled),
+              });
+            },
+          });
+        } catch (err) {
+          console.warn('[ctx] mock panel failed for', def.id, err);
+          mock = null;
+        }
+        // Same rule as the wall: a def with nothing to print gets no empty frame, because an empty
+        // tool under a screen arguing that the tool is overwhelming makes the opposite point.
+        if (mock && (!mock.lines || !mock.lines.length)) {
+          mock.dispose();
+          mock = null;
+        }
+        if (!mock) {
+          const wrap = el.querySelector('.ctx-mockwrap');
+          if (wrap) wrap.remove();
+        }
+      },
+      (err) => {
+        // Swallowed to a warning, exactly like the lazy role openers: a side module that will not
+        // load costs the brief its centrepiece, never the screen.
+        console.warn('[ctx] mock family unavailable:', mockFamily, err);
+        const wrap = el.querySelector('.ctx-mockwrap');
+        if (wrap) wrap.remove();
+      },
+    );
+  }
 
   // app.js's route() sets its own connect-screen title AFTER buildConnect returns, so writing it
   // here synchronously would just be overwritten. A microtask lands once route() has finished its
@@ -452,7 +614,7 @@ export function createContext(mount, robotDef, opts = {}) {
   // is the keyboard path, so the panel itself is not a focus stop.
   copy.addEventListener('click', onCopyClick);
   goBtn.addEventListener('click', advance);
-  skipBtn.addEventListener('click', advance);
+  if (skipBtn) skipBtn.addEventListener('click', advance);
 
   // ============================================================== the live 3D hero + its entrance
   const stage = q('.ctx-stage');
@@ -785,7 +947,14 @@ export function createContext(mount, robotDef, opts = {}) {
         mode = 'none';
         s = 1;
       }
-      s = clamp(s, 0.03, 1);
+      // The upper bound is the direction the hand-off runs in, and BRIEF v2 reversed it. The full
+      // brief's hero is far bigger than a picker card, so the machine only ever flew IN and a ceiling
+      // of 1 was free. The guided brief's hero is a 132px corner, which is SMALLER than the card that
+      // was clicked, so the honest solve is greater than one and clamping it to 1 replaced the
+      // entrance with a pop: the robot shrank instantly, then slid. It is still bounded, because a
+      // nonsense solve must not fling the machine across the page; 3 covers every card at both
+      // viewports with room to spare. Left at 1 for the full brief, where it never binds anyway.
+      s = clamp(s, 0.03, guided ? 3 : 1);
     }
     entranceMode = mode;
     entranceScale = s;
@@ -955,6 +1124,18 @@ export function createContext(mount, robotDef, opts = {}) {
     /** Beat 2's panel, for QA/integration assertions. Null when it could not be built. */
     oldWay: () => oldway,
 
+    /** Whether this brief is the guided, decluttered one. Page state for QA, never a pixel. */
+    guided: () => guided,
+
+    /**
+     * The guided brief's incumbent-tool mock, for QA/integration assertions. Null on a non-guided
+     * brief, and null on a guided one until its family module has landed.
+     */
+    mock: () => mock,
+
+    /** The family this brief mounted (or would have). Null on a non-guided brief. */
+    mockFamily: () => mockFamily,
+
     /** Programmatic hand-off: land the copy, then advance. */
     skip() {
       revealAll();
@@ -984,7 +1165,7 @@ export function createContext(mount, robotDef, opts = {}) {
       try {
         copy.removeEventListener('click', onCopyClick);
         goBtn.removeEventListener('click', advance);
-        skipBtn.removeEventListener('click', advance);
+        if (skipBtn) skipBtn.removeEventListener('click', advance);
       } catch (_) {
         /* nodes already gone: listeners went with them */
       }
@@ -995,6 +1176,14 @@ export function createContext(mount, robotDef, opts = {}) {
           /* panel already gone with the tree */
         }
         oldway = null;
+      }
+      if (mock) {
+        try {
+          mock.dispose(); // clears its ticker and its IntersectionObserver
+        } catch (_) {
+          /* panel already gone with the tree */
+        }
+        mock = null;
       }
       dropHero(); // cancels the render loop, releases the rig and the context
       if (section) section.classList.remove('ctx-mode');

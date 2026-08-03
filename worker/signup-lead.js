@@ -364,11 +364,17 @@ async function handleCapture(request, env, ctx) {
   const robot = tag(body.robot);
   const src = tag(body.src);
   // NOT `tag()`. `robot` and `src` are free text reduced to something safe to store; `role` is one
-  // of three known values or nothing at all. A whitelist is what makes it worth putting in the
-  // export: a column that can only ever hold `engineer`, `operator`, `lead` or NULL is a column
-  // that can be counted, and one that stores whatever was posted is a column that has to be
-  // cleaned before it can be read. An unrecognised value stores NULL and still answers 202, like
+  // of four known values or nothing at all. A whitelist is what makes it worth putting in the
+  // export: a column that can only ever hold `hobbyist`, `engineer`, `lead`, `marketing` or NULL is
+  // a column that can be counted, and one that stores whatever was posted is a column that has to
+  // be cleaned before it can be read. An unrecognised value stores NULL and still answers 202, like
   // every other thing this endpoint declines to act on.
+  //
+  // Rows written before ROLES v2 (2026-08-03) can also hold the retired `operator`. That value is
+  // history and no new row can ever carry it: normalizeRole degrades both `operator` and the
+  // client's old `support` id to `engineer`, so a stale client is segmented rather than dropped.
+  // Counting the column means folding those old rows in by hand, which is a smaller cost than a
+  // migration that rewrites what a visitor actually picked.
   const role = normalizeRole(body.role);
 
   const ipHash = (await sha256Hex(`${ip}${ipSalt(env)}`)).slice(0, 32);

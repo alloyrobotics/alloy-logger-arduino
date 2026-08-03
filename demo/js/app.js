@@ -25,6 +25,7 @@ import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
 import { createContext, GENERIC_ICON, briefSeen } from './core/context.js';
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
+import { createGuide, hasChoreo } from './core/guide.js';
 import { createStart } from './core/start.js';
 import { getRoleId, hasRole, missionFor, DEFAULT_MISSION } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
@@ -314,6 +315,9 @@ function teardownDemo() {
   // so leaving it attached pins the whole torn-down three.js scene graph in memory.
   const toggle = screens.demo.querySelector('#chart-toggle');
   if (toggle) toggle.onclick = null;
+  // First: a beat still in flight must not be able to write into a panel that is about to be
+  // disposed, and its continuation runs off the chat typewriter this is about to tear down.
+  if (demo.guide) demo.guide.dispose();
   demo.chat.dispose();
   demo.chart.dispose();
   demo.viewer.dispose();
@@ -371,6 +375,25 @@ function buildDemo(def) {
   }
 }
 
+/**
+ * The round-1 opener beat: after 420 ms, ask the scripted first question on the visitor's behalf.
+ *
+ * Lifted out of buildDemoInner so the one line that decides a mission's flow reads as a choice
+ * between two named things. UNCHANGED for every mission that takes it - the delay, the identity
+ * guard and the untracked timer id are all exactly what shipped. A guided mission never gets here:
+ * core/guide.js replaces this beat outright, and firing it as well would put a second opener under
+ * the walk's own first answer.
+ *
+ * @param {object} chat the chat instance this timer is allowed to drive
+ */
+function openerBeat(chat) {
+  window.setTimeout(() => {
+    // identity, not id: leaving and re-entering the same robot inside 420 ms would otherwise let
+    // the stale timer drive the disposed chat instance
+    if (demo && demo.chat === chat) chat.askFirstQuestion();
+  }, 420);
+}
+
 function buildDemoInner(def, built) {
   /**
    * Register a component the moment it exists, so the catch above can find it.
@@ -387,6 +410,25 @@ function buildDemoInner(def, built) {
   };
 
   const host = screens.demo;
+
+  /**
+   * Which of the two demo flows this mission gets, decided ONCE, here, and nowhere else.
+   *
+   * A guided mission (a def that ships `choreo` and that a role is routed into: sbr, ssl, battle)
+   * enters CHAT ONLY and is walked through by core/guide.js. Every other mission keeps round 1
+   * exactly: full layout on entry, the 420 ms opener, the auto-played chip.
+   *
+   * The attribute is written BEFORE the viewer and the chart are constructed, and the template
+   * markup already ships `data-guide="chat"` on this section, so a guided mission's panels are
+   * out of the layout in the first frame it is shown rather than being hidden by JS after the
+   * browser has laid them out. Non-guided drops the attribute here, before any paint - the screen
+   * is still `hidden` at this point on a cold load and the whole build is one synchronous task, so
+   * there is no frame in which the wrong layout exists either way.
+   */
+  const guided = hasChoreo(def);
+  if (guided) host.dataset.guide = 'chat';
+  else delete host.dataset.guide;
+
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
 
@@ -497,7 +539,7 @@ function buildDemoInner(def, built) {
   chartToggle.onclick = () => setChartOpen(!chartPanel.classList.contains('open'));
   setChartOpen(false);
 
-  demo = { def, timeline, viewer, chart, chat, onEvidence, clearEvidence, setChartOpen };
+  demo = { def, timeline, viewer, chart, chat, guide: null, onEvidence, clearEvidence, setChartOpen };
   // exposed for QA/integration assertions (page state, not pixels)
   window.__demo = demo;
 
@@ -510,18 +552,44 @@ function buildDemoInner(def, built) {
       popup: signupPopup,
       isDemoRoute: () => currentRoute.name === 'demo',
       isStreaming: () => chat.streaming,
+      // WHO announces the handover, and therefore how long the fallback grace runs. On a guided
+      // mission the beat is the end of a walk the visitor paces, not a 420 ms timer.
+      guided,
     });
     window.__signup = signupTriggers;
   }
 
   timeline.play();
-  window.setTimeout(() => {
-    // identity, not id: leaving and re-entering the same robot inside 420 ms would otherwise let
-    // the stale timer drive the disposed chat instance
-    if (demo && demo.chat === chat) chat.askFirstQuestion();
-  }, 420);
 
-  capture('demo_opened', { robot: def.id });
+  // The choreography, in place of the opener. Owned before it starts, so a throw anywhere later in
+  // this function unwinds it with everything else, and guarded so a walk that cannot be built
+  // falls back to the untouched round-1 flow rather than stranding a visitor on a chat-only screen
+  // with nothing to tap.
+  if (guided) {
+    try {
+      const guide = own(
+        createGuide({
+          def,
+          chat,
+          panels: { host, timeline, viewer, chart, onEvidence, setChartOpen },
+        }),
+      );
+      demo.guide = guide;
+      guide.start();
+    } catch (err) {
+      console.warn(`[demo] ${def.id}: guided choreography unavailable, falling back`, err);
+      if (demo.guide) {
+        demo.guide.dispose();
+        demo.guide = null;
+      }
+      delete host.dataset.guide;
+      openerBeat(chat);
+    }
+  } else {
+    openerBeat(chat);
+  }
+
+  capture('demo_opened', { robot: def.id, guided });
 }
 
 // ------------------------------------------------------------------- generated robots

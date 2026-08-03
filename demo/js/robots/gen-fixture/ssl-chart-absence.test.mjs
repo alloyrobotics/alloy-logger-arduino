@@ -40,6 +40,36 @@ page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
 
+/**
+ * Tap through the guided walk, if this mission has one, until it hands over.
+ *
+ * sbr, ssl and battle enter CHAT ONLY: js/core/guide.js brings the chart on at beat 2 and the 3D
+ * stage at beat 3, each on the visitor's own tap. Every assertion in this file is about the plot a
+ * visitor is looking at, so the walk has to reach its handover first - that full layout is the
+ * state this test was always describing, it just used to be the state the demo opened in.
+ *
+ * @returns {Promise<boolean>} whether the layout is settled (true immediately when not guided)
+ */
+async function settleGuide() {
+  if (!(await page.evaluate(() => !!(window.__demo && window.__demo.guide)))) return true;
+  // a beat per iteration, plus slack; the loop exits on `settled`, never on the count
+  for (let i = 0; i < 8; i++) {
+    const ready = await waitFor(
+      page,
+      () => {
+        const g = window.__demo && window.__demo.guide;
+        return !!g && (g.settled || document.querySelectorAll('.guide-cta:not(:disabled)').length > 0);
+      },
+      30000,
+      'the next guided beat',
+    );
+    if (!ready) return false;
+    if (await page.evaluate(() => window.__demo.guide.settled)) return true;
+    await page.click('.guide-cta:not(:disabled)');
+  }
+  return await page.evaluate(() => !!(window.__demo.guide && window.__demo.guide.settled));
+}
+
 /** Open a robot's demo screen with its chart panel expanded, and wait for the first paint. */
 async function openChart(robot, channel, fields) {
   await page.evaluate((id) => { location.hash = `#/demo/${id}`; }, robot);
@@ -50,6 +80,7 @@ async function openChart(robot, channel, fields) {
     `the ${robot} chart`,
   );
   if (!up) return false;
+  if (!(await settleGuide())) return false;
   await page.evaluate(
     ([ch, fs]) => {
       const d = window.__demo;
