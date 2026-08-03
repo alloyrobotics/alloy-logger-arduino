@@ -156,6 +156,32 @@
       object-fit: contain;
     }
 
+    .icon-linkedin,
+    .destination:hover .icon-linkedin {
+      border-color: #0a66c2;
+      background: #0a66c2;
+      box-shadow: none;
+      color: #fff;
+    }
+
+    .icon-linkedin svg {
+      width: 25px;
+      height: 29px;
+    }
+
+    .icon-x,
+    .destination:hover .icon-x {
+      border-color: #2f2f2f;
+      background: #000;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
+      color: #fff;
+    }
+
+    .icon-x svg {
+      width: 24px;
+      height: 24px;
+    }
+
     .icon-try {
       border-color: rgba(211, 238, 182, .25);
       background: linear-gradient(160deg, rgba(211, 238, 182, .16), rgba(2, 93, 254, .12));
@@ -240,7 +266,7 @@
 
       <nav class="link-list" aria-label="Alloy destinations">
         <a class="destination" href="https://www.linkedin.com/company/alloyrobotics" target="_blank" rel="noreferrer" aria-label="LinkedIn: Company updates">
-          <span class="destination-icon" aria-hidden="true">
+          <span class="destination-icon icon-linkedin" aria-hidden="true">
             <svg viewBox="0 0 448 512" fill="currentColor"><path d="M100.28 448H7.4V148.9h92.88zM53.79 108.1C24.09 108.1 0 83.5 0 53.8a53.79 53.79 0 0 1 107.58 0c0 29.7-24.1 54.3-53.79 54.3zM447.9 448h-92.68V302.4c0-34.7-.7-79.2-48.29-79.2-48.29 0-55.69 37.7-55.69 76.7V448h-92.78V148.9h89.08v40.8h1.3c12.4-23.5 42.69-48.3 87.88-48.3 94 0 111.28 61.9 111.28 142.3V448z" /></svg>
           </span>
           <span class="destination-copy"><span class="destination-name">LinkedIn</span><span class="destination-description">Company updates</span></span>
@@ -248,7 +274,7 @@
         </a>
 
         <a class="destination" href="https://x.com/alloyrobotics" target="_blank" rel="noreferrer" aria-label="X: Robots, data, and the build">
-          <span class="destination-icon" aria-hidden="true">
+          <span class="destination-icon icon-x" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" /></svg>
           </span>
           <span class="destination-copy"><span class="destination-name">X</span><span class="destination-description">Robots, data, and the build</span></span>
