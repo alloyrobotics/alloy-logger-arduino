@@ -37,9 +37,9 @@ const T_HERO_MATCH_S = 60.44;
 const T_HERO_PREVIEW_S = 2.765;
 
 /**
- * The OPENER in the support register, hoisted so the two ids that name that register share ONE
- * string: role.js calls it `support`, worker/roles.js calls it `operator`, and picking one would
- * silently serve the engineer answer under the other.
+ * The OPENER in the operator register, hoisted so both ids that can name that register share ONE
+ * string: `operator` is canonical on both sides, `support` is the retired card id kept as a key,
+ * and picking only one would silently serve the engineer answer under the other.
  *
  * Same table, same numbers, same instants as the engineer answer. Two things do NOT vary by role:
  * the honesty line, because this is a synthesized-fault entry and which role a visitor picked
@@ -55,7 +55,7 @@ const OPENER_SUPPORT = `Bot 8 arms and fires, but the bank is nowhere near full 
 | 7.6 s armed, then the kick at 53.977 s | 179 V, then 21 V |
 | 1.1 s after the kickoff came into play at 107.84 s | 41 V |
 
-Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick, so a late kick leaves with a weak charge behind it.
+Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick, so a late kick leaves with a weak charge behind it. Check bot 8's charge before it is sent out for a set piece, and bench test the bank on any bot that arms below the 240 V set point.
 
 Synthetic overlay on real match motion: the charge curve is modelled, and nothing the fleet actually did in this window follows from it.
 
@@ -71,7 +71,7 @@ const OPENER_LEAD = `Bot 8's kicker bank is a charge-time budget, not a broken p
 | 7.6 s armed, then the kick at 53.977 s | 179 V, then 21 V |
 | 1.1 s after the kickoff came into play at 107.84 s | 41 V |
 
-Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick; by the last third it cannot reach a competitive charge.
+Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick, so the last third of a window like this one is where the pattern gets expensive. The decision it points at is a per-bot charge floor checked before a set piece, and a bench test for any bot still under the 240 V set point when it arms.
 
 Synthetic overlay on real match motion: the charge curve is modelled, and nothing the fleet actually did in this window follows from it.
 
@@ -84,11 +84,16 @@ export default {
   tagline: 'A real match replay, three planted faults, one real tracking loss',
   context: {
     system:
-      'Polaris Robotics SSL fleet: omni-drive cylinders (180 mm), 240 V kicker caps, 25k rpm dribblers, telemetry streamed live over the base-station link',
+      'Polaris Robotics SSL fleet: omni-drive cylinders (180 mm), 240 V kicker caps, 25k rpm dribblers, telemetry captured over the base-station link.',
     mission:
-      '110 seconds of a professional Division A match: a goal conceded under pressure, three ball placements, one robot pulled from the field',
+      '110 seconds of a professional Division A match: a goal conceded under pressure, three ball placements, one robot pulled from the field.',
     fault:
-      'Late in the window the kicker bank stops reaching full charge and one bot drifts out of the play',
+      'Late in the window the kicker bank stops reaching full charge and one bot drifts out of the play.',
+    // The picker card's line: authored short and fault first, because the card clamps. See sbr.
+    cardProblem: 'Late in the window the kicker bank stops reaching full charge.',
+    // The old-way header. Not the ESP32 default: an invented USB port under a provenance line
+    // about real match tracking would claim a capture path. See core/oldway.js portLine().
+    port: 'base-station telemetry link · 20 Hz',
     faultT: 53.977,
     label: 'kicker bank sag',
     provenance:
@@ -205,8 +210,11 @@ export default {
   // shot selection is real, so that phrasing had the analyst assert a causal link no log can
   // carry. This asks about the synthesized channel on its own terms.
   firstQuestion: "What is wrong with bot 8's kicker?",
+  // Chip 1 is the sync-combo chip on every mission, because the coach line teaches exactly that.
+  // Same entry this chip always resolved to (`vision-confidence`), asked as a show-me, and it is
+  // the one fault here that is the log's own data.
   suggested: [
-    "What happened to the opponent's bot 13?",
+    "Show me where the tracker lost the opponent's bot 13",
     "Is bot 7's radio link healthy?",
     'Why did bot 3 lose the ball?',
     'Walk me through the goal we conceded',

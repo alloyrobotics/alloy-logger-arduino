@@ -26,8 +26,15 @@ import { track } from './analytics.js';
 const COPY = {
   kicker: 'alloylogger live demo',
   title: 'Your robot failed. Ask it why.',
-  sub: 'Replay a real mission and put its telemetry in front of an analyst. First, what do you do with robots?',
-  hint: 'It only changes how the answers are pitched. One tap.',
+  // "a mission, real or simulated": four of the seven are synthetic scenarios and one is a scripted
+  // simulation, so the blanket "a real mission" was a claim this screen cannot make. app.js passes
+  // the spec's locked sub-line over the top of this one; it is the module default, and a second
+  // caller (a test harness, an embed) would otherwise ship the false version.
+  sub: 'Replay a mission, real or simulated, and put its telemetry in front of an analyst. First, what do you do with robots?',
+  // Not "only changes how the answers are pitched": the tap also picks the mission the visitor
+  // lands on and is persisted, so `#/` sends them back to it. "Only" was false about the most
+  // consequential half of the tap, and undersold the half that is actually good.
+  hint: 'It picks the mission you land on and how the answers are pitched. You can change it later.',
   escape: 'Just exploring. Show me every mission',
   go: 'start here',
 };

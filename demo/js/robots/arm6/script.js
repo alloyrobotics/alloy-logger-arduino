@@ -13,7 +13,9 @@ export default {
   tagline: '12 transfer cycles, one dropped part',
   // Authored volume: 73,620 values across 4 channels, read off the built arrays under node
   // (/joints 4001 x 12, /ee 4001 x 4, /ctl 4001 x 2, /sys 801 x 2), not derived from rate x duration.
-  context: { system: 'A 6-axis pick-and-place arm on a 48 V bus: six BLDC servos, with joint, end-effector and controller channels logged at 50 Hz.', mission: '12 transfer cycles between two stations, the same taught trajectory every time.', fault: 'On cycle 9 the part is on the deck and the arm completes the place move as if nothing happened.', faultT: 56.3, label: 'payload drop', datapoints: 73620, channels: 4 },
+  context: { system: 'A 6-axis pick-and-place arm on a 48 V bus: six BLDC servos, with joint, end-effector and controller channels logged at 50 Hz.', mission: '12 transfer cycles between two stations, the same taught trajectory every time.', fault: 'On cycle 9 the part is on the deck and the arm completes the place move as if nothing happened.', faultT: 56.3, label: 'payload drop', datapoints: 73620, channels: 4,
+    // The picker card's line: authored short, fault first. See sbr/script.js.
+    cardProblem: 'Drops the part on cycle 9 and finishes the place move as if nothing happened.' },
   accent: '#D3EEB6',
   duration,
   rate,

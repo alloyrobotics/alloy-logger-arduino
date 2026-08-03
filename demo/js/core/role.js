@@ -5,6 +5,9 @@
 // support wants the fix, a lead wants the shape of the problem), it picks the mission the visitor
 // is guided into, and it rides the lead record so a signup arrives already segmented.
 //
+// Role ids are the CANONICAL names, the same three `worker/roles.js` whitelists, so the value in
+// localStorage, the PostHog super-prop, the chat POST and the leads column are one vocabulary.
+//
 // Three consumers, one source of truth:
 //   * start.js writes it (setRole) when a card is tapped
 //   * analytics.js reads it as a PostHog super-prop, and re-registers on change
@@ -29,7 +32,9 @@ export const ROLE_STORAGE_KEY = 'alloy_demo_role';
  * @property {string} mission       robot id this role is guided into (spec: the recommended demo)
  * @property {string} register      persona key the worker prepends to the cached prefix
  * @property {string} answerStyle   human-readable register, for the persona block and for QA
- * @property {{tool:string, caption:string}} oldWay  beat 2's chrome + caption for this role
+ * @property {{tool:string, caption:string, port?:string}} oldWay  beat 2's chrome + caption for
+ *   this role. `port` names the artefact in the panel header; a role that omits it is looking at
+ *   the capture itself, and the header falls through to the mission's own (see oldway.js).
  * @property {string} glyph         24x24 line-art fragment, stroke inherits currentColor
  */
 
@@ -47,21 +52,30 @@ export const ROLES = [
     oldWay: {
       tool: 'Serial monitor',
       caption: 'This is the evening you would spend in the serial monitor.',
+      // No `port`: the engineer IS looking at the capture itself, so the header falls through to
+      // the mission's own (`context.port`) and only then to the ESP32 default. See oldway.js.
     },
     glyph: '<path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M13.5 6l-3 12"/>',
   },
   {
-    id: 'support',
+    // `operator`, the name worker/roles.js has always used and the one the leads table and the
+    // export store. The card used to call this same person `support`, which meant PostHog held one
+    // name for the cohort and the lead record held the other, and no report could count them
+    // together. The worker's inbound alias stays, so a client cached mid-rename still resolves.
+    id: 'operator',
     label: 'I keep robots running',
     blurb: 'Support, CS, field ops. You get the robot after it has already broken.',
     kicker: 'support and field ops',
     mission: 'rescue',
-    register: 'support',
+    register: 'operator',
     answerStyle:
       'Less technical, solution first. Say what happened in plain language and what to do about it next.',
     oldWay: {
       tool: 'The log the field team sends you',
       caption: 'This is what lands in your inbox after the robot has already been rebooted.',
+      // A forwarded log file, named as one. The default header (`115200 baud`) described a serial
+      // session this role never opened, under a caption saying the log arrived by email.
+      port: 'field-dump.log · attached to the ticket · no index',
     },
     glyph:
       '<path d="M12 3l7 3v5c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M9.2 12l2 2 3.6-4"/>',
@@ -69,7 +83,10 @@ export const ROLES = [
   {
     id: 'lead',
     label: 'I run a robotics team',
-    blurb: 'You need to know what happened, what it cost, and whether it happens again.',
+    // Cards 1 and 2 are "<job functions>. <consequence>"; this one used to be consequence only, so
+    // the card whose identity is least obvious was the one naming no job. Worse on mobile, where
+    // the `.st-kick` over-line ("leadership") is hidden and the card had no role noun left at all.
+    blurb: 'Eng lead, head of robotics, founder. You need to know what it cost and whether it happens again.',
     kicker: 'leadership',
     mission: 'ssl',
     register: 'lead',
@@ -78,6 +95,9 @@ export const ROLES = [
     oldWay: {
       tool: 'The CSV your team exports',
       caption: 'This is what your team ships you when a robot fails.',
+      // A spreadsheet export, named as one. Same reason as the operator's: the caption and the
+      // header have to be describing the same artefact.
+      port: 'mission-export.csv · opened in a spreadsheet · no time axis',
     },
     glyph: '<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M3 20h18"/>',
   },

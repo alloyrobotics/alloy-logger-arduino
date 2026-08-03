@@ -233,12 +233,14 @@ input { font: inherit; color: inherit; }
 .rcard-body { padding: 0 3px; }
 .rcard-name { font-size: 15.5px; font-weight: 500; letter-spacing: -0.015em; }
 .rcard-tag { font-size: 12.5px; color: var(--tx-body); margin-top: 3px; }
-/* the problem, under the label: what the mission was and what went wrong in it. Clamped rather
-   than truncated in JS, so the copy stays authored prose and the card stays the same height on
-   every row of the grid. */
+/* the problem, under the label: what went wrong in this mission. The copy is authored short and
+   fault-first (`context.cardProblem`), so the clamp is a guard against a generated demo's derived
+   line rather than the thing that shapes the card. Three lines, not two: at 11.5px in a quarter of
+   1180px a two-line clamp holds about 80 characters, and the fault is the half that earns the
+   click, so it must never be the half that falls off the bottom. */
 .rcard-prob {
   font-size: 11.5px; line-height: 1.42; color: var(--tx-mute); margin-top: 5px;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
   overflow: hidden;
 }
 .rcard-go { padding: 0 3px; }
@@ -971,7 +973,13 @@ input { font: inherit; color: inherit; }
   .rcard-art svg { width: 96px; height: 62px; }
   .rcard-name { font-size: 14px; }
   .rcard-tag { font-size: 11.5px; margin-top: 2px; }
-  .rcard-prob { font-size: 11px; margin-top: 4px; line-height: 1.38; }
+  /* four lines here, three on the desktop grid: a 166px card holds about 20 characters a line, so
+     the same authored line that lands in three at 1180px needs one more here. The card is taller
+     for it and the 2 x 2 grid still fits. */
+  .rcard-prob {
+    font-size: 11px; margin-top: 4px; line-height: 1.38;
+    -webkit-line-clamp: 4; line-clamp: 4;
+  }
   .rcard-go { font-size: 10.5px; }
   .pick-foot { padding: 20px 0 30px; }
 
@@ -1051,7 +1059,7 @@ input { font: inherit; color: inherit; }
 <!-- ============================================================ 0. START  #/start
      The role fork. One question, one tap, three cards, and an escape to the full picker.
      js/core/start.js builds the panel into #start-mount; nothing is authored here but the frame. -->
-<section id="screen-start">
+<section id="screen-start" hidden>
   <header class="topbar">
     <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
   </header>
@@ -1063,7 +1071,10 @@ input { font: inherit; color: inherit; }
 <!-- ============================================================ 1. PICKER  #/missions -->
 <section id="screen-picker" hidden>
   <header class="topbar">
-    <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
+    <!-- #/start, not "/": a full load of "/" routes a visitor who already forked straight back
+         into their guided mission, so the wordmark threw someone who deliberately opened the
+         mission list out of it. Same target the connect screen's wordmark uses. -->
+    <a class="wordmark" href="#/start"><i></i><span>AlloyLogger</span></a>
     <a class="topbar-link mono" href="#/start">Pick your seat <span aria-hidden="true">&rsaquo;</span></a>
   </header>
 

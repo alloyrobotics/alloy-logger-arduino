@@ -135,16 +135,25 @@ function firstSentence(s) {
 }
 
 /**
- * The card's problem line: what the mission was, and what went wrong in it.
+ * The card's problem line: what went wrong in this mission, in one authored line.
  *
- * Both halves are cut to their FIRST sentence rather than printed whole. Two of the seven missions
- * author a four-sentence `context.mission` (they are briefing an analyst, not labelling a tile), and
- * the card clamps to two lines: printing the paragraph verbatim meant the fault - the half that
- * makes anyone click - was always the half that got clipped off the bottom.
+ * `context.cardProblem` is the line every def now ships, and it is preferred over anything derived
+ * here. Deriving it from the brief prose did not work at any clamp: the briefs are written to brief
+ * an ANALYST, so their first sentences run to 130-230 characters and the fault half, the half that
+ * makes anyone click, was clipped off the bottom of all seven cards at both viewports. A card line
+ * is its own piece of copy, so it is authored as one, fault first and short enough to land whole.
+ *
+ * The mission + fault fallback stays for a def that ships no `cardProblem` (a generated demo), and
+ * terminates each half: two halves joined with a bare space read as one run-on sentence when the
+ * first one was authored without a full stop.
  */
 function problemLine(def) {
   const ctx = def.context || {};
-  const bits = [firstSentence(ctx.mission), firstSentence(ctx.fault)].filter(Boolean);
+  const card = typeof ctx.cardProblem === 'string' ? ctx.cardProblem.trim() : '';
+  if (card) return card;
+  const bits = [firstSentence(ctx.mission), firstSentence(ctx.fault)]
+    .filter(Boolean)
+    .map((s) => (/[.!?…]$/.test(s) ? s : s + '.'));
   return bits.join(' ');
 }
 
@@ -363,8 +372,16 @@ function buildDemo(def) {
 }
 
 function buildDemoInner(def, built) {
-  /** Register a component the moment it exists, so the catch above can find it. */
-  const track = (component) => {
+  /**
+   * Register a component the moment it exists, so the catch above can find it.
+   *
+   * NOT named `track`: this module imports the analytics `track` object, and a local of that name
+   * shadowed it for the whole function body. Every funnel call inside here (the auto-played chip,
+   * the aha itself) then read a property off this closure, threw a TypeError, and was swallowed by
+   * chat.js's evidence try/catch, so the flow looked green while the one metric this demo exists
+   * to measure never left the page.
+   */
+  const own = (component) => {
     built.push(component);
     return component;
   };
@@ -380,9 +397,9 @@ function buildDemoInner(def, built) {
   chartMount.innerHTML = '';
   chatMount.innerHTML = '';
 
-  const timeline = track(createTimeline(def.duration));
-  const viewer = track(createViewer(viewerMount, def, timeline));
-  const chart = track(createChart(chartMount, def, timeline));
+  const timeline = own(createTimeline(def.duration));
+  const viewer = own(createViewer(viewerMount, def, timeline));
+  const chart = own(createChart(chartMount, def, timeline));
 
   let evidenceActive = null;
   let evidenceFull = false; // the active finding spans the whole mission, so it is not looping
@@ -449,7 +466,7 @@ function buildDemoInner(def, built) {
     else track.evidenceUserClicked(def.id, finding.id);
   }
 
-  const chat = track(createChat(chatMount, def, {
+  const chat = own(createChat(chatMount, def, {
     onEvidence,
     onAsk: () => {
       clearEvidence();
@@ -823,6 +840,13 @@ let currentRoute = { name: 'start', id: null };
  * generation it captured against this before it touches the screen.
  */
 let navGen = 0;
+/**
+ * Whether the routing pass currently running is the page's FIRST one. `currentRoute` cannot answer
+ * this: it is seeded with a screen name, so a cold load onto that screen is indistinguishable from
+ * navigating back to it. Only the start screen reads it, and only to decide whether taking focus
+ * would be following the visitor or interrupting them.
+ */
+let routedOnce = false;
 
 /**
  * Five names, four of which are screens.
@@ -851,6 +875,8 @@ function show(name) {
 
 function route() {
   navGen++;
+  const coldLoad = !routedOnce;
+  routedOnce = true;
   const next = parseHash();
 
   // `#/` is the door, not a screen. A visitor who has already forked is sent into their guided
@@ -859,7 +885,13 @@ function route() {
   // that is actually up.
   if (next.name === 'home') {
     if (hasRole()) {
-      location.hash = `#/connect/${missionForRole(getRoleId())}`;
+      // REPLACE, never assign. `location.hash = ...` pushes, so the entry the visitor came in on
+      // (`#/`) stays behind the redirect: pressing Back returns to the door, which redirects
+      // forward again, and the demo becomes a tab you cannot leave with the back button. Replacing
+      // swaps the door for the mission in place, and the entry BEFORE the demo stays reachable.
+      // The path and query are kept so this stays a fragment change and never re-boots the page,
+      // which is the same reason boot()'s deep link uses replace().
+      location.replace(location.pathname + location.search + `#/connect/${missionForRole(getRoleId())}`);
       return;
     }
     next.name = 'start';
@@ -875,8 +907,10 @@ function route() {
       return;
     }
     // the picker, not the door: a hash naming a robot that does not exist is a broken link, and
-    // bouncing it to `#/` would hand a forked visitor their usual mission as if nothing was wrong
-    location.hash = '#/missions';
+    // bouncing it to `#/` would hand a forked visitor their usual mission as if nothing was wrong.
+    // Replaced rather than pushed, so the dead hash does not sit in history waiting for a Back
+    // press to bounce the visitor forward again.
+    location.replace(location.pathname + location.search + '#/missions');
     return;
   }
 
@@ -909,6 +943,10 @@ function route() {
     // after show(): the panel is measured by nothing, but a screen built into a hidden section
     // cannot take focus, and the fork is the one screen a keyboard visitor lands on cold
     buildStart();
+    // Focus the fork only when the visitor NAVIGATED here (the picker's "Pick your seat" link, a
+    // Back press). Not on a cold load: stealing focus there would scroll a fresh landing down to
+    // the cards and paint a focus ring on a visitor who arrived with a mouse.
+    if (!coldLoad && startApi) startApi.focus();
     document.title = 'AlloyLogger live demo';
     return;
   }

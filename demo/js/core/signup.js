@@ -707,6 +707,11 @@ export function createSignupTriggers(ctx = {}) {
   // delegated. A click event is a real click: the auto-played beat calls onEvidence directly and
   // never dispatches one, so the demo playing its own chip cannot arm this.
   on(chatMount, 'click', (e) => {
+    // `isTrusted`, the same guard the submit path below carries. The auto-played beat calls
+    // onEvidence directly and dispatches nothing, so this is belt and braces today, but the whole
+    // point of this listener is that it fires for a real interaction: a synthetic click from a
+    // future replay helper, a test harness or an extension must not be able to mint the aha.
+    if (!e.isTrusted) return;
     const t = e.target && e.target.closest ? e.target.closest('.ev-chip, .sugg-chip') : null;
     if (!t) return;
     if (t.classList.contains('sugg-chip')) {

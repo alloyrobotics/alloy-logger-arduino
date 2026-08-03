@@ -363,14 +363,19 @@ export function createContext(mount, robotDef, opts = {}) {
   // ---- beat 2. Mounted after the panel is in the document, because the wall starts itself when
   // it is actually on screen (an IntersectionObserver inside the module) and a detached node never
   // intersects anything. It is handed the telemetry only if the telemetry already exists: three
-  // missions derive their channels from a payload this screen must not pull in, and the module
-  // synthesizes their wall from the channel schema instead.
+  // missions derive their channels from a payload this screen must not pull in, and those three
+  // author a slice of their own values (`context.oldwaySample`) for the module to print instead.
   let oldway = null;
   try {
     oldway = createOldWay(q('.ctx-oldway'), def, {
       data: def.data || null,
       onSeen: (info) => {
-        track.oldwaySeen(def.id, { synthesized: !!(info && info.synthesized) });
+        // `sampled` rides along so the funnel can tell the authored-slice wall from the built one;
+        // `synthesized` stays the flag that means the numbers on screen are stand-ins.
+        track.oldwaySeen(def.id, {
+          synthesized: !!(info && info.synthesized),
+          sampled: !!(info && info.sampled),
+        });
       },
     });
   } catch (err) {

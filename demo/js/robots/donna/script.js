@@ -113,6 +113,12 @@ export default {
      */
     datapoints: 34899,
     channels: 6,
+    // The picker card's line: authored short and fault first, because the card clamps. The fall
+    // count is the ledger's, so it cannot drift from the answer that quotes it. See sbr.
+    cardProblem: `Donna goes down ${T('fallCount')} times in this half and gets up every time.`,
+    // The old-way header. Not the ESP32 default: this recording came off her own ROS 2 stack, and
+    // a USB serial port would contradict `provenance` four lines below it on the same screen.
+    port: 'ros2 bag record · onboard · 20 Hz summary series',
     /**
      * THE OLD WAY, on this mission's own data. Forty consecutive lines of the six summary series
      * rendered as a text log, time-ordered across channels exactly as a tail would interleave them.

@@ -40,6 +40,7 @@ const prose = {
   'context.system': def.context.system,
   'context.mission': def.context.mission,
   'context.fault': def.context.fault,
+  'context.cardProblem': def.context.cardProblem,
   'context.label': def.context.label,
   'context.provenance': def.context.provenance,
   chatProvenance: def.chatProvenance,

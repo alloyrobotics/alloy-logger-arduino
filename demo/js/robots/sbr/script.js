@@ -7,11 +7,10 @@ import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
 /**
- * The OPENER in the support register, hoisted so the two ids that name that register can share ONE
- * string. `demo/js/core/role.js` calls it `support` and `worker/roles.js` calls it `operator`;
- * until those two vocabularies are reconciled, a def that picked one of them would silently serve
- * the engineer answer to every visitor who arrived under the other. The alias below is this const,
- * never a second copy of the copy, so the two keys cannot drift apart.
+ * The OPENER in the operator register, hoisted so both ids that can name that register share ONE
+ * string. `operator` is the canonical name on both sides now; `support` is the name the card used
+ * to carry and the alias `worker/roles.js` still accepts inbound, so it stays keyed here too and
+ * points at this same const rather than at a second copy of the copy.
  *
  * Same table, same numbers, same instant as the engineer answer: a register is a way of reading one
  * measurement, not a second measurement. Same `{{ev:fall}}` token, so the opener's auto-beat fires
@@ -26,7 +25,7 @@ const OPENER_SUPPORT = `Nothing broke and nothing stalled. The wobble grew until
 | step peak | +5366 / -4226 steps/s |
 | down / up again | 52.0 s / 58.2 s |
 
-Three corrections in 400 ms, each weaker than the last. Nothing you did on the day changed that; the loop was set up to lose it.
+Three corrections in 400 ms, each weaker than the last. Nothing you did on the day changed that. Before the next soak, get the d term off zero and re-run this same test; if it still goes over around 51.7 s the gain is not the whole story.
 
 {{ev:fall}}`;
 
@@ -54,7 +53,11 @@ export default {
   // ships, read off the built arrays under node (2 channels, 3651 x 10 on /balance and 731 x 3 on
   // /sys) rather than derived from `rate` x `duration`. Every def carries the pair, so the brief
   // states the same volume whether or not this robot's telemetry has been built yet.
-  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall', datapoints: 38703, channels: 2 },
+  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall', datapoints: 38703, channels: 2,
+    // The picker card's line. Authored short and fault first: the card holds about 80 characters,
+    // and cutting the brief prose down to its first sentences still clipped the fault off the
+    // bottom of every card, which is the half that earns the click.
+    cardProblem: 'A pitch wobble grows and it goes face-down at 51.7 s, wheels still driving.' },
   accent: '#2f78ff',
   duration,
   rate,
@@ -87,8 +90,8 @@ Three corrections in 400 ms, each weaker than the last: with no derivative term 
       // Role registers for the OPENER. `answer` above IS the engineer register and stays the
       // default, so `engineer` is never a key here and a def that ships no `answerByRole` behaves
       // exactly as it did before roles existed. `support` and `operator` are the SAME const, see
-      // OPENER_SUPPORT: two live vocabularies name that register, and one shared string means the
-      // answer cannot depend on which of them the caller happens to use.
+      // OPENER_SUPPORT: `operator` is canonical, `support` is the retired card id kept as a key so
+      // a stored role from before the rename still gets its own register instead of the default.
       answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
       evidence: ['fall'],
     },

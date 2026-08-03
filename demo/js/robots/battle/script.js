@@ -59,6 +59,12 @@ export default {
     // this page ships, the way `duration` does.
     datapoints: 47716,
     channels: 6,
+    // The picker card's line: authored short and fault first, because the card clamps, and because
+    // `context.mission` opens on a persona, so the derived line led with roleplay. See sbr.
+    cardProblem: 'At 72 s a stale target message sends a blind burst into an obstacle.',
+    // The old-way header. Not the ESP32 default: this round is simulated, so that would invent a
+    // capture path for telemetry nothing captured. See core/oldway.js portLine().
+    port: 'simulated round · 20 Hz telemetry',
     // THE OLD WAY, on this round's own data: 40 consecutive lines of the six channels as text,
     // time-ordered across channels the way a tail interleaves them. Every value was read out of
     // buildData() under node at that timestamp and printed, not written by hand. Contiguous,
@@ -149,7 +155,10 @@ export default {
   chatProvenance:
     'Simulated round. All telemetry in this mission is synthetic, generated from a scripted 2v2 battle that follows the ICRA 2019 RoboMaster AI Challenge rules manual. Nothing here was recorded from a real match.',
   firstQuestion: 'Why did Blue 1 lose 548 HP with no enemy in sight?',
+  // Chip 1 is the sync-combo chip on every mission, because the coach line teaches exactly that.
+  // It lands on `blind-burst`, which no chip reached before.
   suggested: [
+    'Show me the burst that cost Blue 1 its own HP',
     'What went stale at 72 seconds?',
     'How does barrel heat turn into HP loss?',
     'Who won the round, and why?',

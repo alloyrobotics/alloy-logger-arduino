@@ -15,8 +15,11 @@
 // `opts.data`). Three of the seven missions derive their channels from a lazily loaded scene
 // payload that the brief deliberately does not build (see app.js's ensureData tripwire), and a
 // panel that pulled one in would put a 700 KB module in front of the screen whose entire job is to
-// be instant. Those missions get a wall synthesized from their channel SCHEMA instead, which is
-// the same shape of line at the same cadence, and `synthesized` says so.
+// be instant. Those three author the wall instead: `context.oldwaySample` is a contiguous slice of
+// the mission's own values, read out of its generator offline and printed, so a real recording is
+// shown as itself. `sampled` says so. A def with neither telemetry nor a sample falls back to a
+// wall built from its channel SCHEMA, and then `synthesized` is true and both the cost line and
+// the accessible name say the numbers are stand-ins.
 
 import { mulberry32, seedFor } from './prng.js';
 import { effectiveRole, roleById } from './role.js';
@@ -124,6 +127,25 @@ export function oldWayStats(def, data) {
   });
   if (counted) return { channels: channels.length, rows, values, estimated: false };
 
+  // Nothing built on this screen, so the AUTHORED count is the honest one. Every def carries the
+  // real row-times-field total in `context.datapoints`, measured under node against the same seed
+  // this page runs, and the brief prints it four lines below this panel's cost line. Estimating
+  // `duration x rate` instead put two different volumes for the same mission on one screen: donna
+  // read "~36,720 lines · ~91,800 values" here and "34,899 raw datapoints" there, an overstatement
+  // of 2.6x about a REAL recording. No row count is invented alongside it: rows are not authored,
+  // and a made-up line count is the same bug one field narrower.
+  const ctx = def.context || {};
+  const authoredChannels =
+    Number.isFinite(ctx.channels) && ctx.channels > 0 ? Math.round(ctx.channels) : channels.length;
+  if (Number.isFinite(ctx.datapoints) && ctx.datapoints > 0) {
+    return {
+      channels: authoredChannels,
+      rows: 0,
+      values: Math.round(ctx.datapoints),
+      estimated: false,
+    };
+  }
+
   const dur = Number.isFinite(def.duration) ? def.duration : 0;
   const rate = Number.isFinite(def.rate) ? def.rate : 0;
   const per = Math.max(1, Math.round(dur * rate));
@@ -144,17 +166,30 @@ export function oldWayStats(def, data) {
  * whole mission is represented in at most MAX_LINES rows: a wall that only ever showed the first
  * two seconds would be a different lie from the one this panel is making.
  *
+ * A def whose telemetry is not built here can author the wall instead of having one invented for
+ * it: `context.oldwaySample` is a contiguous slice of that mission's OWN values, read out of its
+ * generator offline and printed. It is preferred over everything below, because a real slice of a
+ * real recording is not a thing to synthesize a substitute for.
+ *
  * @param {object} def the robot definition, as handed to the brief
  * @param {{ data?:object|null, max?:number }} [opts] `data` defaults to `def.data` IF it exists;
  *   it is never built here.
- * @returns {{lines:Array<{t:number, path:string, text:string}>, synthesized:boolean}}
+ * @returns {{lines:Array<{t:number, path:string, text:string}>, synthesized:boolean,
+ *   sampled:boolean}}
  */
 export function oldWayLines(def, opts = {}) {
   const channels = (Array.isArray(def && def.channels) ? def.channels : []).filter(
     (c) => c && c.path && Array.isArray(c.fields) && c.fields.length,
   );
   const max = Number.isFinite(opts.max) ? opts.max : MAX_LINES;
-  if (!channels.length) return { lines: [], synthesized: false };
+
+  // The authored slice first, and BEFORE the channel check: it is already printed lines, so it does
+  // not need a channel table to render, and the three missions that ship one are exactly the three
+  // whose channels come from a payload this screen refuses to load.
+  const sample = sampledLines(def, max);
+  if (sample) return { lines: sample, synthesized: false, sampled: true };
+
+  if (!channels.length) return { lines: [], synthesized: false, sampled: false };
 
   const data = opts.data !== undefined ? opts.data : def.data || null;
   const hasReal = !!(
@@ -190,7 +225,7 @@ export function oldWayLines(def, opts = {}) {
       );
       pick.i += pick.stride;
     }
-    return { lines, synthesized: false };
+    return { lines, synthesized: false, sampled: false };
   }
 
   // No telemetry on this screen, by design. The schema is real, the numbers are a stand-in, and
@@ -230,7 +265,38 @@ export function oldWayLines(def, opts = {}) {
       }),
     );
   }
-  return { lines, synthesized: true };
+  return { lines, synthesized: true, sampled: false };
+}
+
+/**
+ * `context.oldwaySample` as wall lines, or null when the def ships none.
+ *
+ * The authored format is one line per record: `"<t> <path> k=v k=v"`. Only the leading timestamp
+ * and the path are parsed out; the rest of the line is printed exactly as authored, so a value that
+ * was read out of the mission's own generator reaches the screen byte for byte, absent readings
+ * (`k=null`) included.
+ *
+ * @param {object} def
+ * @param {number} max
+ * @returns {Array<{t:number, path:string, text:string}>|null}
+ */
+function sampledLines(def, max) {
+  const raw = def && def.context ? def.context.oldwaySample : null;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const lines = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string' || !entry.trim()) continue;
+    const m = entry.trim().match(/^(-?\d+(?:\.\d+)?)\s+(\S+)\s*(.*)$/);
+    if (!m) continue;
+    const t = Number(m[1]);
+    lines.push({
+      t: Number.isFinite(t) ? t : 0,
+      path: m[2],
+      text: m[3] ? `${m[2]} ${m[3]}` : m[2],
+    });
+    if (lines.length >= max) break;
+  }
+  return lines.length ? lines : null;
 }
 
 /** @param {Array} channels @param {object} data */
@@ -274,7 +340,7 @@ function lineFor(c, t, val) {
  * @param {{
  *   role?: string|object,
  *   data?: object|null,
- *   onSeen?: (info:{robot:string, synthesized:boolean, role:string}) => void,
+ *   onSeen?: (info:{robot:string, synthesized:boolean, sampled:boolean, role:string}) => void,
  *   autostart?: boolean,
  *   stepMs?: number,
  *   maxRows?: number,
@@ -297,8 +363,20 @@ export function createOldWay(mount, def, opts = {}) {
     effectiveRole();
 
   const data = opts.data !== undefined ? opts.data : robot.data || null;
-  const { lines, synthesized } = oldWayLines(robot, { data });
+  const { lines, synthesized, sampled } = oldWayLines(robot, { data });
   const stats = oldWayStats(robot, data);
+
+  // The wall wraps: the line script is finite and the ticker is not. Restamping each wrap forward
+  // by the script's own span keeps the clock monotonic, because a serial monitor whose timestamps
+  // jump backwards every forty rows is the one thing that reads as generated at a glance.
+  const spanS = (() => {
+    if (lines.length < 2) return 0;
+    const first = lines[0].t;
+    const last = lines[lines.length - 1].t;
+    const span = last - first;
+    if (!(span > 0)) return 0;
+    return span + span / (lines.length - 1);
+  })();
 
   const reduceMotion =
     typeof window !== 'undefined' &&
@@ -324,16 +402,21 @@ export function createOldWay(mount, def, opts = {}) {
   const wall = q('.ow-wall');
   const rowsEl = q('.ow-rows');
   const toolEl = q('.ow-tool');
+  const portEl = q('.ow-port');
   const captionEl = q('.ow-caption');
 
   // The wall is decoration with a job: a screen reader reading four hundred lines of `pitch=-14.8`
-  // aloud is the demo's whole argument turned into an accessibility failure. One label instead.
+  // aloud is the demo's whole argument turned into an accessibility failure. One label instead,
+  // and it says which of the two walls this is: a slice of the mission's own values, or a stand-in
+  // in the mission's channel format. The sighted disclosure is the cost line's tail.
   wall.setAttribute(
     'aria-label',
-    'A serial monitor wall of raw telemetry from this mission, scrolling past unreadably.',
+    synthesized
+      ? "A serial monitor wall in this mission's own channel format, scrolling past unreadably. " +
+        'The values are stand-ins, not readings from this mission.'
+      : 'A serial monitor wall of raw telemetry from this mission, scrolling past unreadably.',
   );
 
-  q('.ow-port').textContent = portLine(robot);
   q('.ow-cost').textContent = costLine(stats, synthesized);
   applyRole(role);
 
@@ -353,18 +436,23 @@ export function createOldWay(mount, def, opts = {}) {
     role = r || effectiveRole();
     toolEl.textContent = role.oldWay.tool;
     captionEl.textContent = role.oldWay.caption;
+    // The chrome follows the ROLE, not just the caption. Captioning the panel "the CSV your team
+    // exports" over a header that reads `115200 baud` had the screen contradict itself for two of
+    // the three roles; each role names the artefact it is actually handed.
+    portEl.textContent = portLine(robot, role);
     el.dataset.role = role.id;
   }
 
   function appendLine() {
     if (!lines.length) return;
+    const wrap = Math.floor(cursor / lines.length);
     const l = lines[cursor % lines.length];
     cursor++;
     const row = document.createElement('div');
     row.className = 'ow-line';
     const ts = document.createElement('span');
     ts.className = 'ow-t';
-    ts.textContent = clock(l.t);
+    ts.textContent = clock(l.t + wrap * spanS);
     const arrow = document.createElement('span');
     arrow.className = 'ow-arrow';
     arrow.textContent = '->';
@@ -381,7 +469,7 @@ export function createOldWay(mount, def, opts = {}) {
   function markSeen() {
     if (seen) return;
     seen = true;
-    onSeen({ robot: robot.id, synthesized, role: role.id });
+    onSeen({ robot: robot.id, synthesized, sampled, role: role.id });
   }
 
   function tick() {
@@ -457,6 +545,8 @@ export function createOldWay(mount, def, opts = {}) {
     lines,
     /** Whether the numbers are stand-ins because this mission's telemetry is not built here. */
     synthesized,
+    /** Whether the wall is the def's authored slice of its own values (`context.oldwaySample`). */
+    sampled,
     started: () => started,
 
     start,
@@ -502,8 +592,25 @@ export function createOldWay(mount, def, opts = {}) {
   };
 }
 
-/** The header's second half: a plausible port for THIS device, never a generic one. */
-function portLine(def) {
+/**
+ * The header's second half: the artefact this role is actually holding, for THIS mission.
+ *
+ * Resolution order, and the reason for each step:
+ *   1. the role's own `oldWay.port`, because a support ticket attachment and a spreadsheet export
+ *      are not serial ports and captioning them as one made the panel contradict its own caption
+ *   2. the def's `context.port`, because the engineer's view of a mission that was NOT captured
+ *      over USB serial must not claim it was: donna is a ROS 2 rosbag2 recording off a humanoid,
+ *      and printing `/dev/cu.usbserial-0001` under her provenance line invents a capture path
+ *   3. the ESP32 default, which is what the four synthetic missions are
+ *
+ * @param {object} def
+ * @param {object} [role]
+ */
+function portLine(def, role) {
+  const rolePort = role && role.oldWay ? role.oldWay.port : null;
+  if (typeof rolePort === 'string' && rolePort.trim()) return rolePort.trim();
+  const ctxPort = def && def.context ? def.context.port : null;
+  if (typeof ctxPort === 'string' && ctxPort.trim()) return ctxPort.trim();
   const rate = Number.isFinite(def.rate) ? `${Math.round(def.rate)} Hz loop` : 'free running';
   return `/dev/cu.usbserial-0001 · 115200 baud · ${rate}`;
 }
@@ -519,8 +626,12 @@ function costLine(stats, synthesized) {
   }
   if (stats.values > 0) bits.push(`${stats.estimated ? '~' : ''}${loc(stats.values)} values`);
   const head = bits.length ? bits.join(' · ') + '. ' : '';
+  // The synthesized tail DISCLOSES rather than merely differing. A wall of invented numbers under a
+  // header naming this mission is a claim about this mission unless the panel says otherwise, and
+  // one word shorter is not saying otherwise.
   const tail = synthesized
-    ? 'No time axis, no search, no replay.'
+    ? 'No time axis, no search, no replay. The values above are stand-ins in this mission\'s own ' +
+      'channel format, not readings taken from it.'
     : 'No time axis, no search, no replay. The moment it broke is somewhere in there.';
   return head + tail;
 }

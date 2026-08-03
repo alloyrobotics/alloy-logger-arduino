@@ -87,7 +87,7 @@ export const FACTS = {
       "vision-confidence"
     ],
     "suggested": [
-      "What happened to the opponent's bot 13?",
+      "Show me where the tracker lost the opponent's bot 13",
       "Is bot 7's radio link healthy?",
       "Why did bot 3 lose the ball?",
       "Walk me through the goal we conceded"
@@ -108,6 +108,7 @@ export const FACTS = {
       "uwb-yaw-residual"
     ],
     "suggested": [
+      "Show me the burst that cost Blue 1 its own HP",
       "What went stale at 72 seconds?",
       "How does barrel heat turn into HP loss?",
       "Who won the round, and why?"
