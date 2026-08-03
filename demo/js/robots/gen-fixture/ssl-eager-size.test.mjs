@@ -49,8 +49,18 @@ const ENTRY = path.join(SSL_DIR, 'script.js');
  * importing the def leaves `isSceneDataLoaded() === false`.
  *
  * NON-COPY growth still moves behind the lazy boundary. This raise is not a precedent for a payload.
+ *
+ * RAISED BY 1536 B FROM 58368 B ON 2026-08-03, for the aha-flow brief copy and for nothing else.
+ * The graph stood at 59795 B after the role opener variants were already moved behind the lazy
+ * boundary (role-openers.js, dynamic import, worth only 665 B gzipped because gzip had deduped the
+ * near-identical registers). The remaining growth is authored copy the picker and the brief read
+ * BEFORE the match payload exists, which is the point of each field: context.oldwaySample (712 B,
+ * the raw-feed wall the brief streams precisely so it never imports the 700 KB payload),
+ * datapoints/channels (190 B, the volume line), cardProblem (50 B, picker), port (101 B),
+ * the show-me suggestion chip (183 B) and chatProvenance (186 B). Removing every one of these puts
+ * the graph 16 B under the old ceiling; there is no lazy-boundary configuration that closes it.
  */
-const CEILING_BYTES = 58368;
+const CEILING_BYTES = 59904;
 
 let failures = 0;
 let checks = 0;

@@ -54,8 +54,17 @@ const ENTRY = path.join(BATTLE_DIR, 'script.js');
  *     lazy missions and this ceiling does not become the page's new high-water mark.
  *
  * NON-COPY growth moves behind the lazy round boundary. Raising this number is not the remedy.
+ *
+ * RAISED BY 1024 B FROM 46900 B ON 2026-08-03, for the aha-flow brief copy and for nothing else.
+ * The graph stood at 47518 B. Battle has no role opener variants; the growth is authored copy the
+ * picker and the brief read before any round payload exists: context.oldwaySample (864 B, the
+ * raw-feed wall the brief streams precisely so it never imports the round payload),
+ * datapoints/channels (249 B), cardProblem (99 B), port (91 B), the show-me suggestion chip (138 B)
+ * and chatProvenance (117 B). None of it can move behind the lazy boundary while the brief renders
+ * without awaiting the payload. Battle stays the smaller of the two lazy missions: 47924 B remains
+ * well under SSL's 59904 B ceiling, so this does not become the page's new high-water mark.
  */
-const CEILING_BYTES = 46900;
+const CEILING_BYTES = 47924;
 
 let failures = 0;
 let checks = 0;
