@@ -1,4 +1,4 @@
-// mocks/arduino.js - beat 2 in the tool an engineer actually has open: a serial monitor with a
+// mocks/serial.js - beat 2 in the tool an engineer actually has open: a serial monitor with a
 // plotter strip under it.
 //
 // This is the family closest to core/oldway.js, and it exists because the wall alone undersells the
@@ -35,8 +35,15 @@ import {
   createMockShell,
 } from './base.js';
 
-/** Stable family id. Rides the `seen` event, so it is never renamed once shipped. */
-export const FAMILY = 'arduino';
+/**
+ * Stable family id. Rides the `seen` event, so it is never renamed once shipped.
+ *
+ * `serial`, not the vendor whose IDE this chrome is modelled on. No rendered copy ever named it,
+ * but the family id is written to `data-family` on the live panel and exported as `mock_viewed.mock`
+ * in the funnel, which is a product name in the DOM and in a column of the analytics export under a
+ * module whose first rule is "no product name". The module file is named for the same reason.
+ */
+export const FAMILY = 'serial';
 /** The tool class this chrome imitates, in the words a caption would use. */
 export const TOOL_CLASS = 'Serial monitor';
 
@@ -54,7 +61,7 @@ const MAX_TRACES = 3;
  *   baud?:number}} [opts]
  * @returns {object} the standard mock handle (see mocks/base.js)
  */
-export function createArduinoMock(mount, def, opts = {}) {
+export function createSerialMock(mount, def, opts = {}) {
   const baud = Number.isFinite(opts.baud) ? Math.round(opts.baud) : 115200;
 
   return createMockShell(mount, def, opts, {
@@ -141,13 +148,33 @@ export function createArduinoMock(mount, def, opts = {}) {
 
       const status = h('div', 'mk-ard-status mono');
       const lnEl = h('span', 'mk-ard-ln', 'Ln 0');
+      const baudSep = h('span', 'mk-ard-sep', '·');
+      const baudEl = h('span', 'mk-ard-baud', `${loc(baud)} baud`);
       status.append(
         lnEl,
-        h('span', 'mk-ard-sep', '·'),
-        h('span', 'mk-ard-baud', `${loc(baud)} baud`),
+        baudSep,
+        baudEl,
         h('span', 'mk-ard-sep', '·'),
         h('span', 'mk-ard-eol', 'Both NL & CR'),
       );
+
+      /**
+       * The status line may only claim a serial rate when the HEADER says this is a serial capture.
+       *
+       * `portLine()` resolves the artefact this role is actually holding for this mission, and it
+       * is deliberately not always a port: ssl authors `context.port` as a base-station telemetry
+       * link precisely so an invented USB port does not claim a capture path for real match
+       * tracking. A hardcoded "115,200 baud" one row under that line put two mutually exclusive
+       * capture paths on the same panel. The rate rides the default serial port line or nothing.
+       *
+       * @param {string} port the resolved port line
+       */
+      function syncBaud(port) {
+        const serial = /\bbaud\b/i.test(String(port || ''));
+        baudEl.hidden = !serial;
+        baudSep.hidden = !serial;
+      }
+      syncBaud(portEl.textContent);
 
       const captionEl = h('p', 'mk-caption', copy.caption);
       const costEl = h(
@@ -203,6 +230,7 @@ export function createArduinoMock(mount, def, opts = {}) {
           // The chrome follows the ROLE, not just the caption: captioning the panel "the CSV your
           // team exports" over a header that reads `115200 baud` had the screen contradict itself.
           portEl.textContent = portLine(robot, next);
+          syncBaud(portEl.textContent);
         },
       };
     },
@@ -216,4 +244,4 @@ function check(label, on) {
   return wrap;
 }
 
-export default createArduinoMock;
+export default createSerialMock;

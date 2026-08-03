@@ -17,11 +17,15 @@
 // opener's auto-beat fires for every role. Each variant is within 20% of the engineer answer.
 
 /**
- * The OPENER in the operator register, hoisted so both ids that can name that register share ONE
- * string: `operator` is canonical on both sides, `support` is the retired card id kept as a key,
- * and picking only one would silently serve the engineer answer under the other.
+ * The OPENER in the HOBBYIST register.
+ *
+ * Until roles v2 this was `OPENER_SUPPORT`, keyed on `support` and `operator`. Both ids are retired
+ * and `role.js` degrades them to `engineer` BEFORE `chat.js`'s `answerFor()` reads this map, so
+ * neither key could ever be selected again. The copy is bench-actionable rather than fleet-wide, so
+ * it reads as the hobbyist register and is keyed there: no role is guided into this mission from
+ * that card, but the picker reaches every mission from every seat.
  */
-const OPENER_SUPPORT = `Bot 8 arms and fires, but the bank is nowhere near full when it goes.
+const OPENER_HOBBYIST = `Bot 8 arms and fires, but the bank is nowhere near full when it goes.
 
 | metric | value |
 | --- | --- |
@@ -36,7 +40,7 @@ Synthetic overlay on real match motion: the charge curve is modelled, and nothin
 
 {{ev:kicker-charge}}`;
 
-/** The OPENER in the lead register. Same rules as OPENER_SUPPORT. */
+/** The OPENER in the lead register. Same rules as OPENER_HOBBYIST. */
 const OPENER_LEAD = `Bot 8's kicker bank is a charge-time budget, not a broken part.
 
 | metric | value |
@@ -56,10 +60,12 @@ Synthetic overlay on real match motion: the charge curve is modelled, and nothin
  * What script.js merges onto the `kicker-charge` entry as `answerByRole`. `engineer` is never a key
  * here: the entry's own `answer` IS the engineer register and stays the default, so an unknown role
  * and a visitor who never forked take the identical path through chat.js's `answerFor()`.
+ *
+ * Every other key must be a LIVE role id. A retired id (`operator`, `support`) is degraded upstream
+ * and can never reach this lookup, so keying one is a dead string, not a fallback.
  */
 export const OPENER_BY_ROLE = {
-  support: OPENER_SUPPORT,
-  operator: OPENER_SUPPORT,
+  hobbyist: OPENER_HOBBYIST,
   lead: OPENER_LEAD,
 };
 
@@ -79,7 +85,11 @@ export const OPENER_BY_ROLE = {
  *
  * The synthetic-overlay disclosure rides EVERY beat that leans on the modelled charge curve, the
  * same rule the scripted answers hold to: which beat a visitor is on cannot decide whether they
- * are told what is real.
+ * are told what is real. On beat 2 it comes FIRST, because that beat reads voltages off the
+ * modelled curve and a disclosure at the end of the paragraph governs nothing the reader has
+ * already believed. Beat 2 also no longer concludes anything about what a real team did with its
+ * configuration during a real match: an inference drawn from a synthesized channel is not a fact
+ * about the match, whatever the sentence after it admits.
  */
 export const CHOREO = {
   beats: [
@@ -97,9 +107,9 @@ export const CHOREO = {
       id: 'chart',
       reveal: 'chart',
       actions: [{ do: 'chart', evidence: 'kicker-charge' }],
-      say: 'kickerLevel against kickerMax, zoomed to 46.3 to 62.7 s. The 240 V set point holds flat across the whole window. The bank reads 236 V at 6.0 s early on, 179 V after 7.6 s armed, 21 V on the kick at 53.977 s, and outside this zoom it manages 41 V in the 1.1 s after the kickoff came into play at 107.84 s. The set point never moved. The recovery did. Synthetic overlay on real match motion: the charge curve is modelled.',
+      say: 'Synthetic overlay on real match motion: the charge curve is modelled. kickerLevel against kickerMax, 46.3 to 62.7 s. The 240 V set point holds flat across the window. The bank reads 236 V at 6.0 s, 179 V after 7.6 s armed, 21 V on the kick at 53.977 s. The set point never moved. The recovery did.',
       sayByRole: {
-        lead: 'The plot is on bot 8, 46.3 to 62.7 s. The 240 V set point never moves all window, so nothing was reconfigured mid-match. What moves is recovery: 236 V at 6.0 s, 179 V after 7.6 s armed, 21 V straight after the kick at 53.977 s, and 41 V in the 1.1 s after the kickoff came into play at 107.84 s. That is a charge-time budget, and a budget is something you can schedule a set piece around. Synthetic overlay on real match motion: the charge curve is modelled.',
+        lead: 'Synthetic overlay on real match motion: this charge curve is modelled. Bot 8, 46.3 to 62.7 s. The 240 V set point holds flat the whole window. What moves is recovery: 236 V at 6.0 s, 179 V after 7.6 s armed, 21 V straight after the kick. That is a charge-time budget, not a broken part.',
       },
       hint: 'Click anywhere on the plot to send the replay to that instant, or pick another channel from the list to see what the rest of the fleet was doing in the same second.',
       cta: 'Put bot 8 back on the pitch',

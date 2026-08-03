@@ -152,6 +152,22 @@ input { font: inherit; color: inherit; }
 .st-escape:hover { color: var(--tx); }
 .st-escape-go { color: inherit; }
 
+/* SHORT desktop windows. The four-in-a-row grid is a width rule, but the thing that pushes the
+   fourth seat and the escape link under the fold is HEIGHT: at the default rhythm the fork is about
+   660 px tall, so a windowed browser or a 1024x640 panel scrolled the one screen whose hard rule is
+   that every seat is visible at once. The rhythm tightens instead of the cards wrapping, because a
+   second row is the layout that put a seat below the fold in the first place. */
+@media (min-width: 900px) and (max-height: 720px) {
+  .start-body { padding: 20px 20px 26px; }
+  .st { gap: 16px; }
+  .st-title { font-size: clamp(28px, 3.4vw, 38px); margin-top: 10px; }
+  .st-sub { font-size: 15px; margin-top: 9px; }
+  .st-card { padding: 15px 14px 13px; gap: 7px; }
+  .st-glyph { width: 32px; height: 32px; }
+  .st-glyph svg { width: 17px; height: 17px; }
+  .st-go { padding-top: 9px; }
+}
+
 @media (max-width: 899px) {
   .start-body { padding: 18px 16px 26px; }
   .st { gap: 18px; }
@@ -624,7 +640,7 @@ input { font: inherit; color: inherit; }
 }
 .mk.mk-filled .mk-ard-out::after, .mk.mk-filled .mk-inbox-wall::after { display: none; }
 
-/* ---- family: serial monitor with a plotter strip (mocks/arduino.js) ---- */
+/* ---- family: serial monitor with a plotter strip (mocks/serial.js) ---- */
 .mk-ard-bar {
   flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 6px 8px; background: var(--elev); border: 1px solid var(--line); border-radius: 8px;
@@ -1271,7 +1287,15 @@ input { font: inherit; color: inherit; }
 #screen-demo[data-guide] .sugg,
 #screen-demo[data-guide] .chat-form { display: none; }
 #screen-demo[data-guide] .chat-foot { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
-#screen-demo[data-guide] .chat-log .ev-chip { pointer-events: none; }
+/* Inert AND drawn as inert. `pointer-events:none` also suppresses `:hover`, so a chip at full
+   strength gave a desktop visitor no feedback and a phone visitor a tap that did nothing - on the
+   first chip the product ever shows them, two beats before the coach line says "tap the chip to
+   watch it". Dimmed and with the pointer left alone, it reads as a citation that is not live yet. */
+#screen-demo[data-guide] .chat-log .ev-chip {
+  pointer-events: none;
+  opacity: .5;
+  cursor: default;
+}
 
 /* The one control a beat leaves behind. It stays in the transcript once used, disabled and
    outlined, because it reads as a step the visitor chose rather than a button that vanished. */
@@ -1430,7 +1454,12 @@ input { font: inherit; color: inherit; }
   /* one-line header: the device string and the secondary CTA are picker information,
      not worth their pixels on a phone */
   .demo-id .dev { display: none; }
-  .demo-ctas [data-cta="github"] { display: none; }
+  /* The ONE CTA that survives on a phone is the library, not the org signup. A guided visitor goes
+     #/start -> #/connect/<mission> -> #/demo/<mission> and never passes the picker, and the guided
+     brief renders no CTA of its own, so this header is the only place "Get the library" is on
+     screen for that whole journey. Hiding it here left the mobile guided path with zero library
+     impressions and the signup popup as the only conversion surface on the page. */
+  .demo-ctas [data-cta="setup"] { display: none; }
   /* the back arrow already goes to #/missions and is labelled for it: the text link is desktop
      chrome and there is no room for it beside the one CTA that survives */
   .demo-more { display: none; }

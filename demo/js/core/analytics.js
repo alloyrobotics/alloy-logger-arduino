@@ -395,7 +395,7 @@ export const track = {
   /**
    * The brief's incumbent-tool mock actually started streaming on screen, which is the round-2
    * successor to `oldway_seen` on the three guided missions. Same shape, different centrepiece:
-   * `mock` is the family (arduino|viz|fleet|inbox), so the drop-off can be read per chrome.
+   * `mock` is the family (serial|viz|fleet|inbox), so the drop-off can be read per chrome.
    *
    * @param {string} robot @param {{mock?:string, synthesized?:boolean, sampled?:boolean}} [extra]
    */

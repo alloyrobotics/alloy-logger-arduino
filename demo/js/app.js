@@ -27,7 +27,7 @@ import { createContext, GENERIC_ICON, briefSeen } from './core/context.js';
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
 import { createGuide, hasChoreo } from './core/guide.js';
 import { createStart } from './core/start.js';
-import { getRoleId, hasRole, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { getRoleId, hasRole, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
@@ -394,6 +394,34 @@ function openerBeat(chat) {
   }, 420);
 }
 
+/**
+ * The round-1 flow, for a mission that was SUPPOSED to be guided and is not.
+ *
+ * The guided brief is decluttered on the strength of one promise: `context.mission` and
+ * `context.fault` are not dropped, they are moved into beat 1 in the analyst's own voice. When the
+ * beats never arrive - a lazy side-module that 404s, a stale asset, a throw building the walk - that
+ * promise is broken on both screens at once, and the visitor gets a two-line brief followed by an
+ * unnarrated three-panel demo: worse than either flow on its own. So the paragraphs the brief gave
+ * up are handed back here, as a note above the opener, before the round-1 timer runs.
+ *
+ * Non-guided missions never reach this: their brief still renders both paragraphs itself.
+ *
+ * @param {object} chat @param {object} def
+ */
+function fallbackOpener(chat, def) {
+  try {
+    const c = def.context || {};
+    const line = [c.mission, c.fault]
+      .filter((s) => typeof s === 'string' && s.trim())
+      .join(' ')
+      .trim();
+    if (line) chat.addNote(line);
+  } catch (err) {
+    console.warn(`[demo] ${def.id}: mission context note failed`, err);
+  }
+  openerBeat(chat);
+}
+
 function buildDemoInner(def, built) {
   /**
    * Register a component the moment it exists, so the catch above can find it.
@@ -425,7 +453,7 @@ function buildDemoInner(def, built) {
    * is still `hidden` at this point on a cold load and the whole build is one synchronous task, so
    * there is no frame in which the wrong layout exists either way.
    */
-  const guided = hasChoreo(def);
+  let guided = hasChoreo(def);
   if (guided) host.dataset.guide = 'chat';
   else delete host.dataset.guide;
 
@@ -572,6 +600,12 @@ function buildDemoInner(def, built) {
           def,
           chat,
           panels: { host, timeline, viewer, chart, onEvidence, setChartOpen },
+          // The walk's OWN failure path. Every beat is guarded inside guide.js and any throw
+          // settles into the full layout, so this `try` only ever catches a synchronous throw out
+          // of the construction below - and a beat that dies before the opener was asked leaves a
+          // settled layout with an EMPTY transcript. The engine calls this instead, which is the
+          // one thing that turns that back into the round-1 demo it claims to fall back to.
+          onFallback: () => fallbackOpener(chat, def),
         }),
       );
       demo.guide = guide;
@@ -583,12 +617,23 @@ function buildDemoInner(def, built) {
         demo.guide = null;
       }
       delete host.dataset.guide;
-      openerBeat(chat);
+      // This session ran the round-1 flow, so it must not be counted as a guided one: the beat
+      // funnel's denominator is `demo_opened{guided:true}` and a session with zero `beat_shown`
+      // in it makes the comparison this change exists to measure look worse than it is.
+      guided = false;
+      fallbackOpener(chat, def);
     }
   } else {
-    openerBeat(chat);
+    // A mission the ROLE TABLE guides into, arriving here without beats, has already been through
+    // the decluttered brief. It gets its context back with the opener; everything else - rescue,
+    // donna, arm6, drone, every generated demo - is untouched round 1, down to the timer.
+    if (isGuidedMission(def.id)) fallbackOpener(chat, def);
+    else openerBeat(chat);
   }
 
+  // `guided` is the flow that STARTED. A walk that throws asynchronously mid-beat (guide.js catches
+  // it, settles, and calls onFallback) has already been counted here; those sessions are the ones
+  // reporting `guided:true` with no `beat_shown` at all, which is how the funnel tells them apart.
   capture('demo_opened', { robot: def.id, guided });
 }
 
@@ -758,6 +803,24 @@ function resolveGenerated(next) {
 const scenePending = new Set();
 
 /**
+ * Robot ids whose `loadSceneData()` promise has SETTLED at least once in this session, resolved or
+ * rejected.
+ *
+ * A lazy mission's guided beats ride the same promise as its payload (`script.js` chains
+ * `loadGuided()` into `loadSceneData()`), but `isSceneDataLoaded()` flips true the moment the ROUND
+ * module decodes - one HTTP round trip before the side-module lands. Inside that window a second
+ * route entry (a Back press, the header link off the loading card, any extra hashchange) read
+ * `hasChoreo(def) === false` and built the NON-guided demo for the rest of the visit, off a def
+ * whose brief had already been decluttered on the promise of a walk.
+ *
+ * So the route gate asks the same question the demo does, and waits on the composed promise until
+ * it has settled. This set is what stops that becoming a loop: a guided module that will not load
+ * settles, `choreo` stays unset, and the next entry falls through to the round-1 flow instead of
+ * parking on the loading card forever.
+ */
+const sceneSettled = new Set();
+
+/**
  * The ONE place a scene-backed mission's failure is rendered, whether the payload rejected, the
  * route it unblocked threw, or a later entry into the same mission threw again. Nothing on this
  * path may be left half-built: `currentRoute` goes back to the 'load' sentinel so the next pass
@@ -870,6 +933,9 @@ function resolveSceneData(next, def) {
   def.loadSceneData().then(
     () => {
       scenePending.delete(next.id);
+      // Before stale(): the promise settled whether or not this pass still owns the screen, and the
+      // route gate reads this to decide whether waiting again could ever produce different beats.
+      sceneSettled.add(next.id);
       if (stale()) return;
       // Re-enter for whatever the hash asks for NOW, which is this robot on this screen or on its
       // brief. route() rebuilds from the hash, so either lands fully rendered.
@@ -895,6 +961,7 @@ function resolveSceneData(next, def) {
     },
     (err) => {
       scenePending.delete(next.id);
+      sceneSettled.add(next.id);
       if (stale()) return;
       unavailable(err);
     },
@@ -1038,9 +1105,14 @@ function route() {
   // demo. A def whose scene payload is lazy cannot mount its viewer, chart or chat until that
   // payload is in: its channels are derived from it. Wait on the loading card first, then this
   // same function runs again with everything present.
+  //
+  // The second clause is the guided half of the same payload: `isSceneDataLoaded()` answers for the
+  // ROUND module only, and a mission the role table guides into is not ready to build until its
+  // beats are merged too. See `sceneSettled`, which keeps that a single wait rather than a loop.
   if (
     typeof def.loadSceneData === 'function' &&
-    !(def.isSceneDataLoaded && def.isSceneDataLoaded())
+    (!(def.isSceneDataLoaded && def.isSceneDataLoaded()) ||
+      (isGuidedMission(def.id) && !hasChoreo(def) && !sceneSettled.has(def.id)))
   ) {
     resolveSceneData(next, def);
     return;

@@ -75,7 +75,7 @@ export const ROLES = [
       // mission's own (`context.port`) and only then to the ESP32 default. See oldway.js.
     },
     mock: {
-      family: 'arduino',
+      family: 'serial',
       caption: 'This is the evening you would spend scrolling the serial monitor.',
     },
     // a wrench: the one tool every bench has, and the only glyph in the set that is an object

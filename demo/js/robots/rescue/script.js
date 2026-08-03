@@ -6,16 +6,19 @@ import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
 /**
- * The OPENER in the operator register, hoisted so both ids that can name that register share ONE
- * string. `operator` is canonical on both sides; `support` is the retired card id, kept as a key so
- * a role stored before the rename still gets its own register instead of the engineer default. The
- * alias is this const, never a second copy of the copy, so the two keys cannot drift apart.
+ * The OPENER in the HOBBYIST register.
  *
- * This is the mission `role.js` guides the operator role INTO, so it is the answer that register is
- * most likely to read first. Same table, same numbers, same instant as the engineer answer, same
- * `{{ev:stall}}` token so the opener's auto-beat fires, length within 20%.
+ * This was the operator register, keyed on `operator` and `support`. Roles v2 retired both ids and
+ * role.js degrades them to `engineer` BEFORE chat.js's `answerFor()` reads this map, so neither key
+ * could ever be selected again: it was a register nobody could reach. The copy is hands-on advice
+ * for the person driving the machine, which is the hobbyist register under v2, so it is keyed there
+ * rather than deleted. No role is guided into this mission - it is reached from the picker, from
+ * any seat.
+ *
+ * Same table, same numbers, same instant as the engineer answer, same `{{ev:stall}}` token so the
+ * opener's auto-beat fires, length within 20%.
  */
-const OPENER_SUPPORT = `The tracks never stopped turning. They stopped gripping at **48.4 s**.
+const OPENER_HOBBYIST = `The tracks never stopped turning. They stopped gripping at **48.4 s**.
 
 | metric | value |
 | --- | --- |
@@ -28,7 +31,7 @@ Full stick into a spinning track only heats the motor and digs in. On a 28 deg f
 
 {{ev:stall}}`;
 
-/** The OPENER in the lead register. Same rules as OPENER_SUPPORT. */
+/** The OPENER in the lead register. Same rules as OPENER_HOBBYIST. */
 const OPENER_LEAD = `Not a broken robot. A traction limit the drill did not plan for, hit at **48.4 s**.
 
 | metric | value |
@@ -82,10 +85,9 @@ Command flat while speed collapses is traction, not electronics: the left track 
 
 {{ev:stall}}`,
       // Role registers for the OPENER. `answer` above IS the engineer register and stays the
-      // default, so `engineer` is never a key here. `support` and `operator` are the SAME const,
-      // see OPENER_SUPPORT: two live vocabularies name that register, and one shared string means
-      // the answer cannot depend on which of them the caller happens to use.
-      answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
+      // default, so `engineer` is never a key here. Every other key must be a LIVE role id: a
+      // retired id is degraded to `engineer` upstream and can never reach this lookup.
+      answerByRole: { hobbyist: OPENER_HOBBYIST, lead: OPENER_LEAD },
       evidence: ['stall'],
     },
     {

@@ -81,7 +81,7 @@ export function createStart(mountOrOpts, maybeOpts) {
     </header>
     <div class="st-cards" role="group"></div>
     <p class="st-hint"></p>
-    <a class="st-escape" href="#/"><span></span> <span class="st-escape-go" aria-hidden="true">&rsaquo;</span></a>`;
+    <a class="st-escape" href="#/missions"><span></span> <span class="st-escape-go" aria-hidden="true">&rsaquo;</span></a>`;
 
   const q = (sel) => el.querySelector(sel);
   q('.st-kicker').textContent = copy.kicker;
@@ -170,9 +170,12 @@ export function createStart(mountOrOpts, maybeOpts) {
   }
 
   function onEscapeClick(e) {
-    // With no handler the anchor's own href is the behaviour, which is the right fallback: the
-    // picker is a real route. A handler takes it over so the router can decide (and so leaving
-    // deliberately WITHOUT a role stays one code path).
+    // With no handler the anchor's own href is the behaviour, and the href is `#/missions`, which
+    // is the picker. NOT `#/`: that is the door, and app.js sends anyone already holding a role
+    // straight back into their guided mission - so the one link on this screen whose job is "let me
+    // out" would have returned a returning visitor to the seat they were trying to leave. A handler
+    // takes it over so the router can decide (and so leaving deliberately WITHOUT a role stays one
+    // code path).
     if (!onExplore || picked || disposed) return;
     e.preventDefault();
     picked = true;

@@ -125,14 +125,14 @@ function markBriefSeen(id) {
  * will not load costs the brief its centrepiece, never the screen.
  */
 const MOCK_LOADERS = {
-  arduino: () => import('./mocks/arduino.js'),
+  serial: () => import('./mocks/serial.js'),
   viz: () => import('./mocks/viz.js'),
   fleet: () => import('./mocks/fleet.js'),
   inbox: () => import('./mocks/inbox.js'),
 };
 
 /** The family a role with no `mock` block falls back to. Every shipped role has one. */
-const DEFAULT_MOCK_FAMILY = 'arduino';
+const DEFAULT_MOCK_FAMILY = 'serial';
 
 /** Per-stage reveal delay, ms. Read into `--d` on each staged child. */
 const STAGE_DELAY = { 1: 260, 2: 520, 3: 780, 4: 1020 };

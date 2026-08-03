@@ -7,16 +7,19 @@ import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
 /**
- * The OPENER in the operator register, hoisted so both ids that can name that register share ONE
- * string. `operator` is the canonical name on both sides now; `support` is the name the card used
- * to carry and the alias `worker/roles.js` still accepts inbound, so it stays keyed here too and
- * points at this same const rather than at a second copy of the copy.
+ * The OPENER in the HOBBYIST register, which is the role this mission is guided into.
+ *
+ * Keyed on `hobbyist` and nothing else. Until roles v2 this const was `OPENER_SUPPORT`, keyed on
+ * `support` and `operator`: both of those ids are retired, `role.js` degrades them to `engineer`
+ * BEFORE `chat.js`'s `answerFor()` ever reads this map, so those keys could not be selected again
+ * and every hobbyist was silently served the engineer table on the one answer they are guided to.
+ * A register map may only ever be keyed on a live role id.
  *
  * Same table, same numbers, same instant as the engineer answer: a register is a way of reading one
  * measurement, not a second measurement. Same `{{ev:fall}}` token, so the opener's auto-beat fires
  * whatever the role. Length within 20% of the engineer answer, so the panel does not reflow.
  */
-const OPENER_SUPPORT = `Nothing broke and nothing stalled. The wobble grew until it went over at **51.7 s**.
+const OPENER_HOBBYIST = `Nothing broke and nothing stalled. The wobble grew until it went over at **51.7 s**.
 
 | metric | value |
 | --- | --- |
@@ -25,7 +28,7 @@ const OPENER_SUPPORT = `Nothing broke and nothing stalled. The wobble grew until
 | step peak | +5366 / -4226 steps/s |
 | down / up again | 52.0 s / 58.2 s |
 
-Three corrections in 400 ms, each weaker than the last. Nothing you did on the day changed that. Before the next soak, get the d term off zero and re-run this same test; if it still goes over around 51.7 s the gain is not the whole story.
+Three corrections in 400 ms, each one weaker than the last. The d term is the one that fights a wobble and it sat at 0.000 the whole run, so set \`KD\` on the next flash, start it near \`KP/12\`, and run this same soak again.
 
 {{ev:fall}}`;
 
@@ -53,7 +56,14 @@ export default {
   // ships, read off the built arrays under node (2 channels, 3651 x 10 on /balance and 731 x 3 on
   // /sys) rather than derived from `rate` x `duration`. Every def carries the pair, so the brief
   // states the same volume whether or not this robot's telemetry has been built yet.
-  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall', datapoints: 38703, channels: 2,
+  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.',
+    // The honesty line. sbr is the mission the hobbyist card leads into and the guided brief keeps
+    // exactly two things: the system line and this. Without it the screen names real hardware, the
+    // mock prints values in that hardware's own format, and nothing anywhere says the run is
+    // generated - the analyst's facts pack included, since build-facts.mjs renders this same
+    // sentence into it. A simulated bench robot has to say so in the same words on both sides.
+    provenance: 'A simulated bench robot: the balance loop, the fall and every sample below are generated in your browser, not recorded off hardware.',
+    mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall', datapoints: 38703, channels: 2,
     // The picker card's line. Authored short and fault first: the card holds about 80 characters,
     // and cutting the brief prose down to its first sentences still clipped the fault off the
     // bottom of every card, which is the half that earns the click.
@@ -93,7 +103,11 @@ export default {
    *   sayByRole  a PARTIAL map, keyed by role id, carrying only the registers that genuinely read
    *              differently. Any role not keyed here reads `say`, so an unknown role, a visitor
    *              who never forked and a role whose register adds nothing all take one path. Same
-   *              measurement either way: every number below is identical across the variants.
+   *              facts either way: every number below is read off this def's own findings or its
+   *              scripted answers, and no variant carries a number another variant contradicts. A
+   *              register may drop a number the other one keeps (the hobbyist walk quotes the 3651
+   *              samples once, in beat 1, where the engineer walk quotes them in beat 2) but it may
+   *              never quote a different value for the same thing.
    *   actions    ordered `{ do, evidence }`. `evidence` names one of this def's own findings and
    *              the ENGINE reads the window, the instant, the focus channel, the highlighted part
    *              and the slow-motion flag off it. Nothing about the failure window is restated
@@ -119,7 +133,10 @@ export default {
         say: 'Seventy-three seconds of a balance loop, every control cycle logged. It held for 51 of them and then it did not. Start with the question you would actually ask.',
         sayByRole: {
           hobbyist:
-            'Your robot ran for 73 seconds and every pass of the balance loop went into the log, 3651 of them. It stayed up for 51 seconds. Let us just ask it what happened.',
+            // "Your robot", on a run this def generates in the browser, was the one line on the
+            // guided hobbyist path that turned a missing disclosure into a claim. `context
+            // .provenance` now carries the disclosure and this says whose robot it is not.
+            'This robot ran for 73 seconds and every pass of the balance loop went into the log, 3651 of them. It stayed up for 51 seconds. Ask it what happened.',
         },
         cta: 'Show me the moment it went',
       },
@@ -130,7 +147,7 @@ export default {
         say: 'Pitch and output, zoomed to 50.5 to 58.5 s. The swing runs -2.0 to +7.1 to -10.1 deg in 340 ms and each correction comes back weaker than the last. The d term is 0.000 for all 3651 samples, so nothing in the loop is opposing the rate of change.',
         sayByRole: {
           hobbyist:
-            'The plot is now sitting on the 8 seconds around the fall. Watch the wobble grow: -2.0 deg, then +7.1, then -10.1, all inside 340 ms, and every push back is smaller than the one before it. The d term reads 0.000 the whole run. That is the term whose job was to fight the wobble, and it was never switched on.',
+            'The plot is on the 8 seconds around the fall. Watch the wobble grow: -2.0 deg, then +7.1, then -10.1, all inside 340 ms, and every push back smaller than the last. The d term reads 0.000 the whole run. It was never switched on.',
         },
         hint: 'Click anywhere on the plot to send the replay to that instant, or pick another channel from the list to see what the rest of the board was doing.',
         cta: 'Put it on the replay',
@@ -142,7 +159,7 @@ export default {
         say: 'The same window at 0.4x, looping, body lit. Three slams at 51.5 to 51.9 s, down at 52.0 s, and the steppers are still commanding +5366 and -4226 steps/s with the robot on its face. Back upright at 58.2 s.',
         sayByRole: {
           hobbyist:
-            'Here it is at 0.4x speed, looping, with the chassis lit up. Three hard corrections between 51.5 and 51.9 s, on its face by 52.0 s, and the motors are still driving at +5366 and -4226 steps/s while it lies there. Back upright at 58.2 s. Nothing broke. It just ran out of the thing that stops a wobble.',
+            'Here it is at 0.4x, looping, chassis lit. Three hard corrections between 51.5 and 51.9 s, on its face by 52.0 s, and the motors still driving at +5366 and -4226 steps/s while it lies there. Nothing broke. It just ran out of the thing that stops a wobble.',
         },
         hint: 'Drag the scene to orbit, scroll to zoom, and drag the scrubber to walk the fall frame by frame.',
         cta: 'Let me drive',
@@ -167,10 +184,10 @@ Three corrections in 400 ms, each weaker than the last: with no derivative term 
 {{ev:fall}}`,
       // Role registers for the OPENER. `answer` above IS the engineer register and stays the
       // default, so `engineer` is never a key here and a def that ships no `answerByRole` behaves
-      // exactly as it did before roles existed. `support` and `operator` are the SAME const, see
-      // OPENER_SUPPORT: `operator` is canonical, `support` is the retired card id kept as a key so
-      // a stored role from before the rename still gets its own register instead of the default.
-      answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
+      // exactly as it did before roles existed. Every other key must be a LIVE role id: a retired
+      // id is degraded to `engineer` in role.js before this map is read, so keying one here is a
+      // dead string that reads as a register nobody can reach.
+      answerByRole: { hobbyist: OPENER_HOBBYIST, lead: OPENER_LEAD },
       evidence: ['fall'],
     },
     {

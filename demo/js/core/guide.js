@@ -51,6 +51,11 @@
 // A choreography that throws must never cost a visitor the demo. Every step is guarded, and any
 // throw settles immediately into the full layout with the chat panel already populated - which is
 // the round-1 demo, minus its opener. A def with no beats never constructs this at all.
+//
+// One case is not a handover at all: a throw BEFORE the opener question reached the log leaves the
+// full layout over an empty transcript. That path runs the caller's `onFallback` (app.js hands back
+// the round-1 opener, with the context paragraphs the guided brief dropped) instead of the coach
+// line and the beat announcement, which belong to an answer that never happened.
 
 import { getRoleId, isGuidedMission } from './role.js';
 import { track } from './analytics.js';
@@ -99,6 +104,7 @@ export function hasChoreo(def) {
  *   },
  *   role?: string|null,
  *   onSettle?: ()=>void,
+ *   onFallback?: ()=>void,
  * }} ctx
  *   `chat` is core/chat.js's handle: this engine writes through its authored-message surface
  *   (`say`, `askScripted`, `addNote`, `addAction`) and never touches the log itself.
@@ -111,6 +117,8 @@ export function createGuide(ctx) {
   const panels = ctx.panels || {};
   const host = panels.host;
   const onSettle = typeof ctx.onSettle === 'function' ? ctx.onSettle : () => {};
+  /** What to run instead of the handover when the walk died before it asked anything. */
+  const onFallback = typeof ctx.onFallback === 'function' ? ctx.onFallback : null;
   const beats = (def.choreo && def.choreo.beats) || [];
   const roleId = ctx.role !== undefined ? ctx.role : getRoleId();
   const findings = new Map((def.findings || []).map((f) => [f.id, f]));
@@ -119,6 +127,8 @@ export function createGuide(ctx) {
   let settled = false;
   let disposed = false;
   let started = false;
+  /** Whether the opener question ever reached the log. Decides what `settle()` means. */
+  let asked = false;
 
   // ---------------------------------------------------------------- copy
   /**
@@ -267,6 +277,7 @@ export function createGuide(ctx) {
     try {
       const entry = beat.answer ? chat.entryById(beat.answer) : null;
       if (entry) {
+        asked = true;
         chat.askScripted(def.firstQuestion, entry, {
           delay: ANSWER_DELAY_MS,
           onDone: () => {
@@ -329,6 +340,27 @@ export function createGuide(ctx) {
     settled = true;
     if (host) delete host.dataset.guide;
     if (disposed) return;
+
+    // A settle with NOTHING ASKED is not a handover, it is the walk dying on beat 1: every throw in
+    // here routes through this function, so a failure in the say, the answer lookup or the CTA used
+    // to restore the full layout over a transcript containing one coach line and no question at
+    // all. The coach line ("every answer cites the moment it happened") is a lie over an empty log,
+    // and the announcement is the opener's to make, so both are the caller's round-1 opener's job
+    // on this path and neither runs here.
+    if (!asked && onFallback) {
+      try {
+        onFallback();
+      } catch (err) {
+        console.warn(`[guide] ${def.id}: fallback opener failed`, err);
+      }
+      try {
+        onSettle();
+      } catch (err) {
+        console.warn(`[guide] ${def.id}: settle hook failed`, err);
+      }
+      return;
+    }
+
     try {
       chat.addCoach();
     } catch (err) {
