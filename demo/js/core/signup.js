@@ -18,6 +18,21 @@
 // The localStorage gate is written ON OPEN (an impression is what we are rate limiting, not a
 // dismissal), re-checked immediately before opening, and a `storage` event from another tab
 // disarms this one.
+//
+// ---------------------------------------------------------------------------- what arms it
+// Only the aha itself: an evidence chip clicked by hand, a suggestion chip, or a typed question.
+// Orbiting the scene, scrubbing the mission and clicking the chart are engagement, but they are
+// engagement with a 3D toy — a visitor who has done nothing but spin a robot has not yet seen the
+// thing being sold, and asking them for an email is spending the session's one ask on a stranger.
+// Those surfaces still BUMP (any activity restarts the quiet window, so the dialog never lands
+// mid-drag) and still hold on pointer down; they just no longer start the machine.
+//
+// And nothing arms before `chat:autobeat`, the event chat.js raises when the demo has finished
+// playing the scripted chip for the visitor. Before that beat, the visitor is being taught; a chip
+// click at that point is them following along, not them driving.
+
+import { getRoleId } from './role.js';
+import { track, capture } from './analytics.js';
 
 /** localStorage gate: the timestamp of the last impression. */
 const GATE_KEY = 'alloy_signup_seen';
@@ -25,6 +40,13 @@ const GATE_KEY = 'alloy_signup_seen';
 const GATE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Quiet period after the arming action has ended. */
 const QUIET_MS = 6000;
+/**
+ * Belt and braces on the aha gate. chat.js announces `chat:autobeat` on every path it owns, but a
+ * demo whose chat panel never got as far as its opener (a build where app.js's 420 ms handoff
+ * never ran, a def with no script at all) must not become a page that can never convert. After
+ * this long, arming signals are honoured on their own.
+ */
+const BEAT_GRACE_MS = 15000;
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([tabindex="-1"]), [tabindex="0"]';
@@ -260,11 +282,15 @@ export function createSignupPopup(host, ctx = {}) {
       return;
     }
 
+    // `role` is read at submit time, not at construction: the dialog outlives every route, and a
+    // visitor can fork, explore, and land here having changed nothing but their seat. Null for a
+    // visitor who never went through the fork, which the worker stores as NULL.
     const payload = {
       email,
       hp: String(honeypot.value || ''),
       dwell_ms: Math.max(0, Date.now() - openedAt),
       robot: getRobot() || null,
+      role: getRoleId(),
       src,
     };
 
@@ -289,7 +315,15 @@ export function createSignupPopup(host, ctx = {}) {
     // concerned: the alternative leaks who is already on the list.
     if (res.status === 202) {
       setState('confirmed');
-      // data-analytics-todo: capture('signup_popup_submitted', { trigger: openTrigger, robot: payload.robot, src })
+      // The end of the funnel. The email identifies the person in PostHog and is deliberately not
+      // sent as an event property (analytics.js splits it out): a lead's address belongs on their
+      // profile, not on a row anyone reading the funnel can see.
+      track.leadSubmitted(payload.robot, {
+        email,
+        src,
+        trigger: openTrigger,
+        dwell_ms: payload.dwell_ms,
+      });
       closeX.focus();
       return;
     }
@@ -307,7 +341,15 @@ export function createSignupPopup(host, ctx = {}) {
     setState('error');
     showError(reason === 'bad_email' ? COPY.emailHint : COPY.error);
     if (reason === 'bad_email') emailInput.focus();
-    // data-analytics-todo: capture('signup_popup_failed', { trigger: openTrigger, status: res.status })
+    // Not one of the nine funnel events: a submit that got as far as an error is a lead the page
+    // nearly had, and the rate of it is the difference between "nobody wants this" and "the
+    // endpoint is broken".
+    capture('signup_popup_failed', {
+      trigger: openTrigger,
+      robot: payload.robot,
+      status: res.status,
+      reason: reason || null,
+    });
   }
 
   // ---------------------------------------------------------------- open / close
@@ -335,7 +377,7 @@ export function createSignupPopup(host, ctx = {}) {
     // hijack. Only a deliberate tap lands in the input.
     card.focus();
 
-    // data-analytics-todo: capture('signup_popup_shown', { trigger: openTrigger })
+    track.popupShown(getRobot() || null, openTrigger);
     return true;
   }
 
@@ -351,8 +393,14 @@ export function createSignupPopup(host, ctx = {}) {
     scrim.hidden = true;
     document.removeEventListener('keydown', onKeydown, false);
 
+    // Only an explicit dismissal is reported. A 'quiet' close is teardown taking the card away
+    // behind the visitor's back, which says nothing about what they wanted.
     if (reason === 'dismiss') {
-      // data-analytics-todo: capture('signup_popup_dismissed', { trigger: openTrigger })
+      capture('signup_popup_dismissed', {
+        trigger: openTrigger,
+        robot: getRobot() || null,
+        state,
+      });
     }
 
     if (restoreFocus && typeof restoreFocus.focus === 'function' && restoreFocus.isConnected) {
@@ -439,6 +487,15 @@ export function createSignupTriggers(ctx = {}) {
   let touches = 0;
   /** Detach thunks for every listener installed below. */
   const offs = [];
+  /**
+   * Has the demo finished showing the visitor what an evidence chip does (`chat:autobeat`)?
+   * Until it has, an arming signal is PARKED rather than dropped: a chip click one frame before
+   * the announcement is still an aha, and throwing it away would cost the page a real lead for a
+   * race the visitor cannot see.
+   */
+  let beatDone = false;
+  let parked = null;
+  let graceTimer = 0;
 
   function on(node, type, fn, opts) {
     if (!node) return;
@@ -469,9 +526,33 @@ export function createSignupTriggers(ctx = {}) {
     if (disposed || everShown || state === 'shown') return;
     if (!popup || popup.shown) return;
     if (signupGated()) return;
+    // Before the scripted beat, hold the signal instead of acting on it or losing it.
+    if (!beatDone) {
+      parked = kind || parked || 'engagement';
+      return;
+    }
     trigger = kind || trigger || 'engagement';
     if (state === 'idle') state = 'armed';
     schedule();
+  }
+
+  /**
+   * `chat:autobeat`, or the grace timer. Anything the visitor did while the beat was still running
+   * is honoured now, with the trigger it was originally parked under, so the reported trigger is
+   * still the interaction that earned the impression.
+   */
+  function beatFinished() {
+    if (disposed || beatDone) return;
+    beatDone = true;
+    if (graceTimer) {
+      window.clearTimeout(graceTimer);
+      graceTimer = 0;
+    }
+    if (parked) {
+      const kind = parked;
+      parked = null;
+      arm(kind);
+    }
   }
 
   /** Further activity while armed: the quiet window starts again from here. */
@@ -566,12 +647,16 @@ export function createSignupTriggers(ctx = {}) {
   const chatMount = host.querySelector ? host.querySelector('#chat-mount') : null;
   const input = chatMount ? chatMount.querySelector('.chat-input') : null;
 
+  // The three surfaces below no longer ARM. They are still tracked, because a hold and a bump are
+  // about not interrupting the visitor, and that is true whether or not the machine started here:
+  // pointers held down keep the dialog off the screen, and any activity restarts the quiet window.
+  //
   // The render surface only. #viewer-mount also holds the scrubber, the transport buttons and the
   // evidence banner, which have their own semantics.
   on(canvas, 'pointerdown', (e) => {
     pointers.add(e.pointerId);
     syncPointer();
-    arm('viewer-orbit');
+    bump();
   });
   on(
     canvas,
@@ -579,19 +664,19 @@ export function createSignupTriggers(ctx = {}) {
     (e) => {
       touches = e.touches ? e.touches.length : 1;
       syncPointer();
-      arm('viewer-orbit');
+      bump();
     },
     { passive: true },
   );
   // OrbitControls zoom. A wheel has no end event, so every notch simply restarts the window.
-  on(canvas, 'wheel', () => arm('viewer-zoom'), { passive: true });
+  on(canvas, 'wheel', () => bump(), { passive: true });
 
   // The scrubber's own controls, including its finding markers. NOT wheel over `.v-scrub`: that
-  // does nothing today, so it would arm on ordinary page scrolling.
+  // does nothing today, so it would fire on ordinary page scrolling.
   on(scrub, 'pointerdown', (e) => {
     pointers.add(e.pointerId);
     syncPointer();
-    arm('timeline-scrub');
+    bump();
   });
   on(
     scrub,
@@ -599,21 +684,28 @@ export function createSignupTriggers(ctx = {}) {
     (e) => {
       touches = e.touches ? e.touches.length : 1;
       syncPointer();
-      arm('timeline-scrub');
+      bump();
     },
     { passive: true },
   );
   on(scrub, 'keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') arm('timeline-keys');
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') bump();
   });
 
   // `chart:seek`, not `click`: the chart only treats a click as a seek when it lands inside the
-  // plot area, and drops one in the padded axis gutters (chart.js onClick). A bare canvas click
-  // would arm off a click the chart itself ignored, which is not an engagement signal. chart.js
-  // raises this event on the one path that really seeks.
-  on(chartCanvas, 'chart:seek', () => arm('chart-seek'));
+  // plot area, and drops one in the padded axis gutters (chart.js onClick). chart.js raises this
+  // event on the one path that really seeks.
+  on(chartCanvas, 'chart:seek', () => bump());
 
-  // Evidence chips and suggestion chips are created as answers stream, so this is delegated.
+  // The beat, from chat.js. Delegated on the mount rather than the panel: the chat element is
+  // rebuilt with the demo, the mount is not.
+  on(chatMount, 'chat:autobeat', () => beatFinished());
+  graceTimer = window.setTimeout(beatFinished, BEAT_GRACE_MS);
+
+  // THE arming signals: a chip the visitor clicked, a suggestion they chose, a question they
+  // typed. Evidence chips and suggestion chips are created as answers stream, so this is
+  // delegated. A click event is a real click: the auto-played beat calls onEvidence directly and
+  // never dispatches one, so the demo playing its own chip cannot arm this.
   on(chatMount, 'click', (e) => {
     const t = e.target && e.target.closest ? e.target.closest('.ev-chip, .sugg-chip') : null;
     if (!t) return;
@@ -719,6 +811,11 @@ export function createSignupTriggers(ctx = {}) {
       if (disposed) return;
       disposed = true;
       clearTimer();
+      if (graceTimer) {
+        window.clearTimeout(graceTimer);
+        graceTimer = 0;
+      }
+      parked = null;
       offs.splice(0).forEach((off) => off());
       holds.clear();
       pointers.clear();
@@ -734,6 +831,13 @@ export function createSignupTriggers(ctx = {}) {
     },
     get holds() {
       return Array.from(holds);
+    },
+    /** Whether the scripted beat has been announced, and what is waiting on it. */
+    get beatDone() {
+      return beatDone;
+    },
+    get parked() {
+      return parked;
     },
   };
 }

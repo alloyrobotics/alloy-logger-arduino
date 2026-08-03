@@ -42,7 +42,7 @@ async function openThrottled() {
     await new Promise((r) => setTimeout(r, DELAY_MS));
     await route.continue();
   });
-  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   return { ctx, page, errors, hits: () => arrivals };
 }
@@ -82,9 +82,9 @@ H.section('A: demo -> picker -> the same demo, inside one load');
   await go(page, '#/demo/donna');
   H.ok(await onLoadingCard(page), 'the loading card is parked while the module is in flight');
 
-  await go(page, '#/');
+  await go(page, '#/missions');
   H.ok(
-    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/'),
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions'),
     'back on the picker mid-load',
   );
 
@@ -170,7 +170,7 @@ H.section('D: a corrupt recorded module lands on the unavailable card');
       ].join('\n'),
     }),
   );
-  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   await go(page, '#/demo/donna');
   H.ok(
@@ -218,7 +218,7 @@ H.section('E: a corrupt preview slice degrades the picker card');
       ].join('\n'),
     });
   });
-  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   // Give the idle preview builder time to run against the corrupt slice.
   await page.waitForTimeout(3500);

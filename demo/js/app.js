@@ -1,8 +1,18 @@
 // app.js - boot, hash router, robot registry wiring, screen construction and the onEvidence
 // orchestration that is the whole point of this demo.
 //
-// Routes: #/  (picker)  ·  #/connect/:id  ·  #/demo/:id
-// ?robot=<id> on any load deep-links straight to #/demo/<id>.
+// Routes: #/start (role fork) · #/missions (the seven-card picker) · #/connect/:id · #/demo/:id
+//
+// `#/` is not a screen. It is the DOOR, and where it opens depends on whether this visitor has
+// already answered the one question the demo asks: a first-timer gets the role fork, someone who
+// has forked is sent straight into the mission their role is guided to. The seven-card picker is
+// still first-class, it is just no longer the landing: it lives at #/missions and every screen
+// after the fork carries a link to it.
+//
+// ?robot=<id> on any load deep-links to that robot's BRIEF, not to its demo: the brief is where a
+// visitor is told what the mission was and what finding the fault costs today, and a deep link that
+// skipped it dropped people into a 3D scene with no idea what they were looking at. A second visit
+// (sessionStorage, written by the brief itself) goes straight to the demo.
 
 import { ROBOTS, getRobot, registerRobot, ROBOT_ICONS } from './robots/index.js';
 import { GEN_ID_RE, loadGeneratedRobot } from './robots/generated.js';
@@ -13,14 +23,18 @@ import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
-import { createContext, GENERIC_ICON } from './core/context.js';
+import { createContext, GENERIC_ICON, briefSeen } from './core/context.js';
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
+import { createStart } from './core/start.js';
+import { getRoleId, hasRole, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
 const SETUP_URL =
   'https://www.usealloy.ai/setup-org?utm_source=alloylogger.com&utm_medium=referral&utm_campaign=alloylogger&utm_content=demo';
 
 const screens = {
+  start: document.getElementById('screen-start'),
   picker: document.getElementById('screen-picker'),
   connect: document.getElementById('screen-connect'),
   demo: document.getElementById('screen-demo'),
@@ -66,11 +80,73 @@ function sceneDataFor(def) {
   return ensureData(def);
 }
 
+// ---------------------------------------------------------------------------- start
+// The role fork. One question, one tap, and the only screen that decides which mission a visitor is
+// guided into. Built by core/start.js; this file owns nothing but the mount and where a tap goes.
+
+let startApi = null;
+
+/** The robot a role is guided into, gated on the registry so a re-pointed role cannot 404. */
+function missionForRole(role) {
+  const id = missionFor(role);
+  return getRobot(id) ? id : DEFAULT_MISSION;
+}
+
+function buildStart() {
+  const mount = screens.start.querySelector('#start-mount');
+  if (startApi) startApi.dispose();
+  mount.innerHTML = '';
+  startApi = createStart(mount, {
+    // The frozen copy contract. start.js ships its own defaults; the sub-line is the one the spec
+    // locks, so it is stated here rather than left to drift inside the module.
+    copy: { sub: 'Pick your seat. The analyst speaks your language.' },
+    // start.js persists the role and fires role_selected BEFORE this runs, so by the time the
+    // brief builds, every event that follows is already segmented.
+    onPick: (role) => {
+      location.hash = `#/connect/${missionForRole(role)}`;
+    },
+    onExplore: () => {
+      location.hash = '#/missions';
+    },
+  });
+  // exposed for QA/integration assertions (page state, not pixels)
+  window.__start = startApi;
+}
+
+function teardownStart() {
+  if (!startApi) return;
+  startApi.dispose();
+  startApi = null;
+  delete window.__start;
+}
+
 // ---------------------------------------------------------------------------- picker
 let pickerBuilt = false;
 /** [{ el: .rcard-art, def }] handed to the preview module every time the picker is entered. */
 let pickerEntries = [];
 let pickerPreviews = null;
+
+/** The first sentence of a paragraph, or the whole thing when it has no terminator. */
+function firstSentence(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (!t) return '';
+  const m = t.match(/^[^.!?]*[.!?]/);
+  return (m ? m[0] : t).trim();
+}
+
+/**
+ * The card's problem line: what the mission was, and what went wrong in it.
+ *
+ * Both halves are cut to their FIRST sentence rather than printed whole. Two of the seven missions
+ * author a four-sentence `context.mission` (they are briefing an analyst, not labelling a tile), and
+ * the card clamps to two lines: printing the paragraph verbatim meant the fault - the half that
+ * makes anyone click - was always the half that got clipped off the bottom.
+ */
+function problemLine(def) {
+  const ctx = def.context || {};
+  const bits = [firstSentence(ctx.mission), firstSentence(ctx.fault)].filter(Boolean);
+  return bits.join(' ');
+}
 
 function buildPicker() {
   if (pickerBuilt) return;
@@ -98,10 +174,17 @@ function buildPicker() {
       <div class="rcard-body">
         <h3 class="rcard-name"></h3>
         <p class="rcard-tag"></p>
+        <p class="rcard-prob"></p>
       </div>
       <span class="rcard-go mono">replay mission &rsaquo;</span>`;
     a.querySelector('.rcard-name').textContent = def.name;
     a.querySelector('.rcard-tag').textContent = def.tagline;
+    // the card carries the PROBLEM, not just a label: a tagline says what the robot is, and this
+    // says what happened to it, which is the only reason to open the mission
+    const prob = problemLine(def);
+    const probEl = a.querySelector('.rcard-prob');
+    if (prob) probEl.textContent = prob;
+    else probEl.remove();
     grid.appendChild(a);
     pickerEntries.push({ el: a.querySelector('.rcard-art'), def });
   });
@@ -322,9 +405,17 @@ function buildDemoInner(def, built) {
    *   2. chart switches channel/fields and animates its x-domain onto the window
    *   3. the failing part pulses in the 3D scene
    *   4. dismissible evidence banner over the viewer
+   *
+   * @param {object} finding
+   * @param {{source?: 'user'|'auto'}} [opts] WHO fired it. The demo plays the scripted first
+   *   answer's chip for the visitor exactly once (`source: 'auto'`); everything else is a real
+   *   click, and only a real click is the aha this whole funnel measures. The default is 'user'
+   *   deliberately: a caller that forgets to declare itself over-counts one chip per demo, where
+   *   the opposite default would silently record the aha as never happening at all.
    */
-  function onEvidence(finding) {
+  function onEvidence(finding, opts) {
     if (!finding) return;
+    const auto = !!(opts && opts.source === 'auto');
     evidenceActive = finding;
     host.classList.add('evidence-on');
 
@@ -354,7 +445,8 @@ function buildDemoInner(def, built) {
     // 4
     viewer.showBanner(finding, clearEvidence);
 
-    // data-analytics-todo: capture('demo_evidence_fired', { robot: def.id, finding: finding.id })
+    if (auto) track.evidenceAutoPlayed(def.id, finding.id);
+    else track.evidenceUserClicked(def.id, finding.id);
   }
 
   const chat = track(createChat(chatMount, def, {
@@ -412,7 +504,7 @@ function buildDemoInner(def, built) {
     if (demo && demo.chat === chat) chat.askFirstQuestion();
   }, 420);
 
-  // data-analytics-todo: capture('demo_opened', { robot: def.id })
+  capture('demo_opened', { robot: def.id });
 }
 
 // ------------------------------------------------------------------- generated robots
@@ -539,7 +631,7 @@ function resolveGenerated(next) {
       renderGenCard({
         line: 'This demo link is not available.',
         cap: 'It may have expired. Generated demos are one-off links and they do not last forever.',
-        action: { label: 'Pick a robot instead', href: '#/' },
+        action: { label: 'Pick a robot instead', href: '#/missions' },
       });
       return;
     }
@@ -558,7 +650,7 @@ function resolveGenerated(next) {
       renderGenCard({
         line: 'This demo link is not available.',
         cap: 'It may have expired. Generated demos are one-off links and they do not last forever.',
-        action: { label: 'Pick a robot instead', href: '#/' },
+        action: { label: 'Pick a robot instead', href: '#/missions' },
       });
       return;
     }
@@ -625,7 +717,7 @@ function renderSceneUnavailable(def, err) {
       for (let e = err; e; e = e.cause) if (e.message) deepest = e.message;
       return deepest;
     })(),
-    action: { label: 'Back to the robots', href: '#/' },
+    action: { label: 'Back to the robots', href: '#/missions' },
   });
 }
 
@@ -725,19 +817,29 @@ function resolveSceneData(next, def) {
 }
 
 // ---------------------------------------------------------------------------- router
-let currentRoute = { name: 'picker', id: null };
+let currentRoute = { name: 'start', id: null };
 /**
  * Monotonic, bumped once per routing pass. Anything awaited across a route change compares the
  * generation it captured against this before it touches the screen.
  */
 let navGen = 0;
 
+/**
+ * Five names, four of which are screens.
+ *
+ * 'home' is the fifth and it is not a screen: `#/` resolves to the role fork or straight into the
+ * guided mission depending on what this visitor has already told us, and that decision is route()'s
+ * because it needs the registry. Parsing it as either one here would bake a stored role into a pure
+ * function of the URL.
+ */
 function parseHash() {
   const h = (location.hash || '#/').replace(/^#/, '');
   const parts = h.split('/').filter(Boolean);
   if (parts[0] === 'connect' && parts[1]) return { name: 'connect', id: parts[1] };
   if (parts[0] === 'demo' && parts[1]) return { name: 'demo', id: parts[1] };
-  return { name: 'picker', id: null };
+  if (parts[0] === 'missions') return { name: 'picker', id: null };
+  if (parts[0] === 'start') return { name: 'start', id: null };
+  return { name: 'home', id: null };
 }
 
 function show(name) {
@@ -750,20 +852,36 @@ function show(name) {
 function route() {
   navGen++;
   const next = parseHash();
+
+  // `#/` is the door, not a screen. A visitor who has already forked is sent into their guided
+  // mission's brief; everyone else meets the fork. Decided BEFORE any teardown and before
+  // currentRoute moves, so the redirect's own pass does the leaving properly against the screen
+  // that is actually up.
+  if (next.name === 'home') {
+    if (hasRole()) {
+      location.hash = `#/connect/${missionForRole(getRoleId())}`;
+      return;
+    }
+    next.name = 'start';
+  }
+
   const def = next.id ? getRobot(next.id) : null;
 
-  if (next.name !== 'picker' && !def) {
+  if (next.name !== 'picker' && next.name !== 'start' && !def) {
     // A generated demo is not in the registry until its def.json has landed. Resolve it and
     // re-enter, rather than bouncing a perfectly good personal link to the picker.
     if (GEN_ID_RE.test(next.id)) {
       resolveGenerated(next);
       return;
     }
-    location.hash = '#/';
+    // the picker, not the door: a hash naming a robot that does not exist is a broken link, and
+    // bouncing it to `#/` would hand a forked visitor their usual mission as if nothing was wrong
+    location.hash = '#/missions';
     return;
   }
 
   // leaving a screen
+  if (currentRoute.name === 'start' && next.name !== 'start') teardownStart();
   if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
   // 'gen' and 'load' are the transient resolve states (a generated robot's def.json, a lazy scene
@@ -786,12 +904,21 @@ function route() {
   const prev = currentRoute;
   currentRoute = next;
 
+  if (next.name === 'start') {
+    show('start');
+    // after show(): the panel is measured by nothing, but a screen built into a hidden section
+    // cannot take focus, and the fork is the one screen a keyboard visitor lands on cold
+    buildStart();
+    document.title = 'AlloyLogger live demo';
+    return;
+  }
+
   if (next.name === 'picker') {
     buildPicker();
     show('picker');
     // after show(): the art panels need a real layout rect before the previews read them
     mountPickerPreviews();
-    document.title = 'AlloyLogger live demo';
+    document.title = 'Every mission · AlloyLogger live demo';
     return;
   }
 
@@ -847,6 +974,12 @@ function boot() {
     .replace(/[^a-z0-9_-]/gi, '')
     .slice(0, 64);
   const contentTag = srcTag ? `${srcTag}-demo` : 'demo';
+
+  // Before anything else that can fire an event. The role is picked up from storage inside
+  // initAnalytics and registered as a super-prop, so a returning visitor's very first event is
+  // already segmented; `src` rides every event for the same reason the CTAs carry it.
+  initAnalytics(srcTag ? { props: { src: srcTag } } : {});
+
   const setupHref = SETUP_URL.replace(/utm_content=demo\b/, `utm_content=${contentTag}`);
   document.querySelectorAll('[data-cta="github"]').forEach((a) => {
     a.href = GITHUB_URL;
@@ -870,10 +1003,21 @@ function boot() {
   const deep = q.get('robot');
   // A generated id is not in the registry yet, so it is gated on its shape instead: route() then
   // resolves it exactly as it does for a #/demo/g-... hash.
-  if (deep && (getRobot(deep) || GEN_ID_RE.test(deep)) && !location.hash.startsWith('#/demo/')) {
+  if (
+    deep &&
+    (getRobot(deep) || GEN_ID_RE.test(deep)) &&
+    !location.hash.startsWith('#/demo/') &&
+    !location.hash.startsWith('#/connect/')
+  ) {
+    // The BRIEF, not the demo. A link out of a DM lands someone in front of a 3D scene knowing
+    // nothing about the mission it is replaying, and the brief is the screen that fixes that: what
+    // the robot was doing, what broke, and what finding it costs today. Someone who has already
+    // read this mission's brief in this tab (the brief writes the flag itself) is not made to read
+    // it twice.
+    const target = briefSeen(deep) ? `#/demo/${deep}` : `#/connect/${deep}`;
     // keep location.search: dropping it makes the target differ from the current URL by more than
     // the fragment, so the browser does a real navigation and boots the whole page a second time
-    location.replace(location.pathname + location.search + `#/demo/${deep}`);
+    location.replace(location.pathname + location.search + target);
   }
 
   window.addEventListener('hashchange', route);

@@ -16,7 +16,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import { applyLeadCapture, applyShelvePurge, computeStateSnapshot, selectLeads } from "./do-shelve.js";
+import {
+  applyLeadCapture,
+  applyShelvePurge,
+  computeStateSnapshot,
+  migrateLeads,
+  selectLeads,
+} from "./do-shelve.js";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -177,12 +183,19 @@ export class DemoGenDO extends DurableObject {
       email TEXT PRIMARY KEY,
       robot TEXT,
       src TEXT,
+      role TEXT,
       dwell_ms INTEGER,
       ip_hash TEXT,
       created_at INTEGER NOT NULL,
       last_seen INTEGER NOT NULL
     );`);
     sql.exec(`CREATE INDEX IF NOT EXISTS leads_ip_at ON leads(ip_hash, created_at);`);
+    // The CREATE above is the schema for an instance that does not exist yet. THIS is the schema
+    // for the one that already does: the only live DO was created on 2026-07-28 with a `leads`
+    // table that has no `role`, and for it every CREATE in this constructor is a no-op. migrateLeads
+    // adds the column once, on the next wake, and is a PRAGMA read on every wake after that.
+    // Additive and nullable, so no row is rewritten and every existing lead reads back NULL.
+    migrateLeads(sql);
   }
 
   // ---------------------------------------------------------------- internals
@@ -671,11 +684,12 @@ export class DemoGenDO extends DurableObject {
    * where every daily counter in this DO lives; it writes to no other table, so a popup submission
    * still cannot move a demo job.
    */
-  recordLead({ email, robot, src, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget }) {
+  recordLead({ email, robot, src, role, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget }) {
     return applyLeadCapture(this.sql, {
       email,
       robot,
       src,
+      role,
       dwellMs,
       ipHash,
       now: now ?? Date.now(),

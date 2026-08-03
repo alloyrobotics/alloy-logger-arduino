@@ -17,9 +17,18 @@
 // Same factory contract as the module it replaces: (mount, def, opts) => { el, skip, dispose },
 // with opts.onDone advancing the router. Nothing here owns a timer and nothing auto-advances: the
 // screen waits for the user.
+//
+// THREE BEATS, in this order, and the order is the argument:
+//   1. the problem   - what this machine is, what the mission was, what broke      (data-stage 1)
+//   2. the old way   - the raw feed, scrolling past unreadably, and what it costs  (data-stage 2)
+//   3. the ask       - the charge, then the robot's own first question as a pill   (data-stage 3/4)
+// Beat 2 is the one that makes beat 3 land: an answer with a citation is only impressive next to
+// the evening in a serial monitor it replaces. core/oldway.js owns that panel.
 
 import * as THREE from 'three';
 import { ROBOT_ICONS } from '../robots/index.js';
+import { createOldWay } from './oldway.js';
+import { track } from './analytics.js';
 // The staging solve (WebGL probe, light rig, hero pose, orbit-safe fit) is shared with the picker
 // cards' previews, so it lives in stage3d.js and both screens frame the same rigs the same way.
 import {
@@ -48,6 +57,39 @@ const ELEV_EPS = 0.02; // rad: below this the hand-off elevation is the hero's, 
  * Exported because app.js stands the same machine in the same panel while a generated def is still
  * being fetched, and a second copy of the path data would drift from this one. */
 export const GENERIC_ICON = `<rect x="22" y="34" width="52" height="18" rx="3"/><circle cx="34" cy="52" r="5"/><circle cx="62" cy="52" r="5"/><path d="M27 52h42" class="acc"/><path d="M48 34V18"/><rect x="40" y="8" width="16" height="10" rx="2" class="acc"/><path d="M56 13h6" class="acc"/><path d="M8 59h80"/>`;
+
+/**
+ * sessionStorage key prefix for "this tab has already read this mission's brief".
+ *
+ * The brief is a first-visit screen, not a toll booth. It writes the flag itself, on mount, and
+ * app.js's `?robot=` deep link reads it: a link out of a DM lands on the brief once, and every
+ * later entry on the same tab goes straight to the demo. SESSION storage on purpose - a new tab is
+ * a new visitor as far as this screen is concerned, and a returning one has forgotten the brief
+ * anyway.
+ */
+export const BRIEF_SEEN_PREFIX = 'alloy_brief_seen_';
+
+/** @param {string} id robot id @returns {boolean} */
+export function briefSeen(id) {
+  if (!id) return false;
+  try {
+    return window.sessionStorage.getItem(BRIEF_SEEN_PREFIX + id) === '1';
+  } catch (_) {
+    // Safari private mode throws on ACCESS, not just on write. No flag means "show the brief",
+    // which is the safe answer either way.
+    return false;
+  }
+}
+
+/** @param {string} id robot id */
+function markBriefSeen(id) {
+  if (!id) return;
+  try {
+    window.sessionStorage.setItem(BRIEF_SEEN_PREFIX + id, '1');
+  } catch (_) {
+    /* storage unreachable: the brief simply shows again, which is not a failure */
+  }
+}
 
 /** Per-stage reveal delay, ms. Read into `--d` on each staged child. */
 const STAGE_DELAY = { 1: 260, 2: 520, 3: 780, 4: 1020 };
@@ -152,6 +194,19 @@ function briefOf(def) {
 
   const label = ctx.label || (alert && alert.title ? alert.title : 'anomaly');
 
+  // THE VOLUME LINE IS AUTHORED, NOT COUNTED. `statsOf` walks whatever arrays happen to be attached
+  // to the def right now, and for the three missions whose channels come from a lazy scene payload
+  // that is deliberately nothing at all on this screen: the brief printed no volume line for them
+  // on a cold entry and a full one after a visit to the demo, purely as a function of navigation
+  // history. Every def now carries the real count in `context.datapoints` / `context.channels`
+  // (computed offline against the same generators), so the number is the same sentence wherever the
+  // visitor reaches this screen from. The counted values remain the fallback for a GENERATED demo,
+  // which has no authored context and whose telemetry is always built before this screen opens.
+  const datapoints =
+    Number.isFinite(ctx.datapoints) && ctx.datapoints > 0 ? Math.round(ctx.datapoints) : st.values;
+  const channelCount =
+    Number.isFinite(ctx.channels) && ctx.channels > 0 ? Math.round(ctx.channels) : st.count;
+
   return {
     dev: def.deviceId || def.id || 'device',
     name: def.name || 'Robot',
@@ -168,6 +223,10 @@ function briefOf(def) {
     rate,
     question: def.firstQuestion || '',
     ...st,
+    // after the spread: these two are the authored counts and must win over statsOf's `values`/
+    // `count`, which are still what the system and mission fallbacks above read
+    datapoints,
+    channelCount,
   };
 }
 
@@ -220,7 +279,9 @@ export function createContext(mount, robotDef, opts = {}) {
 
   // Nothing is ever rendered as a zero: a robot that shipped no rows gets no volume line at all,
   // because "0 datapoints" undersells the product instead of selling it.
-  const hasVolume = b.samples > 0;
+  const hasVolume = b.datapoints > 0 && b.channelCount > 0;
+  const hasMission = !!b.mission;
+  const hasFault = !!b.fault;
 
   el.innerHTML = `
     <div class="ctx-stage${mayEnter ? ' entering' : ''}">
@@ -235,6 +296,9 @@ export function createContext(mount, robotDef, opts = {}) {
     <div class="ctx-copy">
       <p class="ctx-system" data-stage="1"></p>
       ${b.provenance ? '<p class="ctx-prov" data-stage="1"></p>' : ''}
+      ${hasMission ? '<p class="ctx-mission" data-stage="1"></p>' : ''}
+      ${hasFault ? '<p class="ctx-fault" data-stage="1"></p>' : ''}
+      <div class="ctx-oldway" data-stage="2"></div>
       ${hasVolume ? '<p class="ctx-volume" data-stage="2"></p>' : ''}
       <p class="ctx-charge" data-stage="3">The analyst gets this mission's telemetry and a question. Watch it walk the evidence to the root cause, citing the exact samples that prove it.</p>
       ${
@@ -250,15 +314,21 @@ export function createContext(mount, robotDef, opts = {}) {
       </button>`
           : `<button class="btn ctx-go" type="button" data-stage="4">Hand it the logs <span aria-hidden="true">&rarr;</span></button>`
       }
+      <a class="ctx-more mono" data-stage="4" href="#/missions">Other missions <span aria-hidden="true">&rsaquo;</span></a>
     </div>`;
 
   const q = (sel) => el.querySelector(sel);
   q('.ctx-system').textContent = b.system;
   if (b.provenance) q('.ctx-prov').textContent = b.provenance;
+  // Verbatim, both of them. `context.mission` and `context.fault` have been authored on every def
+  // since the briefs were written and were never once rendered: the screen had the two sentences
+  // that say what this robot was doing and what went wrong, and showed neither.
+  if (hasMission) q('.ctx-mission').textContent = b.mission;
+  if (hasFault) q('.ctx-fault').textContent = b.fault;
   if (hasVolume) {
     q('.ctx-volume').textContent =
-      `${loc(b.values)} raw datapoints across ${loc(b.count)} channels. The answer is in there, ` +
-      'but it only shows up when you read the channels against each other.';
+      `${loc(b.datapoints)} raw datapoints across ${loc(b.channelCount)} channels. The answer is ` +
+      'in there, but it only shows up when you read the channels against each other.';
   }
   if (b.question) {
     q('.ctx-ask-q').textContent = `“${b.question}”`;
@@ -289,6 +359,39 @@ export function createContext(mount, robotDef, opts = {}) {
   // screen is a full-width two-column brief instead.
   const section = mount.closest('section');
   if (section) section.classList.add('ctx-mode');
+
+  // ---- beat 2. Mounted after the panel is in the document, because the wall starts itself when
+  // it is actually on screen (an IntersectionObserver inside the module) and a detached node never
+  // intersects anything. It is handed the telemetry only if the telemetry already exists: three
+  // missions derive their channels from a payload this screen must not pull in, and the module
+  // synthesizes their wall from the channel schema instead.
+  let oldway = null;
+  try {
+    oldway = createOldWay(q('.ctx-oldway'), def, {
+      data: def.data || null,
+      onSeen: (info) => {
+        track.oldwaySeen(def.id, { synthesized: !!(info && info.synthesized) });
+      },
+    });
+  } catch (err) {
+    // A missing wall costs the brief one beat. A throw here would cost it the whole screen, and
+    // the screen is what sells the product.
+    console.warn('[ctx] old-way panel failed for', def.id, err);
+    oldway = null;
+  }
+  // A def with no channels at all (a stub, a half-built generated demo) has nothing to scroll, and
+  // an empty terminal frame under a caption about how unreadable it is makes the opposite argument.
+  if (!oldway || !oldway.lines || !oldway.lines.length) {
+    if (oldway) oldway.dispose();
+    oldway = null;
+    const slot = q('.ctx-oldway');
+    if (slot) slot.remove();
+  }
+
+  // This tab has now been told what this mission is, so a later `?robot=` or link back into it
+  // goes straight to the demo instead of making the same argument twice.
+  markBriefSeen(def.id);
+  track.briefViewed(def.id, { synthetic_wall: !!(oldway && oldway.synthesized) });
 
   const copy = q('.ctx-copy');
   // the question card is the CTA when the def ships a first question; a plain button otherwise
@@ -321,8 +424,9 @@ export function createContext(mount, robotDef, opts = {}) {
   }
 
   function onCopyClick(e) {
-    // the CTA is inside .ctx-copy: let it advance instead of only revealing
-    if (e.target && e.target.closest && e.target.closest('.ctx-ask, .ctx-go')) return;
+    // the CTA and the missions link are inside .ctx-copy: let them navigate instead of only
+    // revealing the copy they are about to leave
+    if (e.target && e.target.closest && e.target.closest('.ctx-ask, .ctx-go, .ctx-more')) return;
     revealAll();
   }
 
@@ -843,6 +947,9 @@ export function createContext(mount, robotDef, opts = {}) {
       };
     },
 
+    /** Beat 2's panel, for QA/integration assertions. Null when it could not be built. */
+    oldWay: () => oldway,
+
     /** Programmatic hand-off: land the copy, then advance. */
     skip() {
       revealAll();
@@ -875,6 +982,14 @@ export function createContext(mount, robotDef, opts = {}) {
         skipBtn.removeEventListener('click', advance);
       } catch (_) {
         /* nodes already gone: listeners went with them */
+      }
+      if (oldway) {
+        try {
+          oldway.dispose(); // clears its ticker and its IntersectionObserver
+        } catch (_) {
+          /* panel already gone with the tree */
+        }
+        oldway = null;
       }
       dropHero(); // cancels the render loop, releases the rig and the context
       if (section) section.classList.remove('ctx-mode');

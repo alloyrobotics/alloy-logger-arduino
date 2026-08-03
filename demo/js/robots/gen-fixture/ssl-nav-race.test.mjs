@@ -43,7 +43,9 @@ async function openThrottled() {
     await new Promise((r) => setTimeout(r, DELAY_MS));
     await route.continue();
   });
-  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  // `#/missions` explicitly: `#/` is the role fork, not the picker, so a boot that wants the seven
+  // cards has to name the picker's own route.
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   return { ctx, page, errors, hits: () => arrivals };
 }
@@ -82,9 +84,9 @@ H.section('A: demo -> picker -> the same demo, inside one load');
   await go(page, '#/demo/ssl');
   H.ok(await onLoadingCard(page), 'the loading card is parked while the module is in flight');
 
-  await go(page, '#/');
+  await go(page, '#/missions');
   H.ok(
-    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/'),
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions'),
     'back on the picker mid-load',
   );
 

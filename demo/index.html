@@ -80,6 +80,96 @@ input { font: inherit; color: inherit; }
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   height: var(--head-h); padding: 0 22px; border-bottom: 1px solid var(--line);
 }
+/* the quiet cross-screen links: "other missions" off the brief and the demo, "change my seat" off
+   the picker. Deliberately not buttons: they are exits, and the screen's own CTA is the way on. */
+.topbar-link {
+  font-size: 11.5px; color: var(--tx-mute); letter-spacing: 0.02em; white-space: nowrap;
+  transition: color .15s ease;
+}
+.topbar-link:hover { color: var(--tx); }
+
+/* ==================================================================== 0. start (role fork)
+   The first screen: one question, three full-bleed tappable cards, one tap to advance. Built by
+   js/core/start.js; every class below is a `st-` hook that module writes and this file styles.
+   HARD RULE at 390px: the three cards and the escape link all fit in ONE viewport, so the fork is
+   a choice and never a scroll. */
+#screen-start { min-height: 100%; display: flex; flex-direction: column; }
+.start-body {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 34px 22px 54px;
+}
+#start-mount { width: 100%; display: flex; justify-content: center; }
+
+.st { width: min(1000px, 100%); display: flex; flex-direction: column; gap: 26px; }
+.st-head { text-align: center; }
+.st-kicker { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tx-mute); }
+.st-title {
+  font-size: clamp(31px, 6vw, 52px); font-weight: 500; line-height: 1.05;
+  letter-spacing: -0.035em; max-width: 15ch; margin: 14px auto 0;
+}
+.st-sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 14px auto 0; max-width: 44ch; }
+
+.st-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.st-card {
+  position: relative; overflow: hidden; text-align: left;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 9px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  padding: 20px 18px 17px;
+  transition: transform .18s cubic-bezier(.16,1,.3,1), border-color .18s ease, background .18s ease;
+}
+.st-card::after {
+  content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 100%;
+  background: var(--blue); opacity: 0; transition: opacity .18s ease;
+}
+.st-card:hover { transform: translateY(-3px); border-color: var(--line-hi); background: var(--elev); }
+.st-card:hover::after { opacity: .9; }
+.st-glyph {
+  display: grid; place-items: center; width: 38px; height: 38px;
+  border: 1px solid var(--line); border-radius: 10px; color: var(--blue-hi);
+}
+.st-glyph svg { width: 20px; height: 20px; }
+.st-kick { font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--tx-mute); }
+.st-label { font-size: 17px; font-weight: 500; letter-spacing: -0.018em; line-height: 1.25; color: var(--tx); }
+.st-blurb { font-size: 12.5px; line-height: 1.45; color: var(--tx-body); }
+.st-go { margin-top: auto; padding-top: 12px; font-size: 11px; letter-spacing: 0.02em; color: var(--blue-hi); }
+/* the seat this visitor already took: marked, never auto-advanced */
+.st-card.is-current { border-color: color-mix(in srgb, var(--blue-hi) 45%, var(--line)); }
+.st-card.is-current::after { opacity: .55; }
+/* the tap is the submit: the chosen card lifts and the screen stops taking input while the route
+   changes under it */
+.st-card.is-picked { transform: translateY(-3px); border-color: var(--blue-hi); background: var(--elev); }
+.st-card.is-picked::after { opacity: 1; }
+.st.st-picked { pointer-events: none; }
+.st.st-picked .st-card:not(.is-picked) { opacity: .5; }
+
+.st-hint { text-align: center; font-size: 12.5px; color: var(--tx-mute); }
+.st-escape {
+  align-self: center; display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--tx-mute); padding: 6px 4px; transition: color .15s ease;
+}
+.st-escape:hover { color: var(--tx); }
+.st-escape-go { color: inherit; }
+
+@media (max-width: 899px) {
+  .start-body { padding: 18px 16px 26px; }
+  .st { gap: 18px; }
+  .st-title { font-size: clamp(28px, 8.2vw, 36px); margin-top: 10px; }
+  .st-sub { font-size: 14.5px; margin-top: 10px; }
+  .st-cards { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  /* stacked and full width, and compact enough that all three plus the escape sit in one 390x844
+     viewport: glyph on the left, the sentence in the middle, the affordance on the right */
+  .st-card {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center; gap: 2px 13px; padding: 14px 15px; border-radius: 14px;
+  }
+  .st-glyph { grid-row: 1 / span 2; width: 34px; height: 34px; }
+  .st-glyph svg { width: 18px; height: 18px; }
+  .st-kick { display: none; }
+  .st-label { grid-column: 2; font-size: 15.5px; }
+  .st-blurb { grid-column: 2; font-size: 12px; line-height: 1.4; }
+  .st-go { grid-column: 3; grid-row: 1 / span 2; margin-top: 0; padding-top: 0; font-size: 10.5px; }
+  .st-hint { font-size: 12px; }
+}
 
 /* ==================================================================== 1. picker */
 #screen-picker { min-height: 100%; display: flex; flex-direction: column; }
@@ -91,9 +181,12 @@ input { font: inherit; color: inherit; }
 }
 .pick-hero .sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 16px auto 0; max-width: 480px; }
 
+/* Four across, not seven. The cards carry the mission and the fault now, and a seventh of 1080px
+   is 140px of line length: a two-line clamp there truncated mid-word on every card. The picker is
+   the secondary screen since the role fork took the landing, so it can afford the second row. */
 #robot-grid {
   --gap: 14px;
-  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--gap);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap);
   padding-bottom: 46px;
 }
 @media (max-width: 1000px) {
@@ -140,6 +233,14 @@ input { font: inherit; color: inherit; }
 .rcard-body { padding: 0 3px; }
 .rcard-name { font-size: 15.5px; font-weight: 500; letter-spacing: -0.015em; }
 .rcard-tag { font-size: 12.5px; color: var(--tx-body); margin-top: 3px; }
+/* the problem, under the label: what the mission was and what went wrong in it. Clamped rather
+   than truncated in JS, so the copy stays authored prose and the card stays the same height on
+   every row of the grid. */
+.rcard-prob {
+  font-size: 11.5px; line-height: 1.42; color: var(--tx-mute); margin-top: 5px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden;
+}
 .rcard-go { padding: 0 3px; }
 .rcard-go { font-size: 11.5px; color: var(--acc); letter-spacing: 0.02em; }
 
@@ -191,9 +292,11 @@ input { font: inherit; color: inherit; }
   flex: 1; min-width: 0; display: flex; align-items: center;
 }
 .ctx {
-  width: 100%; max-width: 1140px; margin: 0 auto;
-  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(330px, .95fr);
-  gap: 44px; align-items: center; align-content: center;
+  width: 100%; max-width: 1180px; margin: 0 auto;
+  /* the copy column carries three beats now (problem, old way, ask), so it takes the wider half:
+     the old-way wall needs the line length or every row clips mid-field */
+  display: grid; grid-template-columns: minmax(0, .92fr) minmax(400px, 1.08fr);
+  gap: 40px; align-items: center; align-content: center;
 }
 
 /* ---- hero panel ---- */
@@ -250,9 +353,16 @@ input { font: inherit; color: inherit; }
 }
 .ctx-skip:hover { color: var(--tx); border-color: var(--line-hi); }
 
-/* ---- brief copy: three short lines, then the question card that IS the CTA ---- */
-.ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
-.ctx-system, .ctx-volume { font-size: 14.5px; color: var(--tx-body); }
+/* ---- brief copy: three beats, then the question card that IS the CTA ---- */
+.ctx-copy { min-width: 0; display: flex; flex-direction: column; gap: 15px; }
+.ctx-system, .ctx-volume, .ctx-mission { font-size: 14.5px; color: var(--tx-body); }
+/* beat 1. The mission line rides directly under the system line as the same thought, and the fault
+   is the sentence the whole screen exists to deliver: it gets the size and the near-white ink. */
+.ctx-mission { margin-top: -7px; }
+.ctx-fault {
+  font-size: 16px; line-height: 1.4; letter-spacing: -0.012em; font-weight: 500;
+  color: rgba(255,255,255,0.94);
+}
 /* the unavailable card's technical footnote: the underlying error, verbatim, so a failure
    screenshot is a bug report. Mono and muted so it never competes with the human sentence. */
 .ctx-detail { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; color: var(--tx-mute); overflow-wrap: anywhere; }
@@ -264,6 +374,67 @@ input { font: inherit; color: inherit; }
   margin-top: -8px; padding-left: 11px; border-left: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
   font-size: 12.5px; line-height: 1.5; color: var(--tx-mute);
 }
+
+/* ---- beat 2: the old way (js/core/oldway.js) ----
+   A serial-monitor wall streaming this mission's own channels past faster than anyone can read it.
+   It is the CONTRAST the third beat needs: an answer that cites its evidence only looks like magic
+   next to the evening in a terminal it replaces. Every class here is written by oldway.js. */
+.ctx-oldway { min-width: 0; margin-top: 3px; }
+.ow { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ow-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.ow-tool {
+  flex: 0 0 auto; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--tx-body);
+}
+.ow-port {
+  min-width: 0; flex: 1; text-align: right; font-size: 10px; color: var(--tx-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* the wall pins itself to its own bottom (oldway.js sets scrollTop), so it MUST clip and it must
+   have a height that does not depend on how many rows are in it yet */
+.ow-wall {
+  position: relative; overflow: hidden; height: 148px;
+  background: #0d0d0d; border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px;
+}
+.ow-rows { font-size: 10.5px; line-height: 1.62; }
+/* one line, never wrapped: a wrapped log line reads as a paragraph, and the point is that this is
+   a firehose. The right edge is masked so a clipped line reads as "there is more of this". */
+.ow-line { display: flex; gap: 8px; white-space: nowrap; min-width: 0; }
+.ow-t { flex: 0 0 auto; color: rgba(255,255,255,0.30); }
+.ow-arrow { flex: 0 0 auto; color: rgba(255,255,255,0.20); }
+.ow-txt { color: var(--tx-body); }
+.ow-rows {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 34px), rgba(0,0,0,0.06));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 34px), rgba(0,0,0,0.06));
+}
+/* the fade is at the TOP: the newest line is at the bottom and must stay legible, so the wall
+   bleeds out where the old rows are leaving */
+.ow-fade {
+  position: absolute; left: 0; right: 0; top: 0; height: 42px; pointer-events: none;
+  background: linear-gradient(180deg, #0d0d0d 6%, rgba(13,13,13,0) 100%);
+}
+/* a streaming wall gets a cursor; a filled one (reduced motion, or skip) does not */
+.ow.ow-live .ow-wall::after {
+  content: ""; position: absolute; right: 11px; bottom: 11px;
+  width: 6px; height: 12px; background: var(--acc, var(--blue-hi)); opacity: .8;
+  animation: blink .9s step-end infinite;
+}
+/* a wall that landed in one go (reduced motion, or skip()) is not streaming, so it keeps no cursor
+   even though `ow-live` was set on the way in */
+.ow.ow-filled .ow-wall::after { display: none; }
+.ow-caption { font-size: 14.5px; line-height: 1.42; color: rgba(255,255,255,0.9); }
+.ow-cost { font-size: 11px; line-height: 1.5; color: var(--tx-mute); }
+/* the volume line closes beat 2, so it hangs off the cost line rather than floating as a beat of
+   its own */
+.ctx-volume { margin-top: -6px; }
+
+/* the demoted picker, reachable from every screen after the fork */
+.ctx-more {
+  align-self: flex-start; font-size: 11.5px; color: var(--tx-mute); letter-spacing: 0.02em;
+  padding: 2px 0; transition: color .15s ease;
+}
+.ctx-more:hover { color: var(--tx); }
 /* the robot's own first question as an iMessage-style composer: the question sits "typed" in a
    message pill with a round accent send disc on the right. The WHOLE pill is the button; clicking
    it hands the mission to the analyst, and the demo opens by asking this exact question. */
@@ -325,9 +496,18 @@ input { font: inherit; color: inherit; }
   /* a 34dvh panel is already close to the line art's own proportions, so hold 50% here: this only
      exists to match the desktop :not(.live) rule's specificity, which would otherwise win */
   .ctx-stage:not(.live) .ctx-ghost { width: 50%; }
-  .ctx-copy { gap: 15px; }
-  .ctx-system, .ctx-volume, .ctx-charge { font-size: 13.5px; }
+  .ctx-copy { gap: 13px; }
+  .ctx-system, .ctx-volume, .ctx-charge, .ctx-mission { font-size: 13.5px; }
   .ctx-prov { margin-top: -7px; font-size: 12px; }
+  .ctx-fault { font-size: 15px; }
+  /* the wall is a thumb-scrollable feed on a phone, not a wide terminal: shorter, tighter, and the
+     timestamp column goes, because 390px of line length is better spent on the channel and the
+     fields than on a wall clock nobody reads */
+  .ow-wall { height: 118px; padding: 8px 10px; }
+  .ow-rows { font-size: 10px; line-height: 1.58; }
+  .ow-t { display: none; }
+  .ow-caption { font-size: 13.5px; }
+  .ow-cost { font-size: 10.5px; }
   .ctx-ask { padding: 7px 7px 7px 15px; gap: 11px; }
   .ctx-ask-q { font-size: 14.5px; }
   .ctx-ask-send { width: 33px; height: 33px; }
@@ -356,7 +536,8 @@ input { font: inherit; color: inherit; }
   width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; color: var(--tx-body);
 }
 .back:hover { border-color: var(--line-hi); color: var(--tx); }
-.demo-ctas { display: flex; gap: 8px; flex: 0 0 auto; }
+.demo-ctas { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.demo-more { margin-right: 2px; }
 .demo-ctas .lbl-sm { display: none; }
 
 .demo-main {
@@ -583,6 +764,26 @@ input { font: inherit; color: inherit; }
 .ev-chip.sev-info { border-color: rgba(211,238,182,0.45); color: var(--sage); background: rgba(211,238,182,0.09); }
 .ev-chip.sev-info:hover { background: rgba(211,238,182,0.18); }
 .ev-chip.inline { margin: 0 2px; vertical-align: baseline; }
+/* One-shot attention pull on the chip the demo plays for the visitor when the scripted opener
+   lands. chat.js adds `pulse` on that beat only, never under reduced motion, and takes it off the
+   moment the chip is clicked. `currentColor` rather than a literal: the ring then matches whatever
+   severity the finding is, without three near-identical keyframe blocks. */
+.ev-chip.pulse { animation: evPulse 1.25s cubic-bezier(.16,1,.3,1) 3; }
+@keyframes evPulse {
+  0% { box-shadow: 0 0 0 0 currentColor; }
+  65% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* The coach line: one system note, once per session, right after the auto-played chip. It is NOT
+   an analyst message and must not look like one — the analyst only ever says things it can cite,
+   and this is the demo explaining its own interface. Hairline rule, mono, muted, no avatar. */
+.msg.coach { align-items: stretch; }
+.coach-note {
+  margin: 0; padding: 1px 0 1px 11px; border-left: 2px solid var(--line-hi);
+  font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.55;
+  letter-spacing: 0.015em; color: var(--tx-mute);
+}
 
 .chat-foot { flex: 0 0 auto; min-width: 0; padding: 10px 16px calc(14px + env(safe-area-inset-bottom)); background: var(--canvas); }
 /* Standing provenance line, written from the def by chat.js. Deliberately above the suggestions
@@ -758,6 +959,9 @@ input { font: inherit; color: inherit; }
      not worth their pixels on a phone */
   .demo-id .dev { display: none; }
   .demo-ctas [data-cta="github"] { display: none; }
+  /* the back arrow already goes to #/missions and is labelled for it: the text link is desktop
+     chrome and there is no room for it beside the one CTA that survives */
+  .demo-more { display: none; }
   .demo-id { flex-direction: column; gap: 0; align-items: stretch; justify-content: center; }
 
   /* picker: the square 3D tile is the card; text rides under it */
@@ -767,6 +971,7 @@ input { font: inherit; color: inherit; }
   .rcard-art svg { width: 96px; height: 62px; }
   .rcard-name { font-size: 14px; }
   .rcard-tag { font-size: 11.5px; margin-top: 2px; }
+  .rcard-prob { font-size: 11px; margin-top: 4px; line-height: 1.38; }
   .rcard-go { font-size: 10.5px; }
   .pick-foot { padding: 20px 0 30px; }
 
@@ -835,15 +1040,31 @@ input { font: inherit; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  /* stated outright rather than left to the blanket rule above: a pulse reduced to a 0.01 ms ring
+     is still a flash, and this one exists purely to draw the eye */
+  .ev-chip.pulse { animation: none !important; box-shadow: none !important; }
 }
 </style>
 </head>
-<body class="gridbg" data-screen="picker">
+<body class="gridbg" data-screen="start">
 
-<!-- ============================================================ 1. PICKER  #/ -->
-<section id="screen-picker">
+<!-- ============================================================ 0. START  #/start
+     The role fork. One question, one tap, three cards, and an escape to the full picker.
+     js/core/start.js builds the panel into #start-mount; nothing is authored here but the frame. -->
+<section id="screen-start">
   <header class="topbar">
     <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
+  </header>
+  <div class="start-body">
+    <div id="start-mount"></div>
+  </div>
+</section>
+
+<!-- ============================================================ 1. PICKER  #/missions -->
+<section id="screen-picker" hidden>
+  <header class="topbar">
+    <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
+    <a class="topbar-link mono" href="#/start">Pick your seat <span aria-hidden="true">&rsaquo;</span></a>
   </header>
 
   <div class="pick-wrap">
@@ -868,7 +1089,8 @@ input { font: inherit; color: inherit; }
 <!-- ============================================================ 2. CONNECT  #/connect/:id -->
 <section id="screen-connect" hidden>
   <header class="topbar">
-    <a class="wordmark" href="#/"><i></i><span>AlloyLogger</span></a>
+    <a class="wordmark" href="#/start"><i></i><span>AlloyLogger</span></a>
+    <a class="topbar-link mono" href="#/missions">Other missions <span aria-hidden="true">&rsaquo;</span></a>
   </header>
   <div class="conn-body">
     <div id="ingest-mount"></div>
@@ -878,7 +1100,7 @@ input { font: inherit; color: inherit; }
 <!-- ============================================================ 3. DEMO  #/demo/:id -->
 <section id="screen-demo" hidden>
   <header class="topbar demo-head">
-    <a class="back" href="#/" aria-label="Back to robot picker">
+    <a class="back" href="#/missions" aria-label="Back to all missions">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.5 2.5L4 7l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     <div class="demo-id">
@@ -886,6 +1108,7 @@ input { font: inherit; color: inherit; }
       <span class="dev mono" id="demo-device"></span>
     </div>
     <div class="demo-ctas">
+      <a class="topbar-link mono demo-more" href="#/missions">Other missions <span aria-hidden="true">&rsaquo;</span></a>
       <a class="btn ghost sm" data-cta="github" href="#" target="_blank" rel="noopener"><span class="lbl-lg">Get the library</span><span class="lbl-sm">Library</span></a>
       <a class="btn ghost sm" data-cta="setup" href="#" target="_blank" rel="noopener"><span class="lbl-lg">Set up your org</span><span class="lbl-sm">Set up</span></a>
     </div>

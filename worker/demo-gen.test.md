@@ -45,7 +45,7 @@ There is no full automated test runner for the site Worker (the repo has no test
 that do NOT need one are executable and must stay green:
 
 ```sh
-node --test worker/demo-gen.unit.test.mjs     # 43 tests, no network, no wrangler
+node --test worker/demo-gen.unit.test.mjs     # 57 tests, no network, no wrangler
 ```
 
 `worker/demo-gen.unit.test.mjs` drives `handleDemoGen()` and `handleSignupLead()` directly under
@@ -629,7 +629,27 @@ curl -i -X POST localhost:8787/api/signup-lead -H 'content-type: application/jso
 | `GET` / `PUT` / `DELETE` / `HEAD` on `/api/signup-lead` | `405 {"ok":false,"reason":"method_not_allowed"}` |
 | Resend 500s, times out or throws | still `202`, row already written. Storage is the source of truth and the send runs in `ctx.waitUntil` after the response is out |
 
-The stored row is `email, robot, src, dwell_ms, ip_hash, created_at, last_seen`. `ip_hash` is
+**(2026-08-03, visitor role.)** The popup now posts a `role` alongside the address, and the row
+carries it. It is a WHITELIST, not free text like `robot` and `src`: `worker/roles.js` maps a
+posted string to `engineer`, `operator` or `lead` and returns null for everything else, so the
+column can be counted rather than cleaned. The picker's own id for the middle card is `support`,
+which normalizes to `operator` on the way in; the alias never reaches the table.
+
+| posted `role` | stored |
+| --- | --- |
+| `engineer` / `operator` / `lead`, any case, any surrounding space | that value |
+| `support` | `operator` |
+| absent, empty, misspelled, an object, an array, a paste | `NULL`, and the lead still lands with a `202` |
+| a second post from an address already on the list | unchanged. `last_seen` is still the only column a duplicate moves |
+
+The column was added to the live DO by a guarded `ALTER TABLE` in the constructor
+(`migrateLeads` / `addColumnIfMissing` in `do-shelve.js`), because `CREATE TABLE IF NOT EXISTS` is
+a no-op against a table that already exists. It is additive and nullable, so no row was rewritten
+and every lead captured before 2026-08-03 reads back `null` here. The guard is a `PRAGMA
+table_info` read rather than a try/catch, so a second wake of the DO cannot throw "duplicate column
+name" out of its constructor and a genuinely failing ALTER is not swallowed.
+
+The stored row is `email, robot, src, role, dwell_ms, ip_hash, created_at, last_seen`. `ip_hash` is
 `sha256(ip + DEMOGEN_SIGNING_KEY)` truncated to 32 hex chars, exactly the idiom the job table uses:
 the raw IP is never stored, and the digest exists only to hold the per-IP cap.
 
@@ -660,9 +680,14 @@ truncated has to be able to say so. Observed on `wrangler dev` after five captur
 
 ```json
 {"ok":true,"count":5,"next_before":null,"next_before_email":null,
- "leads":[{"email":"rl5@example.com","robot":null,"src":"dm","dwell_ms":1000,
+ "leads":[{"email":"rl5@example.com","robot":null,"src":"dm","role":null,"dwell_ms":1000,
            "created_at":"2026-07-28T08:39:27.696Z","last_seen":"2026-07-28T08:39:27.696Z"}]}
 ```
+
+`role` joined that shape on 2026-08-03. It is `null` for every row captured before the picker
+shipped and for every visitor who skipped it, and the export does not try to tell those two apart:
+defaulting an unrecorded row to `engineer` would put a number in the export that nobody ever gave
+us.
 
 Paging is a COMPOUND cursor over (created_at DESC, email DESC), not an offset: the table grows at
 the TOP, so an offset would re-serve rows every time a lead landed mid-walk, and a timestamp-only

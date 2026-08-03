@@ -188,14 +188,14 @@ async function pageWith(body, routes = []) {
       body,
     }),
   );
-  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
   return { ctx, page, errors, consoleErrors };
 }
 
 /** The unavailable card, as the visitor would read it. */
 const readCard = () => {
   const m = document.getElementById('ingest-mount');
-  const a = m && m.querySelector('a[href="#/"]');
+  const a = m && m.querySelector('a[href="#/missions"]');
   return {
     text: ((m && m.textContent) || '').replace(/\s+/g, ' ').trim(),
     backHref: a ? a.getAttribute('href') : null,
@@ -257,7 +257,7 @@ H.section('A: unavailable card');
   );
   const card = await page.evaluate(readCard);
   H.ok(/could not be loaded/i.test(card.text), `the card states the failure ("${card.text.slice(0, 90)}")`);
-  H.ok(card.backHref === '#/', 'the card offers a way back to the robots');
+  H.ok(card.backHref === '#/missions', 'the card offers a way back to the robots');
   H.ok(card.demoHidden, 'the demo screen is not left exposed behind the card');
   H.ok(!card.hasDemo, 'no half-built demo is left mounted');
 }
@@ -321,7 +321,7 @@ H.section('B: a post-import build failure lands on the card');
   );
   const card = await B.page.evaluate(readCard);
   H.ok(/could not be loaded/i.test(card.text), `the card states the failure ("${card.text.slice(0, 90)}")`);
-  H.ok(card.backHref === '#/', 'the card offers a way back to the robots');
+  H.ok(card.backHref === '#/missions', 'the card offers a way back to the robots');
   H.ok(card.demoHidden, 'the demo screen is not left exposed behind the card');
   H.ok(!card.hasDemo, 'no half-built demo is left mounted');
   // The load succeeded, so the copy must be the RETRYABLE sentence: the module evaluated fine and
@@ -379,7 +379,7 @@ H.section('B: navigation still works afterwards');
   // The failure path resets currentRoute to the 'load' sentinel. If it did not, the router would
   // believe it is still on a screen it never finished building and the next hash change would be
   // handled as a no-op - the card would sit there over every subsequent navigation.
-  await B.page.evaluate(() => { location.hash = '#/'; });
+  await B.page.evaluate(() => { location.hash = '#/missions'; });
   H.ok(
     await waitFor(
       B.page,

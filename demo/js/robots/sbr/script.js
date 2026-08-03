@@ -6,12 +6,55 @@
 import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
+/**
+ * The OPENER in the support register, hoisted so the two ids that name that register can share ONE
+ * string. `demo/js/core/role.js` calls it `support` and `worker/roles.js` calls it `operator`;
+ * until those two vocabularies are reconciled, a def that picked one of them would silently serve
+ * the engineer answer to every visitor who arrived under the other. The alias below is this const,
+ * never a second copy of the copy, so the two keys cannot drift apart.
+ *
+ * Same table, same numbers, same instant as the engineer answer: a register is a way of reading one
+ * measurement, not a second measurement. Same `{{ev:fall}}` token, so the opener's auto-beat fires
+ * whatever the role. Length within 20% of the engineer answer, so the panel does not reflow.
+ */
+const OPENER_SUPPORT = `Nothing broke and nothing stalled. The wobble grew until it went over at **51.7 s**.
+
+| metric | value |
+| --- | --- |
+| pitch swing | -2.0 → +7.1 → -10.1 deg in 340 ms |
+| d term | 0.000, all 3651 samples |
+| step peak | +5366 / -4226 steps/s |
+| down / up again | 52.0 s / 58.2 s |
+
+Three corrections in 400 ms, each weaker than the last. Nothing you did on the day changed that; the loop was set up to lose it.
+
+{{ev:fall}}`;
+
+/** The OPENER in the lead register. Same rules as OPENER_SUPPORT. */
+const OPENER_LEAD = `A tuning gap, not a hardware fault. It ran out of damping and went over at **51.7 s**.
+
+| metric | value |
+| --- | --- |
+| pitch swing | -2.0 → +7.1 → -10.1 deg in 340 ms |
+| d term | 0.000, all 3651 samples |
+| step peak | +5366 / -4226 steps/s |
+| down / up again | 52.0 s / 58.2 s |
+
+Three corrections in 400 ms, each weaker than the last. The fix is a gain, not a part: no rework, no BOM change, and it carries to every robot on this firmware.
+
+{{ev:fall}}`;
+
 export default {
   id: 'sbr',
   name: 'Self-balancing robot',
   device: 'ESP32 · BNO055 IMU · 2x stepper',
   tagline: 'Balances for 51 s, then falls',
-  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall' },
+  // `datapoints` and `channels` are the mission's VOLUME, authored here rather than counted at
+  // render time. They are the row-times-field total and the channel count that buildData() actually
+  // ships, read off the built arrays under node (2 channels, 3651 x 10 on /balance and 731 x 3 on
+  // /sys) rather than derived from `rate` x `duration`. Every def carries the pair, so the brief
+  // states the same volume whether or not this robot's telemetry has been built yet.
+  context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.', mission: 'A 73-second soak test: hold upright on flat ground and stream every control cycle to the mesh.', fault: 'A pitch oscillation grows over about a second and the robot goes face-down, wheels still driving. Every cycle of the loop that lost it is in the log.', faultT: 51.7, label: 'fall', datapoints: 38703, channels: 2 },
   accent: '#2f78ff',
   duration,
   rate,
@@ -41,6 +84,12 @@ export default {
 Three corrections in 400 ms, each weaker than the last: with no derivative term every command lands a quarter cycle late.
 
 {{ev:fall}}`,
+      // Role registers for the OPENER. `answer` above IS the engineer register and stays the
+      // default, so `engineer` is never a key here and a def that ships no `answerByRole` behaves
+      // exactly as it did before roles existed. `support` and `operator` are the SAME const, see
+      // OPENER_SUPPORT: two live vocabularies name that register, and one shared string means the
+      // answer cannot depend on which of them the caller happens to use.
+      answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
       evidence: ['fall'],
     },
     {

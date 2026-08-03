@@ -27,6 +27,8 @@
 // and the global daily cap run inside the DO. Nothing past a ceiling writes a row, sends a mail or
 // answers differently from an accepted lead.
 
+import { normalizeRole } from "./roles.js";
+
 const DO_NAME = "main";
 
 /** The popup posts about 200 bytes. 8 KB is room for a long src plus slack, and no more. */
@@ -250,11 +252,12 @@ function tag(value) {
  * sent, so a rejection here would surface as an unhandled runtime error attached to a request that
  * succeeded, and would tell nobody anything.
  */
-async function sendLeadNotification(env, { email, robot, src, dwellMs, at }) {
+async function sendLeadNotification(env, { email, robot, src, role, dwellMs, at }) {
   const subject = `AlloyLogger lead: ${email}`;
   const text = `New signup from the demo popup.
 
 Email:  ${email}
+Role:   ${role ?? "-"}
 Robot:  ${robot ?? "-"}
 Source: ${src ?? "-"}
 Dwell:  ${dwellMs == null ? "-" : `${dwellMs} ms in the popup`}
@@ -360,6 +363,13 @@ async function handleCapture(request, env, ctx) {
   const dwellMs = Number.isFinite(dwellRaw) ? Math.min(Math.max(Math.round(dwellRaw), 0), MAX_DWELL_MS) : null;
   const robot = tag(body.robot);
   const src = tag(body.src);
+  // NOT `tag()`. `robot` and `src` are free text reduced to something safe to store; `role` is one
+  // of three known values or nothing at all. A whitelist is what makes it worth putting in the
+  // export: a column that can only ever hold `engineer`, `operator`, `lead` or NULL is a column
+  // that can be counted, and one that stores whatever was posted is a column that has to be
+  // cleaned before it can be read. An unrecognised value stores NULL and still answers 202, like
+  // every other thing this endpoint declines to act on.
+  const role = normalizeRole(body.role);
 
   const ipHash = (await sha256Hex(`${ip}${ipSalt(env)}`)).slice(0, 32);
   const now = Date.now();
@@ -368,6 +378,7 @@ async function handleCapture(request, env, ctx) {
     email,
     robot,
     src,
+    role,
     dwellMs,
     ipHash,
     now,
@@ -382,7 +393,7 @@ async function handleCapture(request, env, ctx) {
   // "is there budget left today", decided in the same atomic call that wrote the row, so two
   // simultaneous leads cannot both read the last slot as free.
   if (res.status === "new" && res.notify) {
-    ctx.waitUntil(sendLeadNotification(env, { email, robot, src, dwellMs, at: now }));
+    ctx.waitUntil(sendLeadNotification(env, { email, robot, src, role, dwellMs, at: now }));
   } else if (res.status === "new") {
     // Stored and deliberately unmailed. The row is in the export either way, so this is a quieter
     // inbox and not a lost lead.

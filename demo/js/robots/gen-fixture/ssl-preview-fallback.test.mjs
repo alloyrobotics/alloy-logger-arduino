@@ -59,7 +59,7 @@ await page.route('**/robots/ssl/preview-data.js', (route) =>
   }),
 );
 
-await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
 
 // ---------------------------------------------------------------- the module itself
 

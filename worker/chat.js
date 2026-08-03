@@ -12,9 +12,15 @@
 //
 // The pack is the cached prefix (see PERSONA + facts below), so repeat questions on the same
 // robot read it back at ~1/10th the input price instead of re-paying for it every turn.
+//
+// A request may also carry a `role` (engineer, operator, lead) from the demo's picker. It changes
+// the ALTITUDE of the answer and never the facts, and it is delivered as a second system block
+// placed after the cache breakpoint, so every role shares one cache entry per robot. See
+// ROLE_REGISTERS / buildSystemBlocks.
 
 import Anthropic from '@anthropic-ai/sdk';
 import { FACTS } from './facts.generated.js';
+import { normalizeRole } from './roles.js';
 
 const MODEL = 'claude-haiku-4-5';
 const MAX_TOKENS = 900;
@@ -83,6 +89,73 @@ The panel renders a small markdown subset: **bold**, \`inline code\`, pipe table
 
 MISSION DATA
 `;
+
+/**
+ * Per-role register, appended as a SECOND system block that sits AFTER the cache breakpoint.
+ *
+ * THIS IS THE WHOLE POINT OF THE SHAPE. The cached prefix is block 0, `PERSONA + robot.facts`,
+ * and the breakpoint is at its end. A prefix cache matches on bytes from the start of the request
+ * up to a breakpoint, so anything placed after that breakpoint can vary per request without
+ * invalidating it: all three roles asking about the same robot read back the SAME cache entry, and
+ * a role switch mid-conversation costs the ~40 tokens of this block rather than re-writing the
+ * whole pack. Interpolating the register INTO the persona, which is the obvious way to write this,
+ * would give every role its own cache entry per robot and triple the cache-write bill for the
+ * exact same answers.
+ *
+ * `engineer` is deliberately NO BLOCK AT ALL rather than a block that describes the default. The
+ * persona above already IS the engineer register (lead with the finding, quote exact values with
+ * units), so an engineer request is byte-for-byte the request this route sent before roles existed:
+ * the majority path pays nothing, adds no second block, and cannot regress on a prompt edit here.
+ *
+ * Each register says what to DO with the same facts, never what facts to use. None of them may
+ * loosen the persona's grounding rules: no number that is not in the pack, no invented channel, no
+ * softened synthesis disclosure. An operator answer is a shorter answer, not a vaguer one.
+ */
+const ROLE_REGISTERS = {
+  engineer: null,
+  operator: `## This visitor
+This visitor keeps robots running, they do not read the logs. Support, field ops, the person who
+gets the robot after it has already broken. Same facts, different altitude.
+
+- Lead with what happened in plain language: what the robot did, when, and whether it recovered.
+- Then say what to do about it. Every answer should leave them with a next action or a thing to check.
+- Name the moment before any number, and keep at most one or two numbers per answer.
+- Skip the channel names, the sample rates and the field-level provenance unless they are asked for.
+- Still cite evidence. The chip that seeks the replay to the moment is worth more to them than to anyone.`,
+  lead: `## This visitor
+This visitor owns the fleet and the schedule, not this one run. Same facts, different altitude.
+
+- Lead with the consequence: what this costs, how often it would happen, what it puts at risk.
+- Frame each finding as a pattern this one log is evidence of, and be explicit that it is one log.
+- Prefer a small table of findings over a walkthrough of the timeline.
+- Close on the decision it points at: what to check, instrument or change next.
+- Never extrapolate a rate, a fleet number or a cost that the mission data does not contain. If they
+  ask how often, say what this log shows and that one log cannot answer it.`,
+};
+
+/**
+ * The system blocks for one request: the cached pack, then the role register if there is one.
+ *
+ * Exported for the unit test, which asserts the invariant this route lives or dies on: block 0 is
+ * byte-identical across every role, and the cache_control breakpoint is on block 0 and nowhere
+ * else.
+ */
+export function buildSystemBlocks(facts, role) {
+  const register = role && Object.hasOwn(ROLE_REGISTERS, role) ? ROLE_REGISTERS[role] : null;
+  const blocks = [
+    {
+      type: 'text',
+      // PERSONA + facts is the cached prefix. It must be assembled the same way on
+      // every request or the cache silently never reads.
+      text: PERSONA + facts,
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+  // No cache_control on the register: a second breakpoint would ask the API to cache a ~40 token
+  // block, which is under the minimum cacheable length and buys nothing even when it is not.
+  if (register) blocks.push({ type: 'text', text: register });
+  return blocks;
+}
 
 // ---------------------------------------------------------------------------- helpers
 
@@ -175,10 +248,16 @@ async function resolveRobot(env, robotId) {
   return normalizeLegacyPack(pack);
 }
 
-/** Validate the posted body. Returns {robot, messages} or throws a message string. */
+/** Validate the posted body. Returns {robotId, robot, role, messages} or throws a message string. */
 function parseBody(body, robot) {
   const robotId = String(body?.robot || '');
   if (!robot) throw 'Unknown robot.';
+
+  // Optional, and unknown values fall back to the default register rather than throwing: a role is
+  // a presentation hint on a question, and a client cached from before a vocabulary change must
+  // still get its answer. normalizeRole is the ONLY path from the body to a register key, so
+  // nothing a caller posts can reach the system prompt as text.
+  const role = normalizeRole(body?.role);
 
   if (!Array.isArray(body?.messages) || !body.messages.length) throw 'No question.';
   const turns = body.messages.slice(-MAX_HISTORY);
@@ -216,7 +295,7 @@ function parseBody(body, robot) {
   if (messages[0].role !== 'user') messages.shift();
   if (!messages.length || messages[messages.length - 1].role !== 'user') throw 'No question.';
 
-  return { robotId, robot, messages };
+  return { robotId, robot, role, messages };
 }
 
 /** Pull the {{ev:id}} tokens the model actually emitted, keeping only ids this robot owns. */
@@ -264,7 +343,7 @@ export async function handleChat(request, env) {
   } catch (err) {
     return json({ error: typeof err === 'string' ? err : 'Bad request.' }, 400);
   }
-  const { robot, messages } = parsed;
+  const { robot, role, messages } = parsed;
 
   // No retries: a visitor is watching a caret blink, a retry doubles spend to answer nobody.
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 60_000 });
@@ -301,15 +380,9 @@ export async function handleChat(request, env) {
             // deterministic answers, and the smoke probes grade a reproducible output instead of a
             // coin flip per run.
             temperature: 0,
-            system: [
-              {
-                type: 'text',
-                // PERSONA + facts is the cached prefix. It must be assembled the same way on
-                // every request or the cache silently never reads.
-                text: PERSONA + robot.facts,
-                cache_control: { type: 'ephemeral' },
-              },
-            ],
+            // Block 0 is the cached prefix and is identical for every role; the register, when
+            // there is one, rides after the breakpoint. See buildSystemBlocks.
+            system: buildSystemBlocks(robot.facts, role),
             messages,
           },
           { signal: upstream.signal },
@@ -328,8 +401,11 @@ export async function handleChat(request, env) {
         // requests means the facts pack is being served from cache at ~1/10th input price; if
         // cache_read stays 0, something upstream of the breakpoint is changing per request.
         const u = final.usage || {};
+        // `role` is on this line so the claim above can be CHECKED in production rather than
+        // trusted: if the register were breaking the prefix, cache_read would sit at 0 for the two
+        // non-default roles while staying high for engineer, and the split would be visible here.
         console.log(
-          `chat usage robot=${parsed.robotId} in=${u.input_tokens} ` +
+          `chat usage robot=${parsed.robotId} role=${role ?? '-'} in=${u.input_tokens} ` +
             `cache_write=${u.cache_creation_input_tokens} cache_read=${u.cache_read_input_tokens} ` +
             `out=${u.output_tokens}`,
         );

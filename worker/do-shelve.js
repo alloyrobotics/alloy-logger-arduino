@@ -30,6 +30,48 @@ const LEAD_EVENT = "signup_lead";
 const LEAD_NOTIFY_EVENT = "signup_lead_notified";
 
 /**
+ * Add a column to a table only if it is not already there. Returns true when it added one.
+ *
+ * `CREATE TABLE IF NOT EXISTS` cannot do this job, and that is the whole reason this exists: the DO
+ * constructor runs on every wake, but for an instance created before the column was declared the
+ * CREATE is a NO-OP that leaves the old six-column table exactly as it was. Only an ALTER reaches
+ * it, and sqlite has no `ADD COLUMN IF NOT EXISTS`, so a second wake would throw "duplicate column
+ * name" out of a constructor and take the whole object down.
+ *
+ * The guard is a PRAGMA read rather than a try/catch around the ALTER. A catch would swallow every
+ * other reason an ALTER can fail (a locked table, a typo in the type, a table that is not there at
+ * all) and leave a silently unmigrated DO answering requests. Asking what columns exist is a
+ * question with an exact answer, so ask it.
+ *
+ * ADD COLUMN only, and only nullable ones: it is O(1) in sqlite, it rewrites no rows, and every
+ * pre-existing row reads back NULL for the new column. That is the correct value for a lead
+ * captured before the field existed, and it is why nothing here backfills.
+ */
+export function addColumnIfMissing(sql, table, column, type) {
+  const cols = sql.exec(`PRAGMA table_info(${table})`).toArray();
+  if (cols.some((c) => String(c.name) === column)) return false;
+  sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  return true;
+}
+
+/**
+ * Every additive migration the `leads` table has taken since it was first created, in order.
+ *
+ * do.js calls this straight after the CREATE, on every construction, and it is idempotent by
+ * construction: on a fresh instance the CREATE already declared the columns and every call here is
+ * a PRAGMA read that finds them; on an instance that predates one, that call adds it once and every
+ * wake after is the same PRAGMA read. Both paths converge on the same table.
+ *
+ *  - `role` (2026-08-03): which of worker/roles.js's three registers the visitor picked in the demo,
+ *    or NULL. NULL means "not asked" for a row captured before the picker shipped and "skipped" for
+ *    one after it, and the export deliberately does not try to tell those apart: inventing a
+ *    distinction the table never recorded would be worse than the honest null.
+ */
+export function migrateLeads(sql) {
+  return { role: addColumnIfMissing(sql, "leads", "role", "TEXT") };
+}
+
+/**
  * Read-only drain visibility for the shelve (GET /api/demo-gen/runner/state).
  *
  * Strictly read-only, and that is a contract, not an implementation detail: the shutdown loop
@@ -200,6 +242,7 @@ export function applyShelvePurge(sql, { allowSlugs = [], purgeableStates = [] } 
  * @param {string} opts.email     already lowercased and trimmed by the Worker
  * @param {string|null} opts.robot
  * @param {string|null} opts.src
+ * @param {string|null} opts.role  one of worker/roles.js's VISITOR_ROLES, or null
  * @param {number|null} opts.dwellMs
  * @param {string} opts.ipHash
  * @param {number} opts.now       epoch ms
@@ -210,10 +253,15 @@ export function applyShelvePurge(sql, { allowSlugs = [], purgeableStates = [] } 
  */
 export function applyLeadCapture(
   sql,
-  { email, robot, src, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget },
+  { email, robot, src, role, dwellMs, ipHash, now, ipCap, windowMs, dailyCap, notifyBudget },
 ) {
   const existing = sql.exec("SELECT email FROM leads WHERE email = ?", email).toArray()[0];
   if (existing) {
+    // `last_seen` stays the ONLY column a repeat submission moves, and `role` is not an exception.
+    // The row records what the visitor said the first time they asked us for access; a second post
+    // from the same address is a returning visitor, not a correction, and letting it rewrite the
+    // attribution would mean the export's oldest and most useful field is the one most easily
+    // overwritten by anyone who knows the address.
     sql.exec("UPDATE leads SET last_seen = ? WHERE email = ?", now, email);
     return { ok: true, status: "duplicate", notify: false };
   }
@@ -233,11 +281,12 @@ export function applyLeadCapture(
   if (today >= dailyCap) return { ok: true, status: "daily_capped", notify: false };
 
   sql.exec(
-    `INSERT INTO leads(email, robot, src, dwell_ms, ip_hash, created_at, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO leads(email, robot, src, role, dwell_ms, ip_hash, created_at, last_seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     email,
     robot ?? null,
     src ?? null,
+    role ?? null,
     dwellMs ?? null,
     ipHash,
     now,
@@ -277,7 +326,7 @@ export function selectLeads(sql, { limit = 1000, before = null, beforeEmail = nu
     before == null
       ? sql
           .exec(
-            `SELECT email, robot, src, dwell_ms, created_at, last_seen
+            `SELECT email, robot, src, role, dwell_ms, created_at, last_seen
              FROM leads ORDER BY created_at DESC, email DESC LIMIT ?`,
             limit,
           )
@@ -285,7 +334,7 @@ export function selectLeads(sql, { limit = 1000, before = null, beforeEmail = nu
       : beforeEmail == null
         ? sql
             .exec(
-              `SELECT email, robot, src, dwell_ms, created_at, last_seen
+              `SELECT email, robot, src, role, dwell_ms, created_at, last_seen
                FROM leads WHERE created_at < ? ORDER BY created_at DESC, email DESC LIMIT ?`,
               before,
               limit,
@@ -293,7 +342,7 @@ export function selectLeads(sql, { limit = 1000, before = null, beforeEmail = nu
             .toArray()
         : sql
             .exec(
-              `SELECT email, robot, src, dwell_ms, created_at, last_seen
+              `SELECT email, robot, src, role, dwell_ms, created_at, last_seen
                FROM leads WHERE created_at < ? OR (created_at = ? AND email < ?)
                ORDER BY created_at DESC, email DESC LIMIT ?`,
               before,
@@ -306,6 +355,11 @@ export function selectLeads(sql, { limit = 1000, before = null, beforeEmail = nu
     email: r.email,
     robot: r.robot,
     src: r.src,
+    // NULL for every row captured before the picker shipped, and for every visitor who skipped it.
+    // `?? null` rather than a default: guessing "engineer" for a row that never recorded one would
+    // put a number in this export that nobody ever told us, which is exactly what an export is for
+    // avoiding.
+    role: r.role ?? null,
     dwell_ms: r.dwell_ms == null ? null : Number(r.dwell_ms),
     created_at: new Date(Number(r.created_at)).toISOString(),
     last_seen: new Date(Number(r.last_seen)).toISOString(),

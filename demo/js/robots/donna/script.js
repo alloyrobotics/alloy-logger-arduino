@@ -97,6 +97,79 @@ export default {
       'DERIVED_BEARING+RESAMPLED_5HZ on the filtered ball estimate, and RESAMPLED_2HZ with ' +
       'DERIVED_RATIO+RESAMPLED_2HZ on onboard compute. A derived value is never presented as raw ' +
       'wire data.',
+    /**
+     * The mission's VOLUME, authored rather than counted at render time. This def's channels are
+     * derived from a lazily loaded payload, so the brief screen can reach a visitor with nothing
+     * built and would otherwise have nothing to state.
+     *
+     * 34,899 is the row-times-field total across the six summary series, measured by running
+     * buildData() under node against the same seed app.js uses (/imu 6121 x 3, /motion 3061 x 3,
+     * /servos 613 x 2, /game 613 x 3, /ball 1531 x 2, /compute 613 x 2). It is seed-independent:
+     * every row count comes from the recording's own timestamps.
+     *
+     * It counts the RESAMPLED summary series this demo replays, which is what the visitor can
+     * actually scrub, and not the message count of the source recording. Neither number is a claim
+     * about the match, so neither belongs in claims.mjs.
+     */
+    datapoints: 34899,
+    channels: 6,
+    /**
+     * THE OLD WAY, on this mission's own data. Forty consecutive lines of the six summary series
+     * rendered as a text log, time-ordered across channels exactly as a tail would interleave them.
+     *
+     * Every line is REAL to the replayed series: the values were read out of buildData() under node
+     * at those timestamps and printed, not written by hand. Same disclosure as everywhere else on
+     * this def, and it matters here more than anywhere: these are the DERIVED and RESAMPLED series
+     * named in `provenance`, printed as text, not the robot's raw ROS 2 wire messages.
+     *
+     * The slice is contiguous and spans 94.200 to 95.100 s, which is 0.900 s of a 306 s recording,
+     * and it contains the first fall: `/imu` pitchDeg walks -0.950 to -65.24 while accelMagMps2
+     * spikes to 154.2 at 95.050, and `/ball` goes absent at 95.000 as she loses sight of it going
+     * down. `null` is an ABSENT reading rather than a zero, because ballDistM and ballBearingDeg
+     * are masked by ballSeen and a filled-in number would be a reading nobody took.
+     */
+    oldwaySample: [
+      '94.200 /imu accelMagMps2=8.61 pitchDeg=-0.950 rollDeg=-2.82',
+      '94.200 /motion cmdVxMps=0.109 odomVxMps=0.109 cmdYawRadps=-0.036',
+      '94.200 /ball ballDistM=1.39 ballBearingDeg=14.62',
+      '94.250 /imu accelMagMps2=11.66 pitchDeg=-3.25 rollDeg=-3.97',
+      '94.300 /imu accelMagMps2=11.13 pitchDeg=-3.71 rollDeg=-5.30',
+      '94.300 /motion cmdVxMps=0.109 odomVxMps=0.109 cmdYawRadps=-0.036',
+      '94.350 /imu accelMagMps2=9.71 pitchDeg=-5.21 rollDeg=-5.19',
+      '94.400 /imu accelMagMps2=10.56 pitchDeg=-6.09 rollDeg=-4.14',
+      '94.400 /motion cmdVxMps=0.111 odomVxMps=0.111 cmdYawRadps=-0.028',
+      '94.400 /ball ballDistM=1.36 ballBearingDeg=17.60',
+      '94.450 /imu accelMagMps2=9.09 pitchDeg=-7.07 rollDeg=-3.29',
+      '94.500 /imu accelMagMps2=8.98 pitchDeg=-9.60 rollDeg=-3.59',
+      '94.500 /motion cmdVxMps=0.112 odomVxMps=0.112 cmdYawRadps=-0.025',
+      '94.500 /servos maxTempC=33.00 minBusVoltageV=13.50',
+      '94.500 /game secondsRemaining=135.0 ownScore=1.00 rivalScore=0.000',
+      '94.500 /compute cpuLoadPct=55.56 memUsedPct=17.72',
+      '94.550 /imu accelMagMps2=9.77 pitchDeg=-12.32 rollDeg=-4.29',
+      '94.600 /imu accelMagMps2=11.79 pitchDeg=-14.98 rollDeg=-4.47',
+      '94.600 /motion cmdVxMps=0.107 odomVxMps=0.107 cmdYawRadps=0.016',
+      '94.600 /ball ballDistM=1.33 ballBearingDeg=35.58',
+      '94.650 /imu accelMagMps2=10.18 pitchDeg=-16.69 rollDeg=-3.49',
+      '94.700 /imu accelMagMps2=2.84 pitchDeg=-16.99 rollDeg=0.010',
+      '94.700 /motion cmdVxMps=0.091 odomVxMps=0.091 cmdYawRadps=0.109',
+      '94.750 /imu accelMagMps2=5.26 pitchDeg=-17.73 rollDeg=2.79',
+      '94.800 /imu accelMagMps2=11.95 pitchDeg=-24.93 rollDeg=1.67',
+      '94.800 /motion cmdVxMps=0.077 odomVxMps=0.077 cmdYawRadps=0.195',
+      '94.800 /ball ballDistM=1.26 ballBearingDeg=53.30',
+      '94.850 /imu accelMagMps2=12.02 pitchDeg=-33.43 rollDeg=-0.890',
+      '94.900 /imu accelMagMps2=3.68 pitchDeg=-37.59 rollDeg=-4.98',
+      '94.900 /motion cmdVxMps=0.065 odomVxMps=0.065 cmdYawRadps=0.285',
+      '94.950 /imu accelMagMps2=5.37 pitchDeg=-44.38 rollDeg=-3.84',
+      '95.000 /imu accelMagMps2=24.10 pitchDeg=-44.39 rollDeg=6.05',
+      '95.000 /motion cmdVxMps=0.051 odomVxMps=0.051 cmdYawRadps=0.356',
+      '95.000 /servos maxTempC=32.00 minBusVoltageV=12.70',
+      '95.000 /game secondsRemaining=135.0 ownScore=1.00 rivalScore=0.000',
+      '95.000 /ball ballDistM=null ballBearingDeg=null',
+      '95.000 /compute cpuLoadPct=57.00 memUsedPct=17.70',
+      '95.050 /imu accelMagMps2=154.2 pitchDeg=-60.44 rollDeg=6.62',
+      '95.100 /imu accelMagMps2=22.01 pitchDeg=-65.24 rollDeg=-6.44',
+      '95.100 /motion cmdVxMps=0.045 odomVxMps=0.045 cmdYawRadps=0.384',
+    ],
   },
   accent: '#2f78ff',
   duration,

@@ -1,14 +1,73 @@
 // chat.js - the analyst panel. Renders history, streams answers with a typewriter, parses the
-// markdown subset, hydrates evidence chips, and hands the first evidence item of a finished
-// answer to onEvidence(). Chips re-fire on click.
+// markdown subset, hydrates evidence chips, and hands the SCRIPTED OPENER's evidence to
+// onEvidence() once, automatically. Chips fire on click, always.
 //
 // onSettled() fires once per logical answer, when its typewriter has finished, whichever terminal
 // path that answer took. It is the "the reader is free again" signal the signup popup waits on.
+//
+// ---------------------------------------------------------------------------- the aha beat
+// The demo's whole conversion argument is one interaction: an answer lands, its chip seeks the 3D
+// replay and the chart to the exact moment. A visitor who never discovers the chip never sees it,
+// so the OPENER (the scripted question app.js asks on their behalf) plays its own chip for them
+// exactly once, pulses it, and follows with one coach line explaining the loop. Everything after
+// that is theirs to drive: a question the visitor asked NEVER auto-fires, because the point of the
+// beat is to hand over the controls, not to keep driving.
+//
+// The beat is announced on the DOM as `chat:autobeat` (bubbling, so it reaches #chat-mount). The
+// signup trigger machine waits for it before it will arm on anything: an ask that fires before the
+// demo has shown what a chip does is not an aha, it is a visitor still being taught.
 
 import { renderMarkdown } from './markdown.js';
 import { matchEntry as matchEntryIn } from './matcher.js';
+import { getRoleId } from './role.js';
+import { track } from './analytics.js';
 
 const CHARS_PER_FRAME = 3;
+
+/**
+ * The coach line, appended once after the auto-played chip. It names the rule the whole panel runs
+ * on, in the one moment the visitor has just watched it happen.
+ */
+const COACH_LINE = 'Every answer cites the moment it happened. Tap the chip to watch it.';
+
+/**
+ * sessionStorage guard for the auto-played beat, per robot. A visitor who walks back into a demo
+ * they have already seen this session gets their chat panel without the demo grabbing the timeline
+ * out from under them again.
+ */
+const AHA_PREFIX = 'alloy_aha_played_';
+
+/** The event the signup machine waits on. Bubbles from the chat root to #chat-mount. */
+const AUTOBEAT_EVENT = 'chat:autobeat';
+
+/** @param {string} id robot id @returns {boolean} */
+function ahaPlayed(id) {
+  try {
+    return window.sessionStorage.getItem(AHA_PREFIX + id) === '1';
+  } catch (_) {
+    // Safari private mode throws on ACCESS, not just on write. No storage means the beat plays
+    // again on a re-entry, which is the harmless direction to fail in.
+    return false;
+  }
+}
+
+/** @param {string} id robot id */
+function markAhaPlayed(id) {
+  try {
+    window.sessionStorage.setItem(AHA_PREFIX + id, '1');
+  } catch (_) {
+    /* nothing to persist to; the per-instance guard still caps this build at one beat */
+  }
+}
+
+/** @returns {boolean} whether this visitor has asked for less motion. */
+function reducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return false;
+  }
+}
 
 /** Same-origin analyst endpoint (worker/chat.js). */
 const CHAT_ENDPOINT = '/demo/api/chat';
@@ -21,15 +80,19 @@ const MAX_LIVE_FAILURES = 2;
  * @param {HTMLElement} mount
  * @param {object} robotDef
  * @param {{
- *   onEvidence?: (finding:object)=>void,
+ *   onEvidence?: (finding:object, opts?:{source:'user'|'auto'})=>void,
  *   onAsk?: (q:string)=>void,
  *   onSettled?: (info:{id:number})=>void,
  * }} hooks
+ *   `onEvidence` is called with `{source:'auto'}` exactly once per session per robot, for the
+ *   opener's first finding, and with no options (so, 'user') for every chip click.
  * @returns {{
  *   el:HTMLElement,
- *   ask:(text:string)=>void, askFirstQuestion:()=>void,
+ *   ask:(text:string, opts?:object)=>number, askFirstQuestion:()=>void,
  *   matchEntry:(text:string)=>object|null,
+ *   answerFor:(entry:object|null)=>string,
  *   finishStreaming:()=>void, get streaming():boolean,
+ *   get roleId():string|null, get ahaPlayed():boolean,
  *   focusInput:()=>void, dispose:()=>void
  * }}
  */
@@ -94,11 +157,37 @@ export function createChat(mount, robotDef, hooks = {}) {
   /** Highest id already settled. Ids are monotonic, so this is the exactly-once guard. */
   let lastSettled = 0;
 
+  // ---------- the aha beat ----------
+  /** reqId of the opener app.js asked on the visitor's behalf. The ONLY id allowed to auto-fire. */
+  let openerReqId = 0;
+  /** Per-build guard, on top of the sessionStorage one: one auto-played chip per chat instance. */
+  let beatPlayed = false;
+  /** `chat:autobeat` is announced exactly once, whichever way the opener resolves. */
+  let beatAnnounced = false;
+
   function settleRequest(reqId) {
     if (disposed) return;
     if (!reqId || reqId <= lastSettled) return;
     lastSettled = reqId;
     onSettled({ id: reqId });
+  }
+
+  /**
+   * "The demo has finished showing the visitor what a chip does." Announced when the opener's beat
+   * has played, and equally when it is never going to (no opener, the visitor asked first, they
+   * have already seen it this session). The signup machine holds every arming signal until this
+   * lands, so the announcement has to be unconditional: a beat that silently never happens would
+   * otherwise mean the popup never arms and the page has no conversion at all.
+   */
+  function announceBeat(played) {
+    if (beatAnnounced || disposed) return;
+    beatAnnounced = true;
+    el.dispatchEvent(
+      new CustomEvent(AUTOBEAT_EVENT, {
+        bubbles: true,
+        detail: { robot: robotDef.id, played: !!played },
+      }),
+    );
   }
 
   // ---------- suggested chips ----------
@@ -107,7 +196,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     b.type = 'button';
     b.className = 'sugg-chip';
     b.textContent = q;
-    b.addEventListener('click', () => ask(q));
+    b.addEventListener('click', () => ask(q, { source: 'chip' }));
     sugg.appendChild(b);
   });
 
@@ -151,9 +240,12 @@ export function createChat(mount, robotDef, hooks = {}) {
     return row;
   }
 
+  // The label leads with a VERB. "51.7 s · Fall" reads as a caption on the answer, which is
+  // exactly how it was being ignored; "watch 51.7 s · Fall" is an offer, and the offer is the
+  // product. The triangle stays: it is the same play glyph the transport uses.
   function chipLabel(f) {
     const t = f.t != null ? f.t : f.window[0];
-    return `▸ ${t.toFixed(1)} s · ${f.chipLabel || shortTitle(f.title)}`;
+    return `▸ watch ${t.toFixed(1)} s · ${f.chipLabel || shortTitle(f.title)}`;
   }
 
   function shortTitle(title) {
@@ -168,8 +260,118 @@ export function createChat(mount, robotDef, hooks = {}) {
     b.dataset.ev = f.id;
     b.textContent = chipLabel(f);
     b.title = f.title;
-    b.addEventListener('click', () => onEvidence(f));
+    // No `source` on purpose: onEvidence defaults to 'user', and a click IS the user. The pulse
+    // has done its job the moment the chip is used, so it comes off here rather than waiting out
+    // its animation under the visitor's finger.
+    b.addEventListener('click', () => {
+      b.classList.remove('pulse');
+      playEvidence(f);
+    });
     return b;
+  }
+
+  /**
+   * Every call into the host's onEvidence, contained. It seeks the timeline, re-aims the chart and
+   * pulses the 3D scene, all of it host code this panel does not own; a throw in any of it must not
+   * take down the caller. Inside `done()` that caller is the settle path, and an unsettled answer
+   * strands the signup popup's hold forever.
+   *
+   * @param {object} f finding
+   * @param {{source?:'user'|'auto'}} [opts]
+   */
+  function playEvidence(f, opts) {
+    try {
+      onEvidence(f, opts);
+    } catch (err) {
+      console.warn('[chat] evidence handler threw', err);
+    }
+  }
+
+  /**
+   * One-shot attention pull on the chip the demo just played. Reduced motion skips it outright
+   * rather than relying on the stylesheet's blanket duration override: a visitor who asked for
+   * less motion should not have a class on the DOM claiming otherwise.
+   *
+   * @param {HTMLElement} row the answer row
+   * @param {string} id finding id
+   */
+  function pulseChip(row, id) {
+    if (reducedMotion()) return;
+    const chip = row.querySelector(`.ev-chip[data-ev="${CSS && CSS.escape ? CSS.escape(id) : id}"]`);
+    if (!chip) return;
+    chip.classList.add('pulse');
+    const off = () => chip.classList.remove('pulse');
+    chip.addEventListener('animationend', off, { once: true });
+    // animationend never arrives if the node is hidden (a phone with the chart panel open over it)
+    window.setTimeout(off, 4000);
+  }
+
+  /**
+   * The coach line. Styled as a system note, not as the analyst talking: the analyst cites data,
+   * and this is the demo explaining its own interface. One line, once per session per robot.
+   */
+  function addCoach() {
+    const row = document.createElement('div');
+    row.className = 'msg coach';
+    const p = document.createElement('p');
+    p.className = 'coach-note';
+    p.textContent = COACH_LINE;
+    row.appendChild(p);
+    log.appendChild(row);
+    scrollDown(true);
+  }
+
+  /**
+   * The whole choreography, at the one moment it is allowed to run: the scripted opener has
+   * finished typing and its chips are in the DOM.
+   *
+   *   1. report that the first answer landed (the funnel step before the aha)
+   *   2. play its first finding for the visitor, ONCE per session per robot
+   *   3. pulse the chip that just fired, so the thing that moved the replay is identified
+   *   4. one coach line naming the rule
+   *   5. announce the beat, which is what lets the signup machine start listening at all
+   *
+   * Step 5 is unconditional and runs last. An opener with no evidence, or one whose beat already
+   * played this session, still hands over: the visitor is just as free, there was simply nothing
+   * to show them.
+   *
+   * @param {HTMLElement} row the opener's answer row
+   * @param {object|null} f its first finding
+   */
+  function openerSettled(row, f) {
+    const replay = beatPlayed || ahaPlayed(robotDef.id);
+    track.firstAnswerSettled(robotDef.id, {
+      evidence: f ? f.id : null,
+      auto_played: !!f && !replay,
+    });
+    if (f && !replay) {
+      // Marked BEFORE the handler runs: a throw inside the host's seek must not leave the guard
+      // unwritten and re-play the whole beat on the next entry.
+      beatPlayed = true;
+      markAhaPlayed(robotDef.id);
+      playEvidence(f, { source: 'auto' });
+      pulseChip(row, f.id);
+      addCoach();
+    }
+    announceBeat(!!f && !replay);
+  }
+
+  /**
+   * The answer text for an entry, in the visitor's register.
+   *
+   * `answer` IS the engineer register and is the default, so a def with no variants, an unknown
+   * role and a visitor who never forked all take the identical path. Only the three guided
+   * missions author `answerByRole`, and only on their opener.
+   *
+   * @param {object|null} entry
+   * @returns {string}
+   */
+  function answerFor(entry) {
+    if (!entry) return fallbackText();
+    const byRole = entry.answerByRole;
+    const id = getRoleId();
+    if (id && byRole && typeof byRole[id] === 'string' && byRole[id].trim()) return byRole[id];
+    return entry.answer;
   }
 
   function hydrate(row, entry) {
@@ -271,7 +473,10 @@ export function createChat(mount, robotDef, hooks = {}) {
       if (fireEvidence === false) return;
       const first = entry && entry.evidence && entry.evidence[0];
       const f = first ? findingById.get(first) : null;
-      if (f) onEvidence(f);
+      // The OPENER, and only the opener, plays its own chip. Every other answer leaves its chips
+      // sitting there to be clicked: seeking the replay under a visitor who is reading the answer
+      // they asked for takes the interaction away from them at the exact moment it became theirs.
+      if (reqId && reqId === openerReqId) openerSettled(row, f);
       settleRequest(reqId);
     };
 
@@ -364,7 +569,7 @@ export function createChat(mount, robotDef, hooks = {}) {
   function answerScripted(q, opts, reqId) {
     const store = !opts || opts.store !== false;
     const entry = matchEntry(q);
-    const body = entry ? entry.answer : fallbackText();
+    const body = answerFor(entry);
     // small think beat so it reads as an analyst, not an echo
     pendingTimer = window.setTimeout(() => {
       pendingTimer = 0;
@@ -392,14 +597,22 @@ export function createChat(mount, robotDef, hooks = {}) {
     let httpStatus = 0;
     let sawFrame = false;
 
+    // The visitor's work function rides the request. The worker whitelists it and appends a short
+    // register instruction AFTER its cached prefix, so a role changes the voice of the answer
+    // without forking the prompt cache. Omitted entirely when there is no role: a body without the
+    // key is the same request this endpoint has always served.
+    const payload = {
+      robot: robotDef.id,
+      messages: history.concat([{ role: 'user', content: q }]),
+    };
+    const roleId = getRoleId();
+    if (roleId) payload.role = roleId;
+
     try {
       const res = await fetch(CHAT_ENDPOINT, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          robot: robotDef.id,
-          messages: history.concat([{ role: 'user', content: q }]),
-        }),
+        body: JSON.stringify(payload),
         signal: ctrl.signal,
       });
       httpStatus = res.status;
@@ -480,12 +693,21 @@ export function createChat(mount, robotDef, hooks = {}) {
 
   /**
    * @param {string} text
-   * @param {{live?:boolean}} [opts] `live:false` forces the scripted answer (used for the
-   *   auto-fired opener, which should be instant and costs nothing to serve).
+   * @param {{live?:boolean, opener?:boolean, source?:'chip'|'composer'}} [opts]
+   *   `live:false` forces the scripted answer (used for the auto-fired opener, which should be
+   *   instant and costs nothing to serve). `opener:true` marks the one request allowed to play its
+   *   own evidence. `source` is how the visitor asked, and its presence is what makes this a
+   *   VISITOR question for the funnel: the opener passes none.
+   * @returns {number} the logical answer's id, or 0 if nothing was asked
    */
   function ask(text, opts) {
     const q = String(text || '').trim();
-    if (!q) return;
+    if (!q) return 0;
+    const source = opts && opts.source;
+    // A question the visitor asked means they have taken over, whether or not the opener ever got
+    // to play. Announcing here keeps the signup machine from waiting on a beat that has been
+    // overtaken (their question supersedes the opener, and a superseded answer never settles).
+    if (!opts || !opts.opener) announceBeat(false);
     // An answer queued by the think beat is still "in flight": without this a second question
     // inside the 220 ms window starts a second, independent typewriter over the same slots.
     if (pendingTimer) {
@@ -502,26 +724,35 @@ export function createChat(mount, robotDef, hooks = {}) {
     addUser(q);
 
     const reqId = ++reqSeq;
+    if (opts && opts.opener) openerReqId = reqId;
+    if (source) track.questionAsked(robotDef.id, { source, length: q.length });
     const live = (!opts || opts.live !== false) && liveFailures < MAX_LIVE_FAILURES;
     if (live) answerLive(q, reqId);
     else answerScripted(q, null, reqId);
+    return reqId;
   }
 
   function askFirstQuestion() {
     // The opener fires on a 420 ms timer from app.js; a quick visitor can beat it by clicking a
     // suggestion. Their question wins: firing the opener anyway would abort their live call and
-    // strand their bubble.
+    // strand their bubble. `ask()` already announced the beat on their behalf.
     if (log.querySelector('.msg.user')) return;
+    // A def with no opener has no scripted beat to play. Announce, so the popup is not held on a
+    // choreography that is never going to run.
+    if (!robotDef.firstQuestion) {
+      announceBeat(false);
+      return;
+    }
     // The opener is scripted on purpose: it lands instantly, it is the answer that was written
     // and reviewed for this mission, and it does not spend a model call on every page load.
-    if (robotDef.firstQuestion) ask(robotDef.firstQuestion, { live: false });
+    ask(robotDef.firstQuestion, { live: false, opener: true });
   }
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const v = input.value;
     input.value = '';
-    ask(v);
+    ask(v, { source: 'composer' });
   });
 
   return {
@@ -529,9 +760,18 @@ export function createChat(mount, robotDef, hooks = {}) {
     ask,
     askFirstQuestion,
     matchEntry,
+    answerFor,
     finishStreaming,
     get streaming() {
       return streaming;
+    },
+    /** QA: which register this panel is answering in. */
+    get roleId() {
+      return getRoleId();
+    },
+    /** QA: whether the auto-played beat has already run for this robot this session. */
+    get ahaPlayed() {
+      return beatPlayed || ahaPlayed(robotDef.id);
     },
     focusInput() {
       input.focus();

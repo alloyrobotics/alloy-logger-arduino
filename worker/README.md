@@ -88,3 +88,28 @@ npx wrangler tail   # look for `chat usage ... cache_read=` lines
 The PERSONA string in `chat.js` plus the facts pack is the prompt-cache prefix; edits to either
 are fine but rewrite the cache for every canned robot (and for every generated demo, which each
 carry their own suffix).
+
+## Visitor role (2026-08-03)
+
+A chat POST may carry an optional `role`. It changes the ALTITUDE of the answer and never the
+facts: the grounding rules, the evidence citations and the em-dash scrub are identical for all of
+them.
+
+| posted `role` | what the model gets |
+| --- | --- |
+| absent, or `engineer` | nothing extra. Byte-for-byte the request this route sent before roles existed |
+| `operator` (or `support`, the id the picker posts) | a plain-language, what-to-do-next register |
+| `lead` | a consequence-and-pattern register, with an explicit ban on extrapolating a fleet rate |
+| anything else | treated as absent. An unrecognised role never costs a visitor their answer |
+
+`worker/roles.js` holds the vocabulary, and it is the only path from a posted string to a register
+key, so nothing a caller sends can reach the system prompt as text. `signup-lead.js` stores the
+same normalized value on the lead row.
+
+**The register does not break the prompt cache, and that is deliberate.** It is a SECOND system
+block placed after the cache breakpoint, so block 0 (`PERSONA + facts`) stays byte-identical and
+all three roles share ONE cache entry per robot. Interpolating the register into the persona is the
+obvious way to write it and would give every role its own entry, tripling cache writes for the same
+answers. `npx wrangler tail` shows `role=` beside `cache_read=` on each usage line, so a regression
+here is visible rather than merely expensive: if `cache_read` were 0 for `operator` and `lead` while
+staying high for `engineer`, the breakpoint has moved.

@@ -36,6 +36,47 @@ import { buildScene } from './scene.js';
 const T_HERO_MATCH_S = 60.44;
 const T_HERO_PREVIEW_S = 2.765;
 
+/**
+ * The OPENER in the support register, hoisted so the two ids that name that register share ONE
+ * string: role.js calls it `support`, worker/roles.js calls it `operator`, and picking one would
+ * silently serve the engineer answer under the other.
+ *
+ * Same table, same numbers, same instants as the engineer answer. Two things do NOT vary by role:
+ * the honesty line, because this is a synthesized-fault entry and which role a visitor picked
+ * cannot decide whether they are told what is real, and the {{ev:kicker-charge}} token, so the
+ * opener's auto-beat fires for every role. Each variant is within 20% of the engineer answer.
+ */
+const OPENER_SUPPORT = `Bot 8 arms and fires, but the bank is nowhere near full when it goes.
+
+| metric | value |
+| --- | --- |
+| kickerMax set point | 240 V, unchanged all window |
+| early window | 236 V at 6.0 s |
+| 7.6 s armed, then the kick at 53.977 s | 179 V, then 21 V |
+| 1.1 s after the kickoff came into play at 107.84 s | 41 V |
+
+Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick, so a late kick leaves with a weak charge behind it.
+
+Synthetic overlay on real match motion: the charge curve is modelled, and nothing the fleet actually did in this window follows from it.
+
+{{ev:kicker-charge}}`;
+
+/** The OPENER in the lead register. Same rules as OPENER_SUPPORT. */
+const OPENER_LEAD = `Bot 8's kicker bank is a charge-time budget, not a broken part.
+
+| metric | value |
+| --- | --- |
+| kickerMax set point | 240 V, unchanged all window |
+| early window | 236 V at 6.0 s |
+| 7.6 s armed, then the kick at 53.977 s | 179 V, then 21 V |
+| 1.1 s after the kickoff came into play at 107.84 s | 41 V |
+
+Each kick dumps the capacitor bank and the modelled recovery stretches kick over kick; by the last third it cannot reach a competitive charge.
+
+Synthetic overlay on real match motion: the charge curve is modelled, and nothing the fleet actually did in this window follows from it.
+
+{{ev:kicker-charge}}`;
+
 export default {
   id: 'ssl',
   name: 'SSL soccer fleet',
@@ -52,6 +93,62 @@ export default {
     label: 'kicker bank sag',
     provenance:
       "Match motion and referee timeline come from real SSL tracking data (a professional match, 2026 season, teams renamed). Three onboard faults are synthesized training overlays, not claims about any real team's hardware; the bot 13 tracking loss is the log's own data.",
+    // Mission VOLUME, authored because this def's channels come from a lazily loaded payload and
+    // the brief can reach a visitor with nothing built. 37,043 is the row-times-field total over
+    // the six channels, read out of buildData() under node (/bot8/kicker 2201 x 2, /bot8/power
+    // 2201 x 2, /bot7/radio 1101 x 3, /bot3/dribbler 2201 x 2, /bot13/vision 1467 x 2, /match
+    // 8800 x 2), and seed-independent: row counts come from the export's timestamps, not the PRNG.
+    datapoints: 37043,
+    channels: 6,
+    // THE OLD WAY, on this mission's own data: 40 consecutive lines of the six channels as text,
+    // time-ordered across channels the way a tail interleaves them. Every value was read out of
+    // buildData() under node at that timestamp and printed, not written by hand. Contiguous,
+    // 53.863 to 54.100 s, which is 0.237 s of a 110 s mission, and it contains the fault the brief
+    // is about: /bot8/kicker reads 179.0 at 53.950 and 15.00 at 54.000. That is the argument for
+    // the screen this feeds. `null` is an ABSENT reading, not a zero: /bot13/vision is masked
+    // absent from 29.70 s and the lines say so instead of filling in a number nobody measured.
+    oldwaySample: [
+      '53.863 /match ballSpeed=0.809 ballHeight=0.000',
+      '53.875 /match ballSpeed=0.805 ballHeight=0.000',
+      '53.887 /match ballSpeed=0.796 ballHeight=0.000',
+      '53.900 /match ballSpeed=0.796 ballHeight=0.000',
+      '53.900 /bot8/kicker kickerLevel=179.0 kickerMax=240.0',
+      '53.900 /bot8/power batteryV=23.10 batteryPercent=66.28',
+      '53.900 /bot7/radio rxRssi=-63.90 rxPacketsLost=1.00 rxCrcErrors=0.000',
+      '53.900 /bot3/dribbler dribCurrent=3.30 dribTempEstC=80.50',
+      '53.913 /match ballSpeed=0.785 ballHeight=0.000',
+      '53.925 /bot13/vision visibility=null detections=null',
+      '53.925 /match ballSpeed=0.780 ballHeight=0.000',
+      '53.938 /match ballSpeed=0.770 ballHeight=0.000',
+      '53.950 /match ballSpeed=0.770 ballHeight=0.000',
+      '53.950 /bot8/kicker kickerLevel=179.0 kickerMax=240.0',
+      '53.950 /bot8/power batteryV=23.10 batteryPercent=66.28',
+      '53.950 /bot3/dribbler dribCurrent=3.29 dribTempEstC=80.50',
+      '53.963 /match ballSpeed=0.742 ballHeight=0.000',
+      '53.975 /match ballSpeed=1.92 ballHeight=0.000',
+      '53.988 /match ballSpeed=2.17 ballHeight=0.000',
+      '54.000 /bot13/vision visibility=null detections=null',
+      '54.000 /match ballSpeed=2.19 ballHeight=0.000',
+      '54.000 /bot8/kicker kickerLevel=15.00 kickerMax=240.0',
+      '54.000 /bot8/power batteryV=23.00 batteryPercent=66.28',
+      '54.000 /bot7/radio rxRssi=-63.90 rxPacketsLost=1.00 rxCrcErrors=0.000',
+      '54.000 /bot3/dribbler dribCurrent=3.29 dribTempEstC=80.50',
+      '54.013 /match ballSpeed=2.20 ballHeight=0.000',
+      '54.025 /match ballSpeed=2.22 ballHeight=0.000',
+      '54.038 /match ballSpeed=2.21 ballHeight=0.000',
+      '54.050 /match ballSpeed=2.21 ballHeight=0.000',
+      '54.050 /bot8/kicker kickerLevel=17.00 kickerMax=240.0',
+      '54.050 /bot8/power batteryV=23.10 batteryPercent=66.28',
+      '54.050 /bot3/dribbler dribCurrent=3.29 dribTempEstC=80.50',
+      '54.063 /match ballSpeed=2.18 ballHeight=0.000',
+      '54.075 /bot13/vision visibility=null detections=null',
+      '54.075 /match ballSpeed=2.40 ballHeight=0.051',
+      '54.088 /match ballSpeed=2.41 ballHeight=0.079',
+      '54.100 /match ballSpeed=2.42 ballHeight=0.071',
+      '54.100 /bot8/kicker kickerLevel=19.00 kickerMax=240.0',
+      '54.100 /bot8/power batteryV=23.00 batteryPercent=66.28',
+      '54.100 /bot7/radio rxRssi=-63.80 rxPacketsLost=1.00 rxCrcErrors=0.000',
+    ],
   },
   accent: '#35c46a',
   duration,
@@ -132,6 +229,10 @@ Each kick dumps the capacitor bank and the modelled recovery stretches kick over
 Synthetic overlay on real match motion: the charge curve is modelled, and nothing the fleet actually did in this window follows from it.
 
 {{ev:kicker-charge}}`,
+      // Role registers for the OPENER. `answer` above IS the engineer register and stays the
+      // default, so `engineer` is never a key here. `support` and `operator` are the SAME const:
+      // see OPENER_SUPPORT.
+      answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
       evidence: ['kicker-charge'],
     },
     {

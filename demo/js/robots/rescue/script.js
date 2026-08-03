@@ -5,12 +5,52 @@
 import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
+/**
+ * The OPENER in the support register, hoisted so the two ids that name that register can share ONE
+ * string. `demo/js/core/role.js` calls it `support` and `worker/roles.js` calls it `operator`;
+ * until those two vocabularies are reconciled, a def that picked one of them would silently serve
+ * the engineer answer to every visitor who arrived under the other. The alias below is this const,
+ * never a second copy of the copy, so the two keys cannot drift apart.
+ *
+ * This is the mission `role.js` guides the support role INTO, so it is the answer that register is
+ * most likely to read first. Same table, same numbers, same instant as the engineer answer, same
+ * `{{ev:stall}}` token so the opener's auto-beat fires, length within 20%.
+ */
+const OPENER_SUPPORT = `The tracks never stopped turning. They stopped gripping at **48.4 s**.
+
+| metric | value |
+| --- | --- |
+| commanded / actual | 0.35 / 0.01 m/s |
+| slip | 0.98 |
+| left current | 22.7 A (8.7 nominal) |
+| slid back | 0.56 m, 15 deg off line |
+
+Full stick into a spinning track only heats the motor and digs in. On a 28 deg face like that one, ease off and drop the flippers before it lets go.
+
+{{ev:stall}}`;
+
+/** The OPENER in the lead register. Same rules as OPENER_SUPPORT. */
+const OPENER_LEAD = `Not a broken robot. A traction limit the drill did not plan for, hit at **48.4 s**.
+
+| metric | value |
+| --- | --- |
+| commanded / actual | 0.35 / 0.01 m/s |
+| slip | 0.98 |
+| left current | 22.7 A (8.7 nominal) |
+| slid back | 0.56 m, 15 deg off line |
+
+The left track spun in place at locked-rotor draw on the 28 deg face. Procedure and a current ceiling close this out: no hardware spend, and the same limit applies across the fleet.
+
+{{ev:stall}}`;
+
 export default {
   id: 'rescue',
   name: 'Tracked rescue robot',
   device: 'ESP32 · BNO055 · 2x track drive · 2x INA219',
   tagline: 'Stalls on the rubble, flippers save it',
-  context: { system: 'A tracked rescue platform: independent track drives with current sensing on both motors, IMU and flipper actuators, logged at 50 Hz.', mission: 'An 85-second traverse of a rubble pile: climb, cross, descend.', fault: 'The left track stops making ground on the steep face and the climb stalls. A second attempt crests it. Why the first try failed is in the drive channels.', faultT: 48.4, label: 'track stall' },
+  // Authored volume: 45,063 values across 4 channels, read off the built arrays under node
+  // (/drive 4251 x 6, /imu 4251 x 2, /flipper 4251 x 2, /sys 851 x 3), not derived from rate x duration.
+  context: { system: 'A tracked rescue platform: independent track drives with current sensing on both motors, IMU and flipper actuators, logged at 50 Hz.', mission: 'An 85-second traverse of a rubble pile: climb, cross, descend.', fault: 'The left track stops making ground on the steep face and the climb stalls. A second attempt crests it. Why the first try failed is in the drive channels.', faultT: 48.4, label: 'track stall', datapoints: 45063, channels: 4 },
   accent: '#f5a623',
   duration,
   rate,
@@ -40,6 +80,11 @@ export default {
 Command flat while speed collapses is traction, not electronics: the left track spun in place at locked-rotor draw on the 28 deg face.
 
 {{ev:stall}}`,
+      // Role registers for the OPENER. `answer` above IS the engineer register and stays the
+      // default, so `engineer` is never a key here. `support` and `operator` are the SAME const,
+      // see OPENER_SUPPORT: two live vocabularies name that register, and one shared string means
+      // the answer cannot depend on which of them the caller happens to use.
+      answerByRole: { support: OPENER_SUPPORT, operator: OPENER_SUPPORT, lead: OPENER_LEAD },
       evidence: ['stall'],
     },
     {

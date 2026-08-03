@@ -50,6 +50,65 @@ export default {
     label: 'stale target, blind burst',
     provenance:
       'A scripted, rules-faithful simulated round. No real match data; every stream is synthetic, generated against the published rules manual. Channel names and units follow the open-source robot software teams actually ran.',
+    // Round VOLUME, authored because this def's channels come from a lazily loaded payload and the
+    // brief can reach a visitor with nothing built. 47,716 is the row-times-field total over the
+    // six channels, read out of buildData() under node (/blue1/vision 4501 x 2, localization
+    // 1801 x 4, planner 1801 x 2, chassis 3601 x 3, gimbal_launcher 4501 x 3, referee 1801 x 2),
+    // seed-independent because the row counts come from the round's own cadences. Neither number
+    // is a claim about the ruleset, so neither belongs in claims.mjs: they describe the payload
+    // this page ships, the way `duration` does.
+    datapoints: 47716,
+    channels: 6,
+    // THE OLD WAY, on this round's own data: 40 consecutive lines of the six channels as text,
+    // time-ordered across channels the way a tail interleaves them. Every value was read out of
+    // buildData() under node at that timestamp and printed, not written by hand. Contiguous,
+    // 71.880 to 72.250 s, which is 0.370 s of a 180 s round, and it holds the moment the mission
+    // turns on: /blue1/vision goes confidence=0.587 trackAgeS=0.000 at 72.000 to confidence=0.041
+    // trackAgeS=0.040 at 72.040, while gimbal_launcher holds a frozen targetBearingDeg=13.54 and
+    // referee still reads remainHP=2000. Legible in the scroll, and nobody would find it there:
+    // 40 lines buys a third of a second and the 548 HP lands two and a half seconds later.
+    oldwaySample: [
+      '71.880 /blue1/vision confidence=0.591 trackAgeS=0.000',
+      '71.880 /blue1/gimbal_launcher gimbalYawDeg=8.41 targetBearingDeg=10.27 fireGate=0.000',
+      '71.900 /blue1/localization xM=5.31 yM=2.51 uwbResidualM=0.198 yawDeg=86.06',
+      '71.900 /blue1/planner goalDistM=0.503 pathLenM=0.508',
+      '71.900 /blue1/chassis cmdSpeedMps=0.005 measSpeedMps=0.000 chassisCurrentA=4.15',
+      '71.900 /blue1/referee remainHP=2000 shooterHeat0=0.000',
+      '71.920 /blue1/vision confidence=0.631 trackAgeS=0.000',
+      '71.920 /blue1/gimbal_launcher gimbalYawDeg=9.56 targetBearingDeg=11.39 fireGate=0.000',
+      '71.950 /blue1/chassis cmdSpeedMps=0.013 measSpeedMps=0.018 chassisCurrentA=4.11',
+      '71.960 /blue1/vision confidence=0.622 trackAgeS=0.000',
+      '71.960 /blue1/gimbal_launcher gimbalYawDeg=10.69 targetBearingDeg=12.48 fireGate=0.000',
+      '72.000 /blue1/vision confidence=0.587 trackAgeS=0.000',
+      '72.000 /blue1/localization xM=5.30 yM=2.48 uwbResidualM=0.178 yawDeg=93.66',
+      '72.000 /blue1/planner goalDistM=0.551 pathLenM=0.551',
+      '72.000 /blue1/chassis cmdSpeedMps=0.000 measSpeedMps=0.004 chassisCurrentA=3.84',
+      '72.000 /blue1/gimbal_launcher gimbalYawDeg=11.79 targetBearingDeg=13.54 fireGate=0.000',
+      '72.000 /blue1/referee remainHP=2000 shooterHeat0=0.000',
+      '72.040 /blue1/vision confidence=0.041 trackAgeS=0.040',
+      '72.040 /blue1/gimbal_launcher gimbalYawDeg=12.70 targetBearingDeg=13.54 fireGate=0.000',
+      '72.050 /blue1/chassis cmdSpeedMps=0.006 measSpeedMps=0.000 chassisCurrentA=3.66',
+      '72.080 /blue1/vision confidence=0.037 trackAgeS=0.080',
+      '72.080 /blue1/gimbal_launcher gimbalYawDeg=13.13 targetBearingDeg=13.54 fireGate=0.000',
+      '72.100 /blue1/localization xM=5.31 yM=2.47 uwbResidualM=0.158 yawDeg=99.92',
+      '72.100 /blue1/planner goalDistM=0.551 pathLenM=0.551',
+      '72.100 /blue1/chassis cmdSpeedMps=0.000 measSpeedMps=0.000 chassisCurrentA=3.57',
+      '72.100 /blue1/referee remainHP=2000 shooterHeat0=0.000',
+      '72.120 /blue1/vision confidence=0.040 trackAgeS=0.120',
+      '72.120 /blue1/gimbal_launcher gimbalYawDeg=13.34 targetBearingDeg=13.54 fireGate=0.000',
+      '72.150 /blue1/chassis cmdSpeedMps=0.019 measSpeedMps=0.015 chassisCurrentA=3.71',
+      '72.160 /blue1/vision confidence=0.032 trackAgeS=0.160',
+      '72.160 /blue1/gimbal_launcher gimbalYawDeg=13.60 targetBearingDeg=13.54 fireGate=0.000',
+      '72.200 /blue1/vision confidence=0.031 trackAgeS=0.200',
+      '72.200 /blue1/localization xM=5.32 yM=2.50 uwbResidualM=0.157 yawDeg=105.8',
+      '72.200 /blue1/planner goalDistM=0.551 pathLenM=0.551',
+      '72.200 /blue1/chassis cmdSpeedMps=0.004 measSpeedMps=0.018 chassisCurrentA=3.71',
+      '72.200 /blue1/gimbal_launcher gimbalYawDeg=16.00 targetBearingDeg=13.54 fireGate=0.000',
+      '72.200 /blue1/referee remainHP=2000 shooterHeat0=0.000',
+      '72.240 /blue1/vision confidence=0.048 trackAgeS=0.240',
+      '72.240 /blue1/gimbal_launcher gimbalYawDeg=18.40 targetBearingDeg=13.54 fireGate=0.000',
+      '72.250 /blue1/chassis cmdSpeedMps=0.006 measSpeedMps=0.001 chassisCurrentA=3.72',
+    ],
   },
   accent: '#e0564f',
   duration,
