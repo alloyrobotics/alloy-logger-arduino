@@ -361,14 +361,17 @@ export async function handleChat(request, env) {
     return json({ error: 'The analyst is busy right now. Try again shortly.' }, 429);
   }
 
-  // Best-effort pre-parse size gate (chunked bodies carry no content-length; the per-turn and
-  // whole-transcript caps in parseBody are the real guard).
+  // Enforce the body size limit on actual bytes before JSON parsing; reading as text first
+  // prevents CPU exhaustion from deeply nested structures under the byte limit.
+  // content-length is an early-exit hint only (chunked bodies omit it).
   const claimedBytes = Number(request.headers.get('content-length') || 0);
   if (claimedBytes > MAX_BODY_BYTES) return json({ error: 'Bad request.' }, 413);
 
   let parsed;
   try {
-    const body = await request.json();
+    const rawText = await request.text();
+    if (rawText.length > MAX_BODY_BYTES) return json({ error: 'Bad request.' }, 413);
+    const body = JSON.parse(rawText);
     parsed = parseBody(body, await resolveRobot(env, String(body?.robot || '')));
   } catch (err) {
     return json({ error: typeof err === 'string' ? err : 'Bad request.' }, 400);
