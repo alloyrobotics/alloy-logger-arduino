@@ -21,7 +21,9 @@
 // timeout dropping the track at 74.55 s.
 
 /**
- * The OPENER in the MARKETING register, which is the role this mission is guided into.
+ * The OPENER in the MARKETING register, the role round 2 guided into this mission. Since the UX
+ * wall port, marketing routes to donna and battle is off the public picker; this module still
+ * serves the mission's direct routes unchanged.
  *
  * Round 2 routed marketing here and authored a marketing narration for every beat, but left the
  * opener with no register at all: the beat said "no field names, tell the story" and the answer

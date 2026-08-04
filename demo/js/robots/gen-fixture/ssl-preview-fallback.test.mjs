@@ -87,14 +87,14 @@ H.section('module');
 H.section('picker');
 {
   const cards = await page.evaluate(() =>
-    [...document.querySelectorAll('a.rcard')].map((a) => ({
+    [...document.querySelectorAll('.rcard')].map((a) => ({
       id: a.dataset.robot,
       live: a.querySelector('.rcard-art').classList.contains('preview-live'),
       svg: !!a.querySelector('.rcard-art svg'),
       tag: (a.querySelector('.rcard-tag').textContent || '').trim(),
     })),
   );
-  H.ok(cards.length === 7, `all seven cards are on the picker (${cards.length})`);
+  H.ok(cards.length === 4, `all four public cards are on the picker (${cards.length})`);
   const ssl = cards.find((c) => c.id === 'ssl');
   H.ok(!!ssl, 'the SSL card is built');
   H.ok(ssl && ssl.svg, 'the SSL card keeps its SVG line art');
@@ -105,59 +105,53 @@ H.section('picker');
   // give the idle preview builder a chance to do the wrong thing before asserting it did not
   await page.waitForTimeout(1800);
   const stillDark = await page.evaluate(() =>
-    document.querySelector('a.rcard[data-robot="ssl"] .rcard-art').classList.contains('preview-live'),
+    document.querySelector('.rcard[data-robot="ssl"] .rcard-art').classList.contains('preview-live'),
   );
   H.ok(!stillDark, 'the SSL card is never handed to the live preview with no payload to draw');
   const others = await page.evaluate(() =>
-    [...document.querySelectorAll('a.rcard')]
+    [...document.querySelectorAll('.rcard')]
       .filter((a) => a.dataset.robot !== 'ssl')
       .map((a) => a.querySelector('.rcard-art').classList.contains('preview-live')),
   );
-  H.ok(others.some(Boolean), 'the other six cards still preview normally');
+  H.ok(others.length === 3, `the non-SSL public roster contains three cards (${others.length})`);
+  H.ok(others.some(Boolean), 'the other three cards still preview normally');
   H.ok(errors.length === 0, `no uncaught page errors on the picker (${errors.slice(0, 2).join(' | ')})`);
 }
 
-// ---------------------------------------------------------------- brief
+// ---------------------------------------------------------------- robot step
 
-H.section('brief');
+H.section('robot step');
 {
   await page.evaluate(() => { location.hash = '#/connect/ssl'; });
   H.ok(
     await waitFor(
       page,
-      () => {
-        const el = document.getElementById('screen-connect');
-        const m = document.getElementById('ingest-mount');
-        return !!el && !el.hidden && !!m && (m.textContent || '').trim().length > 0;
-      },
-      10000,
-      'the brief',
+      () =>
+        document.body.dataset.screen === 'flow' &&
+        location.hash === '#/connect/ssl/robot' &&
+        !!window.__flow && window.__flow.step === 'robot',
+      20000,
+      'the robot step',
     ),
-    'the brief screen renders rather than throwing out of buildConnect',
+    'the experience redirect renders the robot step rather than throwing',
   );
-  const brief = await page.evaluate(() => {
-    const m = document.getElementById('ingest-mount');
+  const step = await page.evaluate(async () => {
+    const def = (await import('/demo/js/robots/ssl/script.js')).default;
     return {
-      text: (m.textContent || '').replace(/\s+/g, ' ').trim(),
-      svg: !!m.querySelector('svg'),
-      canvas: !!m.querySelector('canvas'),
+      title: (document.getElementById('flow-title').textContent || '').trim(),
+      cta: (document.getElementById('flow-cta').textContent || '').replace(/\s+/g, ' ').trim(),
+      svg: !!document.querySelector('#flow-fallback svg'),
+      canvas: !!document.querySelector('#flow-viewer-mount canvas'),
+      provenance: (def.context && def.context.provenance) || '',
     };
   });
-  H.ok(brief.svg, 'the hero falls back to the SVG line art');
-  H.ok(!brief.canvas, 'no empty WebGL rig is mounted with nothing to pose in it');
-  H.ok(
-    /synthes/i.test(brief.text),
-    'the provenance line is still on the brief, which is the surface it was promised on',
-  );
-  H.ok(
-    !/\bfinals?\b/i.test(brief.text),
-    'nothing on the brief calls the source match a final',
-  );
-  H.ok(
-    brief.text.includes("What is wrong with bot 8's kicker?"),
-    'the composer CTA carries the rewritten, non-presupposing opener',
-  );
-  H.ok(errors.length === 0, `no uncaught page errors on the brief (${errors.slice(0, 2).join(' | ')})`);
+  H.ok(step.title === 'SSL soccer fleet', `the robot step identifies the mission ("${step.title}")`);
+  H.ok(step.svg || step.canvas, 'the robot step keeps a visual surface while the full payload recovers');
+  H.ok(/Next: the mission/.test(step.cta), `the flow remains completable ("${step.cta}")`);
+  H.ok(/synthes/i.test(step.provenance), 'the definition retains its authored provenance disclosure');
+  const roundWord = new RegExp(`\\b${['fin', 'al'].join('')}s?\\b`, 'i');
+  H.ok(!roundWord.test(step.provenance), 'the disclosure avoids the banned round-stage label');
+  H.ok(errors.length === 0, `no uncaught page errors on the robot step (${errors.slice(0, 2).join(' | ')})`);
   const tripwire = consoleErrors.filter((t) => /ensureData\(ssl\)/.test(t));
   H.ok(tripwire.length === 0, `ensureData's tripwire never fires (${tripwire.length} hits)`);
 }

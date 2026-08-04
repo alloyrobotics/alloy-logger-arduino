@@ -1,11 +1,11 @@
 // app.js - boot, hash router, robot registry wiring, screen construction and the onEvidence
 // orchestration that is the whole point of this demo.
 //
-// Routes: #/start (role fork) · #/missions (the seven-card picker) · #/connect/:id · #/demo/:id
+// Routes: #/start · #/missions · #/connect/:id[/robot|mission|failure|choose] · #/demo/:id
 //
 // `#/` is not a screen. It is the DOOR, and where it opens depends on whether this visitor has
 // already answered the one question the demo asks: a first-timer gets the role fork, someone who
-// has forked is sent straight into the mission their role is guided to. The seven-card picker is
+// has forked is sent straight into the mission their role is guided to. The four-card picker is
 // still first-class, it is just no longer the landing: it lives at #/missions and every screen
 // after the fork carries a link to it.
 //
@@ -14,7 +14,7 @@
 // skipped it dropped people into a 3D scene with no idea what they were looking at. A second visit
 // (sessionStorage, written by the brief itself) goes straight to the demo.
 
-import { ROBOTS, getRobot, registerRobot, ROBOT_ICONS } from './robots/index.js';
+import { PICKER_ROBOTS, getRobot, registerRobot, ROBOT_ICONS } from './robots/index.js';
 import { GEN_ID_RE, loadGeneratedRobot } from './robots/generated.js';
 import { mulberry32, seedFor } from './core/prng.js';
 import { createTimeline } from './core/timeline.js';
@@ -23,11 +23,13 @@ import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
-import { createContext, GENERIC_ICON, briefSeen } from './core/context.js';
+import { BRIEF_SEEN_PREFIX, createContext, GENERIC_ICON, briefSeen } from './core/context.js';
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
 import { createGuide, hasChoreo } from './core/guide.js';
 import { createStart } from './core/start.js';
-import { getRoleId, hasRole, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { consumeFlowHandoff, createFlow, hasFlowExperience } from './core/flow.js';
+import { webglAvailable } from './core/stage3d.js';
+import { getRoleId, hasRole, hasExperience, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
@@ -38,6 +40,7 @@ const screens = {
   start: document.getElementById('screen-start'),
   picker: document.getElementById('screen-picker'),
   connect: document.getElementById('screen-connect'),
+  flow: document.getElementById('screen-flow'),
   demo: document.getElementById('screen-demo'),
 };
 
@@ -93,18 +96,24 @@ function missionForRole(role) {
   return getRobot(id) ? id : DEFAULT_MISSION;
 }
 
+/** Experience capability, including the temporary arm6 sequencing fallback in flow.js. */
+function flowEnabled(def) {
+  return hasExperience(def) || hasFlowExperience(def);
+}
+
+function connectTarget(def) {
+  return flowEnabled(def) ? `#/connect/${def.id}/robot` : `#/connect/${def.id}`;
+}
+
 function buildStart() {
   const mount = screens.start.querySelector('#start-mount');
   if (startApi) startApi.dispose();
   mount.innerHTML = '';
   startApi = createStart(mount, {
-    // The frozen copy contract. start.js ships its own defaults; the sub-line is the one the spec
-    // locks, so it is stated here rather than left to drift inside the module.
-    copy: { sub: 'Pick your seat. The analyst speaks your language.' },
-    // start.js persists the role and fires role_selected BEFORE this runs, so by the time the
-    // brief builds, every event that follows is already segmented.
+    // start.js persists the role and fires role_selected before this runs.
     onPick: (role) => {
-      location.hash = `#/connect/${missionForRole(role)}`;
+      const def = getRobot(missionForRole(role));
+      location.hash = def ? connectTarget(def) : `#/connect/${DEFAULT_MISSION}/robot`;
     },
     onExplore: () => {
       location.hash = '#/missions';
@@ -158,23 +167,47 @@ function problemLine(def) {
   return bits.join(' ');
 }
 
+const PICKER_TITLES = Object.freeze({
+  arm6: '6-axis pick and place',
+  drone: 'Survey quadcopter',
+  ssl: 'SSL soccer fleet',
+  donna: 'Donna, Jack & Rory',
+});
+const PICKER_TAGLINES = Object.freeze({
+  arm6: 'A repeatable pick-and-place transfer loop',
+  drone: 'An autonomous survey route replay',
+});
+let pickerSelection = null;
+
 function buildPicker() {
   if (pickerBuilt) return;
   pickerBuilt = true;
   pickerEntries = [];
   const grid = screens.picker.querySelector('#robot-grid');
+  const open = screens.picker.querySelector('#picker-open');
   grid.innerHTML = '';
 
-  // NOTE: the cards are built from the DEFINITION only. Generating every robot's telemetry here
-  // (a full physics pass each) blocked the picker's first paint for output nothing on this screen
-  // reads; buildConnect and buildDemo already call ensureData for the one robot picked.
-  ROBOTS.forEach((def) => {
-    const a = document.createElement('a');
-    a.className = 'rcard';
-    a.href = `#/connect/${def.id}`;
-    a.style.setProperty('--acc', def.accent || '#2f78ff');
-    a.setAttribute('data-robot', def.id);
-    a.innerHTML = `
+  const roleMission = missionForRole(getRoleId());
+  pickerSelection = PICKER_ROBOTS.some((def) => def.id === roleMission) ? roleMission : PICKER_ROBOTS[0].id;
+
+  function renderSelection() {
+    grid.querySelectorAll('.rcard').forEach((card) => {
+      const selected = card.dataset.robot === pickerSelection;
+      card.classList.toggle('is-selected', selected);
+      card.setAttribute('aria-checked', String(selected));
+    });
+    const def = getRobot(pickerSelection);
+    open.querySelector('span').textContent = `Open ${PICKER_TITLES[pickerSelection] || (def && def.name) || 'mission'}`;
+  }
+
+  PICKER_ROBOTS.forEach((def) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'rcard';
+    button.style.setProperty('--acc', def.accent || '#2f78ff');
+    button.setAttribute('data-robot', def.id);
+    button.setAttribute('role', 'radio');
+    button.innerHTML = `
       <div class="rcard-art">
         <svg viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -184,20 +217,37 @@ function buildPicker() {
       <div class="rcard-body">
         <h3 class="rcard-name"></h3>
         <p class="rcard-tag"></p>
-        <p class="rcard-prob"></p>
-      </div>
-      <span class="rcard-go mono">replay mission &rsaquo;</span>`;
-    a.querySelector('.rcard-name').textContent = def.name;
-    a.querySelector('.rcard-tag').textContent = def.tagline;
-    // the card carries the PROBLEM, not just a label: a tagline says what the robot is, and this
-    // says what happened to it, which is the only reason to open the mission
-    const prob = problemLine(def);
-    const probEl = a.querySelector('.rcard-prob');
-    if (prob) probEl.textContent = prob;
-    else probEl.remove();
-    grid.appendChild(a);
-    pickerEntries.push({ el: a.querySelector('.rcard-art'), def });
+      </div>`;
+    button.querySelector('.rcard-name').textContent = PICKER_TITLES[def.id] || def.name;
+    button.querySelector('.rcard-tag').textContent = PICKER_TAGLINES[def.id] || def.tagline;
+    button.addEventListener('click', () => {
+      pickerSelection = def.id;
+      renderSelection();
+    });
+    grid.appendChild(button);
+    pickerEntries.push({ el: button.querySelector('.rcard-art'), def });
   });
+
+  open.addEventListener('click', () => {
+    const def = getRobot(pickerSelection);
+    const card = grid.querySelector(`.rcard[data-robot="${pickerSelection}"]`);
+    const art = card && card.querySelector('.rcard-art');
+    if (!def || !art) return;
+    const r = art.getBoundingClientRect();
+    const svg = art.querySelector('svg');
+    const g = svg ? svg.getBoundingClientRect() : null;
+    heroHandoff = {
+      id: def.id,
+      at: performance.now(),
+      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+      ghost: g && g.height ? { w: g.width, h: g.height } : null,
+      live: art.classList.contains('preview-live'),
+      phase: (pickerPreviews && pickerPreviews.phaseFor ? pickerPreviews.phaseFor(def.id) : null) || null,
+    };
+    location.hash = connectTarget(def);
+  });
+
+  renderSelection();
 }
 
 /**
@@ -216,6 +266,90 @@ function teardownPickerPreviews() {
   pickerPreviews.dispose();
   pickerPreviews = null;
   delete window.__picker;
+}
+
+// ---------------------------------------------------------------------------- flow
+let flowApi = null;
+
+function markFlowSeen(id) {
+  if (!id) return;
+  try {
+    window.sessionStorage.setItem(BRIEF_SEEN_PREFIX + id, '1');
+  } catch (_) {
+    // Storage can be unavailable. Repeating the flow on the next doorway visit is the safe fallback.
+  }
+}
+
+function teardownFlow() {
+  if (!flowApi) return;
+  flowApi.dispose();
+  flowApi = null;
+  delete window.__flow;
+}
+
+function buildFlow(def, step) {
+  // The robot step can mount from previewData while a lazy replay is still loading. Every later
+  // step reaches this function only after the route gate has loaded the payload, so its chart data
+  // can be built safely before the shared flow instance is reused.
+  if (step !== 'robot' || typeof def.loadSceneData !== 'function') ensureData(def);
+  if (!flowApi || flowApi.def.id !== def.id) {
+    teardownFlow();
+    const host = screens.flow;
+    host.style.setProperty('--acc', def.accent || '#2f78ff');
+    host.querySelector('#flow-name').textContent = PICKER_TITLES[def.id] || def.name;
+    flowApi = createFlow(
+      def,
+      getRoleId(),
+      {
+        root: host.querySelector('#flow-mount'),
+        viewer: host.querySelector('#flow-viewer-mount'),
+        chart: host.querySelector('#flow-chart-mount'),
+        fallback: host.querySelector('#flow-fallback'),
+      },
+      {
+        createTimeline,
+        createViewer,
+        createChart,
+        navigate: (hash) => {
+          location.hash = hash;
+        },
+        icon: ROBOT_ICONS[def.id] || '',
+      },
+    );
+    window.__flow = flowApi;
+  }
+  screens.flow.querySelector('#flow-progress').textContent = `${['robot', 'mission', 'failure', 'choose'].indexOf(step) + 1} / 4`;
+  flowApi.showStep(step);
+}
+
+function primeRobotFlow(def, next) {
+  if (typeof def.loadSceneData !== 'function') return;
+  if ((def.isSceneDataLoaded && def.isSceneDataLoaded()) && def.experience) return;
+  const gen = navGen;
+  scenePending.add(def.id);
+  Promise.resolve(def.loadSceneData()).then(
+    () => {
+      scenePending.delete(def.id);
+      sceneSettled.add(def.id);
+      if (gen !== navGen) return;
+      const current = parseHash();
+      if (current.name === 'flow' && current.id === def.id && current.step === 'robot' && flowApi) {
+        try {
+          ensureData(def);
+          flowApi.refreshPayload();
+        } catch (err) {
+          renderSceneUnavailable(def, err);
+        }
+      }
+    },
+    (err) => {
+      scenePending.delete(def.id);
+      sceneSettled.add(def.id);
+      if (gen !== navGen) return;
+      const current = parseHash();
+      if (current.name === 'flow' && current.id === def.id && current.step === 'robot') renderSceneUnavailable(def, err);
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------- connect
@@ -255,29 +389,6 @@ function buildConnect(def) {
 // baked into the one the user last actually saw.
 let heroHandoff = null;
 
-// capture phase, so the record exists before the anchor's default navigation kicks off the route
-screens.picker.addEventListener(
-  'click',
-  (e) => {
-    const card = e.target && e.target.closest ? e.target.closest('a.rcard') : null;
-    if (!card) return;
-    const id = card.dataset.robot || (card.getAttribute('href') || '').split('/').filter(Boolean).pop();
-    const art = card.querySelector('.rcard-art');
-    if (!id || !art) return;
-    const r = art.getBoundingClientRect();
-    const svg = art.querySelector('svg');
-    const g = svg ? svg.getBoundingClientRect() : null;
-    heroHandoff = {
-      id,
-      at: performance.now(),
-      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
-      ghost: g && g.height ? { w: g.width, h: g.height } : null,
-      live: art.classList.contains('preview-live'),
-      phase: (pickerPreviews && pickerPreviews.phaseFor ? pickerPreviews.phaseFor(id) : null) || null,
-    };
-  },
-  true
-);
 
 /**
  * Consume the hand-off, once. A stale record (a back-button return, a hash typed by hand, a click
@@ -310,6 +421,7 @@ function teardownDemo() {
     signupTriggers = null;
     delete window.__signup;
   }
+  screens.demo.classList.remove('show-why-pending');
   if (!demo) return;
   // #chart-toggle is a persistent node: its handler closes over this demo's chart/viewer/timeline,
   // so leaving it attached pins the whole torn-down three.js scene graph in memory.
@@ -323,7 +435,49 @@ function teardownDemo() {
   demo.viewer.dispose();
   demo.timeline.dispose();
   demo = null;
+  delete screens.demo.dataset.mode;
+  screens.demo.classList.remove('show-why-pending');
   delete window.__demo;
+}
+
+/**
+ * The demo viewer's no-WebGL stand-in. Chat and the chart are 2D and still deliver the whole
+ * diagnosis; this fills the viewer panel with the mission's own line art plus one quiet line, and
+ * implements the members buildDemo actually calls (setHighlight, flashMarker, showBanner,
+ * hideBanner, dispose) as no-ops so evidence orchestration needs no branching. An evidence loop
+ * stays escapable without the banner: a chart click outside the loop window seeks past it, and
+ * timeline.seek clears the loop on the way through, so the visitor is never trapped.
+ */
+function createViewerFallback(mount, def) {
+  const el = document.createElement('div');
+  el.className = 'viewer v-fallback';
+  el.innerHTML = `
+    <div class="v-stage">
+      <svg viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        ${ROBOT_ICONS[def.id] || GENERIC_ICON}
+      </svg>
+      <p class="v-fallback-note mono">3D replay needs WebGL. The charts and the analyst still cover the whole mission.</p>
+    </div>`;
+  mount.appendChild(el);
+  const noop = () => {};
+  return {
+    el,
+    scene: null,
+    camera: null,
+    renderer: null,
+    controls: null,
+    sceneApi: null,
+    highlight: null,
+    setHighlight: noop,
+    resetView: noop,
+    flashMarker: noop,
+    showBanner: noop,
+    hideBanner: noop,
+    dispose() {
+      el.remove();
+    },
+  };
 }
 
 /**
@@ -385,12 +539,19 @@ function buildDemo(def) {
  * the walk's own first answer.
  *
  * @param {object} chat the chat instance this timer is allowed to drive
+ * @param {string|null} [question] role-specific opener handed off by the completed flow
+ * @param {string|null} [fallbackQuestion] definition opener when the role copy does not resolve
  */
-function openerBeat(chat) {
+function openerBeat(chat, question = null, fallbackQuestion = null) {
   window.setTimeout(() => {
     // identity, not id: leaving and re-entering the same robot inside 420 ms would otherwise let
     // the stale timer drive the disposed chat instance
-    if (demo && demo.chat === chat) chat.askFirstQuestion();
+    if (!demo || demo.chat !== chat) return;
+    if (question) {
+      const resolved = chat.matchEntry(question) ? question : fallbackQuestion;
+      if (resolved) chat.ask(resolved, { live: false, opener: true });
+      else chat.askFirstQuestion();
+    } else chat.askFirstQuestion();
   }, 420);
 }
 
@@ -453,9 +614,13 @@ function buildDemoInner(def, built) {
    * is still `hidden` at this point on a cold load and the whole build is one synchronous task, so
    * there is no frame in which the wrong layout exists either way.
    */
-  let guided = hasChoreo(def);
+  const modeEnabled = flowEnabled(def);
+  const flowHandoff = modeEnabled ? consumeFlowHandoff(def.id) : null;
+  let guided = !modeEnabled && isGuidedMission(def.id) && hasChoreo(def);
   if (guided) host.dataset.guide = 'chat';
   else delete host.dataset.guide;
+  if (modeEnabled) host.dataset.mode = 'chat';
+  else delete host.dataset.mode;
 
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
@@ -468,11 +633,33 @@ function buildDemoInner(def, built) {
   chatMount.innerHTML = '';
 
   const timeline = own(createTimeline(def.duration));
-  const viewer = own(createViewer(viewerMount, def, timeline));
+  // Without WebGL the demo still answers: chat and the chart carry the mission, and the viewer
+  // panel holds the mission's line art instead of a renderer that cannot be constructed. The
+  // fallback implements the viewer surface as no-ops so evidence orchestration stays one code path.
+  const viewer = own(
+    webglAvailable() ? createViewer(viewerMount, def, timeline) : createViewerFallback(viewerMount, def)
+  );
   const chart = own(createChart(chartMount, def, timeline));
 
   let evidenceActive = null;
   let evidenceFull = false; // the active finding spans the whole mission, so it is not looping
+  let mode = modeEnabled ? 'chat' : 'legacy';
+  let firstAnswerSettled = false;
+  let proofFinding = null;
+  let followupFinding = null;
+  let showWhyAnswer = 0;
+
+  function setMode(nextMode) {
+    if (!modeEnabled) return;
+    host.classList.remove('show-why-pending');
+    mode = nextMode;
+    host.dataset.mode = nextMode;
+    if (demo) demo.mode = nextMode;
+    if (nextMode === 'proof') {
+      chart.redraw();
+      if (window.matchMedia('(max-width: 899px)').matches) setChartOpen(true);
+    }
+  }
 
   /** Clear loop + highlight + zoom, back to the full mission. */
   function clearEvidence() {
@@ -532,19 +719,59 @@ function buildDemoInner(def, built) {
     // 4
     viewer.showBanner(finding, clearEvidence);
 
+    const source = opts && opts.source;
     if (auto) track.evidenceAutoPlayed(def.id, finding.id);
-    else track.evidenceUserClicked(def.id, finding.id);
+    else if (source !== 'show-why') track.evidenceUserClicked(def.id, finding.id);
+
+    if (modeEnabled) {
+      proofFinding = finding;
+      if (firstAnswerSettled || source === 'show-why') setMode('proof');
+    }
   }
 
-  const chat = own(createChat(chatMount, def, {
+  let chat = null;
+  chat = own(createChat(chatMount, def, {
     onEvidence,
-    onAsk: () => {
-      clearEvidence();
+    onAsk: (question) => {
+      if (!modeEnabled) {
+        clearEvidence();
+        return;
+      }
+      if (firstAnswerSettled) {
+        const entry = chat && chat.matchEntry ? chat.matchEntry(question) : null;
+        const findingId = entry && entry.evidence && entry.evidence[0];
+        followupFinding = (def.findings || []).find((finding) => finding.id === findingId) || proofFinding;
+        if (mode === 'proof') setMode('followup');
+      }
     },
-    // The answer is fully typed out, so a visitor who asked a question is free again: this is the
-    // only chat signal the signup popup's quiet period listens to.
-    onSettled: () => {
+    onSettled: (info) => {
       if (signupTriggers) signupTriggers.chatSettled();
+      if (!modeEnabled) return;
+      if (!firstAnswerSettled) {
+        firstAnswerSettled = true;
+        if (flowHandoff && flowHandoff.followUp) {
+          const input = chat.el.querySelector('.chat-input');
+          if (input) input.placeholder = flowHandoff.followUp;
+        }
+        chat.announceBeat();
+        if (proofFinding) setMode('proof');
+        return;
+      }
+      if (mode === 'followup' && info && info.id !== showWhyAnswer) {
+        showWhyAnswer = info.id;
+        const finding = followupFinding || proofFinding || (def.findings || [])[0] || null;
+        chat.addAction('Show why', () => {
+          host.classList.remove('show-why-pending');
+          track.showWhyClicked(def.id, {
+            role: getRoleId(),
+            step: 'followup',
+            finding: finding ? finding.id : null,
+          });
+          if (finding) onEvidence(finding, { source: 'show-why' });
+          else setMode('proof');
+        });
+        host.classList.add('show-why-pending');
+      }
     },
   }));
 
@@ -567,7 +794,7 @@ function buildDemoInner(def, built) {
   chartToggle.onclick = () => setChartOpen(!chartPanel.classList.contains('open'));
   setChartOpen(false);
 
-  demo = { def, timeline, viewer, chart, chat, guide: null, onEvidence, clearEvidence, setChartOpen };
+  demo = { def, timeline, viewer, chart, chat, guide: null, mode, setMode, onEvidence, clearEvidence, setChartOpen };
   // exposed for QA/integration assertions (page state, not pixels)
   window.__demo = demo;
 
@@ -582,7 +809,7 @@ function buildDemoInner(def, built) {
       isStreaming: () => chat.streaming,
       // WHO announces the handover, and therefore how long the fallback grace runs. On a guided
       // mission the beat is the end of a walk the visitor paces, not a 420 ms timer.
-      guided,
+      guided: modeEnabled || guided,
     });
     window.__signup = signupTriggers;
   }
@@ -628,13 +855,13 @@ function buildDemoInner(def, built) {
     // the decluttered brief. It gets its context back with the opener; everything else - rescue,
     // donna, arm6, drone, every generated demo - is untouched round 1, down to the timer.
     if (isGuidedMission(def.id)) fallbackOpener(chat, def);
-    else openerBeat(chat);
+    else openerBeat(chat, flowHandoff && flowHandoff.firstQuestion, def.firstQuestion || null);
   }
 
   // `guided` is the flow that STARTED. A walk that throws asynchronously mid-beat (guide.js catches
   // it, settles, and calls onFallback) has already been counted here; those sessions are the ones
   // reporting `guided:true` with no `beat_shown` at all, which is how the funnel tells them apart.
-  capture('demo_opened', { robot: def.id, guided });
+  capture('demo_opened', { robot: def.id, guided, mode: modeEnabled ? 'chat' : 'legacy' });
 }
 
 // ------------------------------------------------------------------- generated robots
@@ -733,6 +960,7 @@ function resolveGenerated(next) {
 
   // leave whatever screen we were on, same teardown order route() uses
   if (currentRoute.name === 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'flow') teardownFlow();
   if (currentRoute.name === 'demo') teardownDemo();
   if (ingestApi) {
     ingestApi.dispose();
@@ -821,6 +1049,29 @@ const scenePending = new Set();
 const sceneSettled = new Set();
 
 /**
+ * A lazy definition may advertise the four-step flow before its small experience side module lands.
+ * If the composed load settles without attaching that block, the static flag is no longer truthful:
+ * clear it and replace the step/demo hash with the tested legacy brief. The generation and current
+ * hash checks keep an old continuation from pulling a newer navigation back to this mission.
+ */
+function fallbackMissingLazyExperience(def, generation = navGen) {
+  if (
+    generation !== navGen ||
+    parseHash().id !== def.id ||
+    typeof def.loadSceneData !== 'function' ||
+    !def.hasExperience ||
+    def.experience ||
+    !sceneSettled.has(def.id)
+  ) {
+    return false;
+  }
+  def.hasExperience = false;
+  teardownFlow();
+  location.replace(location.pathname + location.search + `#/connect/${def.id}`);
+  return true;
+}
+
+/**
  * The ONE place a scene-backed mission's failure is rendered, whether the payload rejected, the
  * route it unblocked threw, or a later entry into the same mission threw again. Nothing on this
  * path may be left half-built: `currentRoute` goes back to the 'load' sentinel so the next pass
@@ -841,6 +1092,7 @@ function renderSceneUnavailable(def, err) {
   // down must not stop the card from rendering: the card is what the visitor sees.
   try {
     teardownDemo();
+    teardownFlow();
   } catch (teardownErr) {
     console.warn(`[scene] ${def.id}: teardown after failure: ${teardownErr && teardownErr.message}`);
     demo = null;
@@ -896,6 +1148,7 @@ function resolveSceneData(next, def) {
 
   // leave whatever screen we were on, same teardown order route() uses
   if (currentRoute.name === 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'flow') teardownFlow();
   if (currentRoute.name === 'demo') teardownDemo();
   if (ingestApi) {
     ingestApi.dispose();
@@ -937,6 +1190,7 @@ function resolveSceneData(next, def) {
       // route gate reads this to decide whether waiting again could ever produce different beats.
       sceneSettled.add(next.id);
       if (stale()) return;
+      if (fallbackMissingLazyExperience(def, gen)) return;
       // Re-enter for whatever the hash asks for NOW, which is this robot on this screen or on its
       // brief. route() rebuilds from the hash, so either lands fully rendered.
       //
@@ -994,6 +1248,9 @@ let routedOnce = false;
 function parseHash() {
   const h = (location.hash || '#/').replace(/^#/, '');
   const parts = h.split('/').filter(Boolean);
+  if (parts[0] === 'connect' && parts[1] && ['robot', 'mission', 'failure', 'choose'].includes(parts[2])) {
+    return { name: 'flow', id: parts[1], step: parts[2] };
+  }
   if (parts[0] === 'connect' && parts[1]) return { name: 'connect', id: parts[1] };
   if (parts[0] === 'demo' && parts[1]) return { name: 'demo', id: parts[1] };
   if (parts[0] === 'missions') return { name: 'picker', id: null };
@@ -1026,10 +1283,14 @@ function route() {
       // swaps the door for the mission in place, and the entry BEFORE the demo stays reachable.
       // The path and query are kept so this stays a fragment change and never re-boots the page,
       // which is the same reason boot()'s deep link uses replace().
-      location.replace(location.pathname + location.search + `#/connect/${missionForRole(getRoleId())}`);
+      const id = missionForRole(getRoleId());
+      const def = getRobot(id);
+      const target = briefSeen(id) ? `#/demo/${id}` : def ? connectTarget(def) : `#/connect/${DEFAULT_MISSION}/robot`;
+      location.replace(location.pathname + location.search + target);
       return;
     }
-    next.name = 'start';
+    location.replace(location.pathname + location.search + '#/start');
+    return;
   }
 
   const def = next.id ? getRobot(next.id) : null;
@@ -1049,9 +1310,21 @@ function route() {
     return;
   }
 
+  if ((next.name === 'flow' || next.name === 'demo') && fallbackMissingLazyExperience(def)) return;
+
+  if (next.name === 'connect' && flowEnabled(def)) {
+    location.replace(location.pathname + location.search + `#/connect/${def.id}/robot`);
+    return;
+  }
+  if (next.name === 'flow' && !flowEnabled(def)) {
+    location.replace(location.pathname + location.search + `#/connect/${def.id}`);
+    return;
+  }
+
   // leaving a screen
   if (currentRoute.name === 'start' && next.name !== 'start') teardownStart();
   if (currentRoute.name === 'picker' && next.name !== 'picker') teardownPickerPreviews();
+  if (currentRoute.name === 'flow' && !(next.name === 'flow' && next.id === currentRoute.id)) teardownFlow();
   if (currentRoute.name === 'demo' && !(next.name === 'demo' && next.id === currentRoute.id)) teardownDemo();
   // 'gen' and 'load' are the transient resolve states (a generated robot's def.json, a lazy scene
   // payload); both park their own card in #ingest-mount, so they leave the connect screen the
@@ -1095,6 +1368,28 @@ function route() {
     return;
   }
 
+  if (next.name === 'flow') {
+    const needsPayload =
+      typeof def.loadSceneData === 'function' &&
+      (!(def.isSceneDataLoaded && def.isSceneDataLoaded()) ||
+        (def.hasExperience && !def.experience && !sceneSettled.has(def.id)));
+    if (needsPayload) {
+      resolveSceneData(next, def);
+      return;
+    }
+    markFlowSeen(def.id);
+    show('flow');
+    try {
+      buildFlow(def, next.step);
+    } catch (err) {
+      renderSceneUnavailable(def, err);
+      return;
+    }
+    if (next.step === 'robot') primeRobotFlow(def, next);
+    document.title = `${PICKER_TITLES[def.id] || def.name} · ${next.step} · AlloyLogger`;
+    return;
+  }
+
   if (next.name === 'connect') {
     show('connect');
     buildConnect(def);
@@ -1112,7 +1407,7 @@ function route() {
   if (
     typeof def.loadSceneData === 'function' &&
     (!(def.isSceneDataLoaded && def.isSceneDataLoaded()) ||
-      (isGuidedMission(def.id) && !hasChoreo(def) && !sceneSettled.has(def.id)))
+      (hasExperience(def) && !def.experience && !sceneSettled.has(def.id)))
   ) {
     resolveSceneData(next, def);
     return;
@@ -1192,7 +1487,8 @@ function boot() {
     // the robot was doing, what broke, and what finding it costs today. Someone who has already
     // read this mission's brief in this tab (the brief writes the flag itself) is not made to read
     // it twice.
-    const target = briefSeen(deep) ? `#/demo/${deep}` : `#/connect/${deep}`;
+    const deepDef = getRobot(deep);
+    const target = briefSeen(deep) ? `#/demo/${deep}` : deepDef && flowEnabled(deepDef) ? `#/connect/${deep}/robot` : `#/connect/${deep}`;
     // keep location.search: dropping it makes the target differ from the current URL by more than
     // the fragment, so the browser does a real navigation and boots the whole page a second time
     location.replace(location.pathname + location.search + target);

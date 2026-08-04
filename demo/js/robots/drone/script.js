@@ -20,6 +20,55 @@ export default {
   channels,
   buildData,
   findings,
+  // ---- guided flow experience (UX wall port) ----
+  // Optional, canned defs only: never part of GENSPEC v1 and never read by the facts builder.
+  // Every number quoted below was read off the built arrays under node over the exact window it
+  // describes. The anatomy anchors resolve through scene.js's anchors(), so the labels stay on the
+  // parts while the aircraft flies.
+  experience: {
+    anatomy: {
+      // heroT and this camera are solved together, so moving one means re-solving the other. At
+      // 30 s the craft sits at world (-2.99, 1.925, 0.293); this shot stands 1.05 units out on the
+      // front-left quarter, 20 degrees up. Measured against the viewer's own fov curve, the
+      // airframe covers 33% of the width and 34% of the height on a wide desktop panel and stays
+      // inside the frame down to a portrait phone panel, which leaves the four corner label slots
+      // clear. Front-left keeps the nose lens unobstructed and motor 3 on the near side, and the
+      // elevation is high enough to read the X frame. A search over the surrounding poses gained
+      // under 7% of anchor separation, so the framing is a considered choice, not an arbitrary one.
+      heroT: 30,
+      camera: { position: { x: -2.549, y: 2.282, z: -0.589 }, target: { x: -2.99, y: 1.925, z: 0.293 } },
+      rotation: 'orbit',
+      parts: [
+        { id: 'm3', anchor: 'm3', label: 'Motor 3', description: 'One of four brushless motors; each reports rpm and throttle.' },
+        { id: 'battery', anchor: 'battery', label: 'Battery', description: 'The 4S pack; voltage and current are logged at 25 Hz.' },
+        { id: 'camera', anchor: 'camera', label: 'Survey camera', description: 'The mapping camera the lawnmower pattern exists to serve.' },
+        { id: 'imu', anchor: 'imu', label: 'Flight controller', description: 'Closes the attitude loop from roll, pitch and yaw.' },
+      ],
+    },
+    success: {
+      // One survey lane flown edge to edge: the second pass runs 18.6 s to 27.7 s (6.0 s of climb
+      // and hold, a 9.1 s lane, a 3.5 s turn, then this lane), x from -9.98 m to 10.05 m across a
+      // 20 m field. Nothing is wrong yet: the bearing wear starts at 32 s and the dip at 61.2 s.
+      // Measured over the window: alt 5.980 to 6.013 m, all four throttles 59.4 to 60.9 percent
+      // (0.92 points apart at worst), yaw -0.80 to 0.91 deg. The three labels below quote those.
+      window: [18.6, 27.7],
+      camera: null, // the existing cameraFocus follow already rides with the aircraft
+      loopLabel: 'One full survey lane',
+      // Terse label, one sentence of evidence, in the register the wall's success rail uses. The
+      // three are deliberately the three quantities the failure step then breaks: altitude dips,
+      // throttle rails on motor 3, heading swings 18 degrees.
+      contextualLabels: [
+        { label: 'Holding 6 m', note: 'Altitude stays inside a few centimetres of the survey setpoint.' },
+        { label: 'Four motors even', note: 'Throttle sits near 60 percent on all four, inside one point of each other.' },
+        { label: 'On heading', note: 'Yaw stays inside one degree across the pass.' },
+      ],
+    },
+    failure: {
+      findingId: 'dip', // findings[0]: alert, [58, 66], slowmo, highlight m3
+      camera: null, // the finding's own highlight plus the follow shot; no separate framing
+      plottedFields: { channel: '/pos', fields: ['alt'] }, // mirrors findings.dip.focus
+    },
+  },
   firstQuestion: 'What went wrong on the survey flight?',
   suggested: [
     'Show me exactly where it failed',

@@ -8,6 +8,14 @@
 // Named highlight parts:
 //   'j2'   - the shoulder-lift joint housing + its anodized ring (the joint that saturated)
 //   'drv3' - the driver bay on the pedestal that runs J2 (the channel that overheats)
+//
+// Anatomy anchors (sceneApi.anchors(), used by the four-step flow to hang labels on the robot):
+//   'j2'      - outer face of the shoulder joint housing
+//   'gripper' - the TCP between the jaws, the exact point /ee logs
+//   'drv3'    - top face of the driver bay
+//   'base'    - the turret housing, on the q0 rotation axis
+// Each one is read from the posed graph at call time, so labels stay attached while the arm moves
+// and while the camera orbits.
 
 import { sampleAt, clamp, smoothstep, lerp } from '../../core/prng.js';
 import {
@@ -296,6 +304,37 @@ export function buildScene(THREE, mount) {
     });
   }
 
+  // ------------------------------------------------------------------ anchors
+  // Label anchors for the anatomy step. The offsets are in the anchor node's OWN local frame, so
+  // each one rides the joint it belongs to: j2 swings with the shoulder, gripper travels with the
+  // TCP, base yaws with the turret, drv3 stays on the fixed pedestal.
+  const ANCHOR_NODES = {
+    j2: { node: shoulder, o: [0, 0, 0.088] },
+    gripper: { node: tcpAnchor, o: [0, 0, 0] },
+    drv3: { node: drvBay, o: [0, 0.078, 0] },
+    base: { node: turret, o: [0, 0.052, 0] },
+  };
+
+  function anchorWorld(spec) {
+    // A caller can read an anchor at any point in the frame, including before the renderer has
+    // refreshed the graph, so each read updates its own chain instead of trusting matrixWorld.
+    spec.node.updateWorldMatrix(true, false);
+    // A fresh vector every call: the projection step mutates whatever it is handed.
+    return new THREE.Vector3(spec.o[0], spec.o[1], spec.o[2]).applyMatrix4(spec.node.matrixWorld);
+  }
+
+  /**
+   * World positions of the four anatomy anchors, posed at call time.
+   * @returns {Record<string, () => import('three').Vector3>}
+   */
+  function anchors() {
+    const out = {};
+    Object.keys(ANCHOR_NODES).forEach((id) => {
+      out[id] = () => anchorWorld(ANCHOR_NODES[id]);
+    });
+    return out;
+  }
+
   // ------------------------------------------------------- data-derived state
   let prep = null;
 
@@ -523,5 +562,5 @@ export function buildScene(THREE, mount) {
     materials.forEach((m) => m.dispose());
   }
 
-  return { update, setHighlight, dispose, cameraHome };
+  return { update, setHighlight, anchors, dispose, cameraHome };
 }

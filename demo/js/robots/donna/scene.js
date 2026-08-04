@@ -1609,6 +1609,96 @@ export function buildScene(THREE, mount) {
     if (built) applyHighlight();
   }
 
+  // ------------------------------------------------------------------ anatomy anchors
+  //
+  // Four world points on DONNA for the connect flow's anatomy overlay. Every one is read off a node
+  // this scene already poses, so a label stays on its part while the camera orbits, while she
+  // walks, and while a body leans: nothing here is a fixed point on the pitch.
+  //
+  // The two torso points are offsets in the TORSO LINK's own URDF frame, whose +z runs up the
+  // spine (both hip yaw joints sit at z = 0 and the neck joint at z = 0.2345), so they carry the
+  // recorded torso attitude with them. The leg point is the midpoint of the two nodes the left leg
+  // chain hangs off, the hip pitch origin and the knee origin, which is a real segment of the rig
+  // rather than a guessed spot on a mesh. No anchor claims a part the CAD does not have.
+  //
+  // WHEN THE BODY IS NOT THERE. Donna is HIDDEN for her off-field penalty and pose() leaves a
+  // hidden body's transforms untouched, so these closures keep answering with her last observed
+  // pose instead of throwing or inventing a position for a robot nobody was tracking. Before the
+  // first build and after dispose() they answer with the zero vector for the same reason: an
+  // anchor is a rendering hint, and a missing one must not take the screen down with it. The
+  // anatomy step poses the scene at the frozen hero moment (187.6 s), where she is on the pitch.
+  const TORSO_IMU_Z = 0.15; // upper torso, below the shoulder joints at 0.2035
+  const TORSO_COMPUTE_Z = 0.04; // lower torso, just above the hip joints at 0
+  const anchorOut = {
+    head: new THREE.Vector3(),
+    imu: new THREE.Vector3(),
+    servos: new THREE.Vector3(),
+    compute: new THREE.Vector3(),
+  };
+  const vAnchor = new THREE.Vector3();
+  let anchorMap = null;
+
+  /** Donna's runtime row, or null while nothing is built. */
+  function donnaBot() {
+    if (!built || !bots) return null;
+    for (let i = 0; i < bots.length; i++) if (bots[i].key === 'donna') return bots[i];
+    return null;
+  }
+
+  /** The rig node a named joint drives, which is that joint's CHILD link. */
+  function jointNode(bot, jointName) {
+    for (let i = 0; i < bot.joints.length; i++) {
+      if (bot.joints[i].name === jointName) return bot.joints[i].node;
+    }
+    return null;
+  }
+
+  /**
+   * A point at a local offset in `node`'s frame, in world coordinates, written into `out`.
+   *
+   * Ancestors are refreshed first because an anchor can be read on a frame where nothing moved,
+   * and a stale world matrix would answer with the previous pose's position.
+   */
+  function nodePoint(node, out, x, y, z) {
+    node.updateWorldMatrix(true, false);
+    return out.set(x, y, z).applyMatrix4(node.matrixWorld);
+  }
+
+  /**
+   * The anatomy anchor map: part id to a closure reading that part's world position from the
+   * CURRENT pose. Additive and optional - a viewer that does not know this ABI is unaffected.
+   *
+   * @returns {Record<string, () => import('three').Vector3>}
+   */
+  function anchors() {
+    if (anchorMap) return anchorMap;
+    anchorMap = {
+      head: () => {
+        const bot = donnaBot();
+        const node = bot && jointNode(bot, 'HeadTilt');
+        return node ? nodePoint(node, anchorOut.head, 0, 0, 0) : anchorOut.head;
+      },
+      imu: () => {
+        const bot = donnaBot();
+        return bot ? nodePoint(bot.torso, anchorOut.imu, 0, 0, TORSO_IMU_Z) : anchorOut.imu;
+      },
+      servos: () => {
+        const bot = donnaBot();
+        const upper = bot && jointNode(bot, 'LHipPitch');
+        const knee = bot && jointNode(bot, 'LKnee');
+        if (!upper || !knee) return anchorOut.servos;
+        nodePoint(upper, anchorOut.servos, 0, 0, 0);
+        nodePoint(knee, vAnchor, 0, 0, 0);
+        return anchorOut.servos.lerp(vAnchor, 0.5);
+      },
+      compute: () => {
+        const bot = donnaBot();
+        return bot ? nodePoint(bot.torso, anchorOut.compute, 0, 0, TORSO_COMPUTE_Z) : anchorOut.compute;
+      },
+    };
+    return anchorMap;
+  }
+
   function dispose() {
     mount.remove(root);
     root.traverse((o) => {
@@ -1643,6 +1733,7 @@ export function buildScene(THREE, mount) {
     cameraFocus,
     followTuning,
     hudState,
+    anchors,
     // The viewer's default rig is wrong for an 11 x 8 m pitch with its own turf: an 80 m ground
     // plane and two 60 m grids would sit under the field, and a 1024^2 shadow map over an 18 m
     // frustum is ~18 mm/texel, which on a 0.09 m foot is a smear. Grounding is the baked contact

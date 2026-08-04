@@ -31,14 +31,14 @@ import { bracket, inPlayTimes } from './in-play.js';
 
 // ---------------------------------------------------------------------------- constants
 
-const ROBOT_H = 0.147; // team heights are uniform (rulebook: <= 150 mm, within 20 mm per team)
+export const ROBOT_H = 0.147; // team heights are uniform (rulebook: <= 150 mm, within 20 mm per team)
 const HULL_SPLIT = 0.095; // primary hull band below, secondary above; both well over 20% of the side
 const DRIBBLER_FRONT = 0.0725; // flat face, 72.5 mm from centre (rulebook window 71.5-75 mm)
 const ARC_SEGMENTS = 30; // ~192 tris/robot; below ~28 the 180 mm hull reads as a visible polygon
 // Where the dribbler bar sits in its robot's own frame. On the instance matrix rather than baked
 // into the geometry, so the per-instance scale is a fade in place. See buildRobots.
-const DRIB_OFF_X = DRIBBLER_FRONT + 0.0035;
-const DRIB_OFF_Y = 0.028;
+export const DRIB_OFF_X = DRIBBLER_FRONT + 0.0035;
+export const DRIB_OFF_Y = 0.028;
 
 const Y_LINE = 0.0016;
 const Y_MARK = 0.0028;

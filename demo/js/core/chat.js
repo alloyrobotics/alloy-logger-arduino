@@ -31,6 +31,76 @@ import { getRoleId } from './role.js';
 import { track } from './analytics.js';
 
 const CHARS_PER_FRAME = 3;
+const CHAT_WALL_STYLE_ID = 'chat-wall-css';
+
+function ensureChatWallStyles() {
+  if (document.getElementById(CHAT_WALL_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = CHAT_WALL_STYLE_ID;
+  style.textContent = `
+    #screen-demo[data-mode="chat"] .msg.user .bubble,
+    #screen-demo[data-mode="followup"] .msg.user .bubble {
+      border-radius: 14px 14px 3px 14px;
+      padding: 11px 16px;
+      font-size: clamp(15px, 1.4vw, 18px);
+    }
+    #screen-demo[data-mode="chat"] .msg.bot,
+    #screen-demo[data-mode="followup"] .msg.bot {
+      width: 100%;
+    }
+    #screen-demo[data-mode="chat"] .msg.bot .bot-body,
+    #screen-demo[data-mode="followup"] .msg.bot .bot-body {
+      background: var(--card);
+      border: 1px solid var(--line-hi);
+      border-radius: 16px;
+      padding: clamp(18px, 2.2vw, 28px);
+    }
+    #screen-demo[data-mode="chat"] .msg.bot .bot-body > .md-p:first-child,
+    #screen-demo[data-mode="chat"] .msg.bot .bot-body > .md-h:first-child,
+    #screen-demo[data-mode="followup"] .msg.bot .bot-body > .md-p:first-child,
+    #screen-demo[data-mode="followup"] .msg.bot .bot-body > .md-h:first-child {
+      color: var(--tx);
+      font-size: clamp(21px, 2.2vw, 29px);
+      font-weight: 400;
+      line-height: 1.28;
+      letter-spacing: -0.025em;
+      margin: 0 0 14px;
+    }
+    #screen-demo[data-mode="chat"] .msg.bot .bot-body > .md-p:not(:first-child),
+    #screen-demo[data-mode="followup"] .msg.bot .bot-body > .md-p:not(:first-child) {
+      font-size: clamp(14px, 1.25vw, 17px);
+      line-height: 1.55;
+    }
+    #screen-demo[data-mode="chat"] .msg.bot .md-tablewrap,
+    #screen-demo[data-mode="followup"] .msg.bot .md-tablewrap {
+      margin-top: 16px;
+      margin-bottom: 14px;
+      border-left: 0;
+      border-right: 0;
+      border-radius: 0;
+      -webkit-mask-image: none;
+      mask-image: none;
+    }
+    #screen-demo[data-mode="chat"] .msg.bot .md-table,
+    #screen-demo[data-mode="followup"] .msg.bot .md-table {
+      font-size: 11.5px;
+    }
+    .msg.guide-act[data-primary] {
+      align-items: stretch;
+      margin-top: auto;
+    }
+    .guide-cta[data-primary] {
+      width: 100%;
+      justify-content: center;
+      background: var(--blue);
+      border-color: var(--blue);
+      border-radius: 14px;
+      color: #fff;
+      padding: 13px 18px;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 /**
  * The coach line, appended once after the auto-played chip. It names the rule the whole panel runs
@@ -105,6 +175,7 @@ const MAX_LIVE_FAILURES = 2;
  * }}
  */
 export function createChat(mount, robotDef, hooks = {}) {
+  ensureChatWallStyles();
   const onEvidence = hooks.onEvidence || (() => {});
   const onAsk = hooks.onAsk || (() => {});
   const onSettled = hooks.onSettled || (() => {});
@@ -354,15 +425,21 @@ export function createChat(mount, robotDef, hooks = {}) {
    *
    * @param {string} label
    * @param {()=>void} onClick
+   * @param {{primary?:boolean}} [opts]
    * @returns {HTMLElement} the button
    */
-  function addAction(label, onClick) {
+  function addAction(label, onClick, opts = {}) {
     const row = document.createElement('div');
     row.className = 'msg guide-act';
     const b = document.createElement('button');
+    const actionLabel = String(label || '');
     b.type = 'button';
     b.className = 'guide-cta';
-    b.textContent = String(label || '');
+    b.textContent = actionLabel;
+    if (opts.primary || /^show why$/i.test(actionLabel.trim())) {
+      b.dataset.primary = '';
+      row.dataset.primary = '';
+    }
     b.addEventListener('click', () => {
       if (b.disabled) return;
       b.disabled = true;

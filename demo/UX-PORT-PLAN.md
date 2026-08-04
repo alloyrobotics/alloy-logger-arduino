@@ -163,7 +163,7 @@ the real hull regions those subsystems occupy, matching the channels the mission
 | --- | --- | --- | --- |
 | j2 | shoulder joint housing | J2 shoulder servo | Lifts the whole arm; the joint that saturates at 12 Nm. |
 | gripper | roll group / TCP | Parallel gripper | Grips the part at the tool centre point; grip state is logged 0 or 1. |
-| drv3 | drvBay electronics bay | J3 servo driver | The drive electronics whose temperature creeps during the run. |
+| drv3 | drvBay electronics bay | J2 servo driver | The drive electronics whose temperature creeps during the run. (Drive boards are numbered 1..6, so J2 runs on drv3; see arm6/data.js header.) |
 | base | turret | Base turret | Rotates the arm between the two stations on q0. |
 
 ### drone
@@ -307,6 +307,29 @@ before delivery.
    existing four containers keep their ids).
 8. `?robot=` continues to honor `alloy_brief_seen_<id>`; a seen brief goes straight to
    `#/demo/:id` (chat mode), matching current behavior.
+
+## 12b. Post-review arbitrations (Fable, recorded after the adversarial pass)
+
+- Drone success honesty: the scene's full-mission ghost trail carried alert-red future
+  vertices onto the success step; fixed scene-side (neutral ghost, red only on the live
+  trail once the playhead has actually crossed T_FAIL). Applies to every route.
+- SSL IMU anatomy card: KEPT despite the reviewer's objection. The callout is mandated
+  by the approved wall with verbatim copy, and the sentence describes the robot platform
+  (consistent with the published-firmware-derived platform description in context.system's
+  register), not the logged channels. The anchor is the top-plate centre of the real
+  hull. arm6 drv3 card reads "J2 servo driver" per arm6/data.js (drive boards 1..6, J2
+  runs on drv3); the plan's earlier J3 wording was wrong.
+- Donna anatomy copy: the mission lane shipped conservative part descriptions without
+  the Basler / MX-106 part numbers. The CAD manifest does carry those mesh names, so the
+  specific copy is available if wanted later; the conservative copy is truthful and
+  stands.
+- Flow provenance: context.provenance is rendered inside the four-step flow (robot and
+  failure steps) for defs that carry it, because experience missions bypass the legacy
+  brief that used to render it. Disclosure precedes the first synthetic failure claim.
+- Header acquisition CTAs are hidden in chat and followup modes, desktop-only in proof;
+  Show why is the sole action while pending (composer hidden), per wall screens 7-9.
+- Failed lazy experience side modules clear the routing flag and fall back to the legacy
+  brief instead of dead-ending the flow.
 
 ## 13. Sequencing
 

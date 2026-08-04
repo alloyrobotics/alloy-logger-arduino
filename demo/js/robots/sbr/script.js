@@ -57,8 +57,9 @@ export default {
   // /sys) rather than derived from `rate` x `duration`. Every def carries the pair, so the brief
   // states the same volume whether or not this robot's telemetry has been built yet.
   context: { system: 'An ESP32 closing a 50 Hz PID balance loop on a BNO055 IMU, driving two stepper motors.',
-    // The honesty line. sbr is the mission the hobbyist card leads into and the guided brief keeps
-    // exactly two things: the system line and this. Without it the screen names real hardware, the
+    // The honesty line. sbr is off the public picker since the UX wall port (hobbyist now routes
+    // to arm6) but stays directly routable, and its legacy brief keeps exactly two things: the
+    // system line and this. Without it the screen names real hardware, the
     // mock prints values in that hardware's own format, and nothing anywhere says the run is
     // generated - the analyst's facts pack included, since build-facts.mjs renders this same
     // sentence into it. A simulated bench robot has to say so in the same words on both sides.

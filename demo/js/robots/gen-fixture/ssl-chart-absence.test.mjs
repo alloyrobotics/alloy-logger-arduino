@@ -41,41 +41,34 @@ page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
 
-/**
- * Tap through the guided walk, if this mission has one, until it hands over.
- *
- * sbr, ssl and battle enter CHAT ONLY: js/core/guide.js brings the chart on at beat 2 and the 3D
- * stage at beat 3, each on the visitor's own tap. Every assertion in this file is about the plot a
- * visitor is looking at, so the walk has to reach its handover first - that full layout is the
- * state this test was always describing, it just used to be the state the demo opened in.
- *
- * @returns {Promise<boolean>} whether the layout is settled (true immediately when not guided)
- */
-async function settleGuide() {
-  if (!(await page.evaluate(() => !!(window.__demo && window.__demo.guide)))) return true;
-  // a beat per iteration, plus slack; the loop exits on `settled`, never on the count
-  for (let i = 0; i < 8; i++) {
+/** Tap the current four-step flow CTA until the demo screen owns the chart. */
+async function settleFlow() {
+  if (!(await page.evaluate(() => !!window.__flow))) return true;
+  for (let i = 0; i < 4; i++) {
     const ready = await waitFor(
       page,
-      () => {
-        const d = window.__demo;
-        const g = d && d.guide;
-        if (d && d.chat && d.chat.streaming) d.chat.finishStreaming();
-        return !!g && (g.settled || document.querySelectorAll('.guide-cta:not(:disabled)').length > 0);
-      },
+      () =>
+        document.body.dataset.screen === 'demo' ||
+        !!document.querySelector('#screen-flow:not([hidden]) #flow-cta:not(:disabled)'),
       30000,
-      'the next guided beat',
+      'the next flow step',
     );
     if (!ready) return false;
-    if (await page.evaluate(() => window.__demo.guide.settled)) return true;
-    await page.click('.guide-cta:not(:disabled)');
+    if (await page.evaluate(() => document.body.dataset.screen === 'demo')) return true;
+    await page.click('#screen-flow:not([hidden]) #flow-cta:not(:disabled)');
   }
-  return await page.evaluate(() => !!(window.__demo.guide && window.__demo.guide.settled));
+  return await waitFor(page, () => document.body.dataset.screen === 'demo', 30000, 'the demo handoff');
 }
 
 /** Open a robot's demo screen with its chart panel expanded, and wait for the first paint. */
 async function openChart(robot, channel, fields) {
-  await page.evaluate((id) => { location.hash = `#/demo/${id}`; }, robot);
+  await page.evaluate((id) => {
+    location.hash = id === 'ssl' ? `#/connect/${id}/robot` : `#/demo/${id}`;
+  }, robot);
+  if (robot === 'ssl') {
+    const flowUp = await waitFor(page, () => !!window.__flow, 25000, 'the SSL flow');
+    if (!flowUp || !(await settleFlow())) return false;
+  }
   const up = await waitFor(
     page,
     () => !!window.__demo && !!document.querySelector('.chart-canvas') && document.body.dataset.screen === 'demo',
@@ -83,7 +76,17 @@ async function openChart(robot, channel, fields) {
     `the ${robot} chart`,
   );
   if (!up) return false;
-  if (!(await settleGuide())) return false;
+  if (robot === 'ssl') {
+    const typing = await waitFor(page, () => window.__demo && window.__demo.chat.streaming, 30000, 'the SSL opener');
+    if (typing) await page.evaluate(() => window.__demo.chat.finishStreaming());
+    const proof = await waitFor(
+      page,
+      () => document.getElementById('screen-demo').dataset.mode === 'proof',
+      30000,
+      'the SSL proof layout',
+    );
+    if (!proof) return false;
+  }
   await page.evaluate(
     ([ch, fs]) => {
       const d = window.__demo;

@@ -178,7 +178,7 @@ export async function waitFor(page, fn, timeoutMs = 12000, label = '') {
 export const screenState = () => ({
   hash: location.hash,
   dataset: document.body.dataset.screen,
-  visible: ['picker', 'connect', 'demo'].filter((k) => {
+  visible: ['start', 'picker', 'connect', 'flow', 'demo'].filter((k) => {
     const el = document.getElementById(`screen-${k}`);
     return el && !el.hidden;
   }),

@@ -25,7 +25,10 @@ const PAD = { l: 52, r: 14, t: 12, b: 24 };
  * @param {object} timeline
  * @returns {{
  *   el:HTMLElement, canvas:HTMLCanvasElement,
- *   focus:(finding:object)=>void, resetZoom:()=>void,
+ *   focus:(finding:object)=>void,
+ *   focusWindow:(opts:{window:[number,number],channel?:string,fields?:string[],tone?:'neutral'|'alert',shade?:boolean})=>void,
+ *   resetZoom:()=>void, setDirectLabels:(on?:boolean)=>void,
+ *   setMinimalChrome:(on?:boolean)=>void,
  *   setChannel:(path:string, fields?:string[])=>void,
  *   get domain():[number,number], get channel():string, get fields():string[],
  *   redraw:()=>void, dispose:()=>void
@@ -57,11 +60,17 @@ export function createChart(mount, robotDef, timeline) {
   const readout = el.querySelector('.chart-readout');
   const ctx = canvas.getContext('2d');
 
-  const SEV_COLORS = { alert: '#FF5F57', warn: '#f5a623', info: '#D3EEB6' };
+  const SEV_COLORS = {
+    alert: '#FF5F57',
+    warn: '#f5a623',
+    info: '#D3EEB6',
+    neutral: 'rgba(47,120,255,0.68)',
+  };
   const SEV_FILLS = {
     alert: 'rgba(255,95,87,0.10)',
     warn: 'rgba(245,166,35,0.10)',
     info: 'rgba(211,238,182,0.09)',
+    neutral: 'rgba(47,120,255,0.07)',
   };
 
   let channel = robotDef.channels[0].path;
@@ -72,6 +81,8 @@ export function createChart(mount, robotDef, timeline) {
   let shadeSev = 'alert'; // shading follows the finding's severity, not always alert red
   let markT = null; // single instant marker, used when a finding spans the whole mission
   let hoverX = null;
+  let directLabels = false;
+  let minimalChrome = false;
   let anim = 0;
   let disposed = false;
   let dirty = true;
@@ -220,26 +231,91 @@ export function createChart(mount, robotDef, timeline) {
     anim = requestAnimationFrame(step);
   }
 
-  function focus(finding) {
-    if (!finding) return;
-    if (finding.focus && finding.focus.channel) {
-      setChannel(finding.focus.channel, finding.focus.fields);
-    }
-    const w = finding.window || [0, duration];
-    shadeSev = finding.severity || 'warn';
-    // A slow-burn finding covers the whole mission. Shading 100 % of the plot says nothing and
-    // reads as a full-plot error state, so those get the full domain plus a marker at the instant
-    // the answer is talking about, and no window fill.
-    if (w[1] - w[0] >= duration * 0.95) {
+  function applyFocusWindow(opts, markerT, severity) {
+    if (!opts) return;
+    const nextWindow = Array.isArray(opts.window) && opts.window.length >= 2
+      ? [Number(opts.window[0]), Number(opts.window[1])]
+      : [0, duration];
+    if (!Number.isFinite(nextWindow[0]) || !Number.isFinite(nextWindow[1])) return;
+    if (opts.channel) setChannel(opts.channel, opts.fields);
+
+    const a = clamp(Math.min(nextWindow[0], nextWindow[1]), 0, duration);
+    const b = clamp(Math.max(nextWindow[0], nextWindow[1]), 0, duration);
+    const shouldShade = opts.shade !== false;
+    shadeSev = severity || (opts.tone === 'alert' ? 'alert' : 'neutral');
+
+    // A window covering the whole mission stays at the full domain. Findings retain their instant
+    // marker, while a direct focusWindow call simply avoids a meaningless full-plot tint.
+    if (b - a >= duration * 0.95) {
       shade = null;
-      markT = finding.t != null ? finding.t : null;
+      markT = markerT != null ? markerT : null;
       animateDomain([0, duration]);
       return;
     }
-    const pad = Math.max((w[1] - w[0]) * 0.15, 0.25);
-    shade = [w[0], w[1]];
-    markT = null;
-    animateDomain([Math.max(0, w[0] - pad), Math.min(duration, w[1] + pad)]);
+
+    const pad = Math.max((b - a) * 0.15, 0.25);
+    shade = shouldShade ? [a, b] : null;
+    markT = markerT != null ? markerT : null;
+    animateDomain([Math.max(0, a - pad), Math.min(duration, b + pad)]);
+  }
+
+  function focusWindow(opts, legacyOpts) {
+    // Compatibility for the flow skeleton that landed before the final object-shaped interface.
+    // New callers should pass one object. The array form remains additive and can be removed only
+    // after every lane has moved to the published shape.
+    if (Array.isArray(opts)) {
+      const finding = (legacyOpts && legacyOpts.finding) || {};
+      const plotted = (legacyOpts && legacyOpts.plottedFields) || finding.focus || {};
+      applyFocusWindow(
+        {
+          window: opts,
+          channel: plotted.channel,
+          fields: plotted.fields,
+          tone: finding.severity === 'alert' ? 'alert' : 'neutral',
+          shade: true,
+        },
+        null,
+        finding.severity || 'alert',
+      );
+      setDirectLabels(true);
+      setMinimalChrome(true);
+      return;
+    }
+    applyFocusWindow(opts, null, null);
+  }
+
+  function focus(finding) {
+    if (!finding) return;
+    const focusSpec = finding.focus || {};
+    const findingWindow = finding.window || [0, duration];
+    applyFocusWindow(
+      {
+        window: findingWindow,
+        channel: focusSpec.channel,
+        fields: focusSpec.fields,
+        tone: finding.severity === 'alert' ? 'alert' : 'neutral',
+        shade: true,
+      },
+      findingWindow[1] - findingWindow[0] >= duration * 0.95 ? finding.t : null,
+      finding.severity || 'warn',
+    );
+  }
+
+  function setDirectLabels(on = true) {
+    directLabels = !!on;
+    dirty = true;
+  }
+
+  function setMinimalChrome(on = true) {
+    minimalChrome = !!on;
+    el.classList.toggle('chart-minimal', minimalChrome);
+    el.querySelector('.chart-bar').hidden = minimalChrome;
+    fieldChips.hidden = minimalChrome;
+    if (minimalChrome) {
+      hoverX = null;
+      readout.hidden = true;
+    }
+    dirty = true;
   }
 
   function resetZoom() {
@@ -371,9 +447,18 @@ export function createChart(mount, robotDef, timeline) {
     const rightLabels = groups.length > 1 ? labelsFor(groups[1]) : null;
     const widest = (list) => list.reduce((m, s) => Math.max(m, ctx.measureText(s).width), 0);
     padL = Math.min(Math.max(PAD.l, Math.ceil(widest(leftLabels)) + 12), Math.floor(w * 0.34));
-    padR = rightLabels
+    const axisPadR = rightLabels
       ? Math.min(Math.max(PAD.r, Math.ceil(widest(rightLabels)) + 12), Math.floor(w * 0.3))
       : PAD.r;
+    const directPadR = directLabels
+      ? Math.ceil(
+          fields.reduce((max, key) => {
+            const fd = fieldDef(key) || {};
+            return Math.max(max, ctx.measureText(fd.label || key).width);
+          }, 0),
+        ) + 32
+      : PAD.r;
+    padR = Math.min(Math.max(axisPadR, directPadR), Math.floor(w * 0.46));
 
     const plotW = w - padL - padR;
     const yIn = (g, v) => PAD.t + (1 - (v - g.lo) / (g.hi - g.lo)) * plotH;
@@ -439,6 +524,7 @@ export function createChart(mount, robotDef, timeline) {
     ctx.textAlign = 'center';
 
     // traces, min/max downsampled to one column per pixel
+    const directLabelRows = [];
     if (ch && ch.t) {
       fields.forEach((key, si) => {
         const arr = ch[key];
@@ -496,6 +582,20 @@ export function createChart(mount, robotDef, timeline) {
           }
         }
         ctx.stroke();
+
+        if (directLabels) {
+          let end = i1;
+          while (end >= i0 && (!has(mask, end) || !Number.isFinite(arr[end]))) end--;
+          if (end >= i0) {
+            const fd = fieldDef(key) || {};
+            directLabelRows.push({
+              text: fd.label || key,
+              color: SERIES_COLORS[si % SERIES_COLORS.length],
+              x: x2px(ch.t[end]),
+              y: yv(arr[end]),
+            });
+          }
+        }
       });
     }
 
@@ -560,6 +660,77 @@ export function createChart(mount, robotDef, timeline) {
         });
       }
     }
+
+    if (directLabels && directLabelRows.length) {
+      const pillH = 20;
+      const top = PAD.t + pillH / 2 + 1;
+      const bottom = PAD.t + plotH - pillH / 2 - 1;
+      const rows = directLabelRows
+        .slice()
+        .sort((a, b) => a.y - b.y)
+        .map((row) => ({ ...row, labelY: clamp(row.y, top, bottom) }));
+      const step = rows.length > 1
+        ? Math.min(pillH + 3, Math.max(1, (bottom - top) / (rows.length - 1)))
+        : 0;
+
+      for (let i = 1; i < rows.length; i++) {
+        rows[i].labelY = Math.max(rows[i].labelY, rows[i - 1].labelY + step);
+      }
+      if (rows.length && rows[rows.length - 1].labelY > bottom) {
+        const shift = rows[rows.length - 1].labelY - bottom;
+        rows.forEach((row) => {
+          row.labelY -= shift;
+        });
+      }
+      for (let i = rows.length - 2; i >= 0; i--) {
+        rows[i].labelY = Math.min(rows[i].labelY, rows[i + 1].labelY - step);
+      }
+      if (rows.length && rows[0].labelY < top) {
+        const shift = top - rows[0].labelY;
+        rows.forEach((row) => {
+          row.labelY += shift;
+        });
+      }
+
+      ctx.save();
+      ctx.font = '10px "Geist Mono", ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      rows.forEach((row) => {
+        const pillW = Math.ceil(ctx.measureText(row.text).width) + 14;
+        const pillX = clamp(row.x + 16, padL + 2, w - pillW - 2);
+        const pillY = row.labelY - pillH / 2;
+        const tickX = Math.min(row.x + 12, pillX - 3);
+
+        ctx.strokeStyle = row.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(row.x + 2, row.y);
+        ctx.lineTo(tickX, row.y);
+        if (Math.abs(row.labelY - row.y) > 0.5) ctx.lineTo(pillX - 3, row.labelY);
+        ctx.stroke();
+
+        const radius = 5;
+        ctx.beginPath();
+        ctx.moveTo(pillX + radius, pillY);
+        ctx.lineTo(pillX + pillW - radius, pillY);
+        ctx.quadraticCurveTo(pillX + pillW, pillY, pillX + pillW, pillY + radius);
+        ctx.lineTo(pillX + pillW, pillY + pillH - radius);
+        ctx.quadraticCurveTo(pillX + pillW, pillY + pillH, pillX + pillW - radius, pillY + pillH);
+        ctx.lineTo(pillX + radius, pillY + pillH);
+        ctx.quadraticCurveTo(pillX, pillY + pillH, pillX, pillY + pillH - radius);
+        ctx.lineTo(pillX, pillY + radius);
+        ctx.quadraticCurveTo(pillX, pillY, pillX + radius, pillY);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(17,17,17,0.94)';
+        ctx.fill();
+        ctx.strokeStyle = row.color;
+        ctx.stroke();
+        ctx.fillStyle = row.color;
+        ctx.fillText(row.text, pillX + 7, row.labelY + 0.5);
+      });
+      ctx.restore();
+    }
   }
 
   // rAF paint pump: only repaints when something changed or the clock is running
@@ -581,6 +752,10 @@ export function createChart(mount, robotDef, timeline) {
     const px = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
     hoverX = px;
     dirty = true;
+    if (minimalChrome) {
+      readout.hidden = true;
+      return;
+    }
     const ch = data[channel];
     if (!ch || !ch.t || px < padL || px > w - padR) {
       readout.hidden = true;
@@ -657,7 +832,10 @@ export function createChart(mount, robotDef, timeline) {
     el,
     canvas,
     focus,
+    focusWindow,
     resetZoom,
+    setDirectLabels,
+    setMinimalChrome,
     setChannel,
     get domain() {
       return [domain[0], domain[1]];

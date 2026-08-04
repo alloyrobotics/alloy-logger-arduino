@@ -1,5 +1,5 @@
-// ssl/role-openers.js - the OPENER's role registers AND the guided flow's beat copy, behind the
-// lazy match-data boundary.
+// ssl/role-openers.js - the OPENER's role registers, the guided flow's beat copy AND the four-step
+// flow's mission experience, behind the lazy match-data boundary.
 //
 // This file is reached by a DYNAMIC import from script.js and by nothing else, so it is not in the
 // eager module graph (ssl-eager-size.test.mjs walks static imports only). That is deliberate: this
@@ -15,6 +15,13 @@
 // the honesty line, because this is a synthesized-fault entry and which role a visitor picked
 // cannot decide whether they are told what is real, and the {{ev:kicker-charge}} token, so the
 // opener's auto-beat fires for every role. Each variant is within 20% of the engineer answer.
+//
+// `experience.js` is imported statically from HERE rather than from `script.js` for the same
+// reason this file is reached dynamically: the eager gate walks static imports from `script.js`
+// only, so a static import on this side of the boundary is free, and the flow's step screens
+// cannot read a line of it before the payload has landed anyway.
+
+import { applyExperience } from './experience.js';
 
 /**
  * The OPENER in the HOBBYIST register.
@@ -143,4 +150,5 @@ export function applyGuided(def) {
   const opener = def.script.find((e) => e.id === 'kicker-charge');
   if (opener) opener.answerByRole = OPENER_BY_ROLE;
   def.choreo = CHOREO;
+  applyExperience(def);
 }

@@ -15,10 +15,13 @@ import battle from './battle/script.js';
 // the full recorded match module arrives through `def.loadSceneData()` on the demo route only.
 import donna from './donna/script.js';
 
-/** Ordered registry. Picker card order === this order. */
+/** Every canned definition, kept in the historical registry order. */
 export const ROBOTS = [sbr, arm6, drone, rescue, ssl, battle, donna];
 
-/** id -> RobotDefinition */
+/** The four missions shown in the public mission library, in fixed display order. */
+export const PICKER_ROBOTS = [arm6, drone, ssl, donna];
+
+/** id -> RobotDefinition. Generated definitions are added here at route time. */
 export const ROBOTS_BY_ID = new Map(ROBOTS.map((r) => [r.id, r]));
 
 /** @param {string} id @returns {object|null} */
@@ -28,8 +31,8 @@ export function getRobot(id) {
 
 /**
  * Add a robot that was not compiled in: a generated demo, fetched as one def.json at route time
- * and composed by robots/generated.js. Lookup only. ROBOTS is deliberately untouched, so the
- * picker stays the canned cards in ROBOTS and a personalized demo never leaks into a shared link.
+ * and composed by robots/generated.js. Lookup only. PICKER_ROBOTS is deliberately untouched, so a
+ * personalized demo never leaks into the public mission library.
  *
  * @param {object} def a full RobotDefinition
  * @returns {object} the same def, for chaining

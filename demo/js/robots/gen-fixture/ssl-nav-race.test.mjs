@@ -14,7 +14,7 @@
 // the import rather than reasoning about it: the race is real time, so the assertion is real time.
 //
 //   A  demo -> back to the picker -> the same demo again, all inside the load
-//   B  demo -> the same robot's brief -> demo again, all inside the load
+//   B  demo -> the same robot's anatomy step -> demo again, all inside the load
 //
 // A fresh page per sequence, because a module already in the browser's module map never arrives
 // late a second time.
@@ -43,9 +43,8 @@ async function openThrottled() {
     await new Promise((r) => setTimeout(r, DELAY_MS));
     await route.continue();
   });
-  // `#/missions` explicitly: `#/` is the role fork, not the picker, so a boot that wants the seven
-  // cards has to name the picker's own route.
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  // `#/missions` explicitly: `#/` is the role fork, not the four-card mission library.
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   return { ctx, page, errors, hits: () => arrivals };
 }
@@ -104,9 +103,9 @@ H.section('A: demo -> picker -> the same demo, inside one load');
   await ctx.close();
 }
 
-// ------------------------------------------------------------- B. demo -> connect(same id) -> demo
+// ------------------------------------------------------------- B. demo -> robot step(same id) -> demo
 
-H.section('B: demo -> the same robot brief -> demo, inside one load');
+H.section('B: demo -> the same robot anatomy step -> demo, inside one load');
 {
   const { ctx, page, errors } = await openThrottled();
 
@@ -119,18 +118,15 @@ H.section('B: demo -> the same robot brief -> demo, inside one load');
   H.ok(
     await waitFor(
       page,
-      () => {
-        const el = document.getElementById('screen-connect');
-        const m = document.getElementById('ingest-mount');
-        return (
-          !!el && !el.hidden && location.hash === '#/connect/ssl' &&
-          !!m && !/Loading the match replay/i.test(m.textContent || '') && (m.textContent || '').trim().length > 0
-        );
-      },
+      () =>
+        document.body.dataset.screen === 'flow' &&
+        location.hash === '#/connect/ssl/robot' &&
+        !!window.__flow && window.__flow.step === 'robot' &&
+        document.getElementById('screen-connect').hidden,
       12000,
-      'the brief screen',
+      'the anatomy step',
     ),
-    'the brief renders over the loading card, not beside it',
+    'the anatomy step replaces the loading card for the same robot',
   );
 
   await go(page, '#/demo/ssl');

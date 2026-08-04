@@ -63,7 +63,7 @@ export const ROLES = [
     label: 'I build my own robots',
     blurb: 'Hobby builds, printed parts, weekend bring-up. When it breaks, you are the whole team.',
     kicker: 'personal builds',
-    mission: 'sbr',
+    mission: 'arm6',
     register: 'hobbyist',
     answerStyle:
       'Plain language, practical detail. Name the one signal that gave it away and end on something ' +
@@ -133,7 +133,7 @@ export const ROLES = [
     label: 'I work in marketing, support, or sales',
     blurb: 'Marketing, CS, sales, field ops. You have to explain the failure to someone who was not there.',
     kicker: 'go to market',
-    mission: 'battle',
+    mission: 'donna',
     register: 'marketing',
     answerStyle:
       'Non-technical. Lead with the outcome and the story, one number at most, and end on the ' +
@@ -185,30 +185,28 @@ export const LEGACY_ROLE_IDS = Object.freeze({ operator: 'engineer', support: 'e
 export const DEFAULT_ROLE_ID = 'engineer';
 
 /** The mission the picker escape hatch and an unknown role land on. */
-export const DEFAULT_MISSION = 'sbr';
+export const DEFAULT_MISSION = 'arm6';
 
 /**
- * The missions that get the guided, agent-narrated demo, DERIVED from the fork rather than listed
- * twice. A mission is choreographed exactly because a role is guided into it, so the two can never
- * drift: re-point a role and its mission joins (or leaves) the guided set in the same edit.
+ * Whether a definition participates in the four-step experience. The capability lives on the
+ * definition, not in the role table, so direct mission links and future role routing cannot drift.
+ * Lazy missions expose `hasExperience` before their full experience block lands.
  *
- * Order-preserving and de-duplicated (engineer and lead share ssl).
- *
- * @type {ReadonlyArray<string>}
- */
-export const GUIDED_MISSIONS = Object.freeze([...new Set(ROLES.map((r) => r.mission))]);
-
-const GUIDED = new Set(GUIDED_MISSIONS);
-
-/**
- * Whether this robot ships the guided flow: the decluttered brief with a full-bleed incumbent-tool
- * mock, and the beat-by-beat demo. Everything else keeps the brief and the demo it has today.
- *
- * @param {string} id robot id
+ * @param {object|null} def
  * @returns {boolean}
  */
-export function isGuidedMission(id) {
-  return typeof id === 'string' && GUIDED.has(id);
+export function hasExperience(def) {
+  return !!(def && (def.experience || def.hasExperience));
+}
+
+/**
+ * Legacy exports retained for older brief and guide callers. The old guide is no longer selected by
+ * role routing; experience definitions use `hasExperience(def)` instead.
+ */
+export const GUIDED_MISSIONS = Object.freeze([]);
+
+export function isGuidedMission() {
+  return false;
 }
 
 /** @param {*} v @returns {boolean} true only for a CANONICAL id; a retired id is not a role */

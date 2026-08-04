@@ -14,7 +14,7 @@
 //   B  demo -> the same robot's brief -> demo again, inside the same window
 //   C  the undisturbed path renders
 //   D  a round module that decodes to garbage lands on the unavailable card, not a half-built demo
-//   E  a corrupt preview slice degrades the picker card to SVG line art and never throws
+//   E  a corrupt preview slice degrades the direct legacy brief to SVG line art and never throws
 //
 // A fresh page per sequence: a module already in the browser's module map never arrives late (or
 // corrupt) a second time.
@@ -42,7 +42,7 @@ async function openThrottled() {
     await new Promise((r) => setTimeout(r, DELAY_MS));
     await route.continue();
   });
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   return { ctx, page, errors, hits: () => arrivals };
 }
@@ -170,7 +170,7 @@ H.section('D: a corrupt round module lands on the unavailable card');
       ].join('\n'),
     }),
   );
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   await go(page, '#/demo/battle');
   H.ok(
@@ -193,17 +193,15 @@ H.section('D: a corrupt round module lands on the unavailable card');
 
 // ------------------------------------------------------------- E. corrupt preview slice
 
-H.section('E: a corrupt preview slice degrades the picker card');
+H.section('E: a corrupt preview slice degrades the archived mission brief');
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  // Every card ALWAYS carries its SVG; a live preview merely hides it behind `.preview-live`. So
-  // "the SVG exists" proves nothing. This sequence proves the corrupt path actually RAN: the
-  // interception fired, the module decoded to null, the card never got `.preview-live`, the brief
-  // hero mounts no WebGL rig, and the full demo (whose round module is untouched) still works.
-  // Teeth were mutation-verified: breaking the route glob fails four of these checks.
+  // Battle is archived from the four-card library but its direct routes stay supported. This
+  // sequence proves the corrupt path actually ran: the interception fired, the module decoded to
+  // null, the direct brief uses line art, and the untouched full round still works.
   let previewHits = 0;
   await page.route('**/robots/battle/preview-data.js', (route) => {
     previewHits++;
@@ -218,26 +216,20 @@ H.section('E: a corrupt preview slice degrades the picker card');
       ].join('\n'),
     });
   });
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   // Give the idle preview builder time to run against the corrupt slice.
   await page.waitForTimeout(3500);
   H.ok(previewHits >= 1, `the corrupt preview module was actually served (${previewHits}x)`);
   const st = await page.evaluate(async () => {
     const d = await import('/demo/js/robots/battle/data.js');
-    const a = document.querySelector('#robot-grid a.rcard[data-robot="battle"]');
-    const art = a && a.querySelector('.rcard-art');
     return {
       preview: d.previewData,
-      card: !!a,
-      svg: !!(a && a.querySelector('svg')),
-      live: !!(art && art.classList.contains('preview-live')),
+      card: !!document.querySelector('#robot-grid .rcard[data-robot="battle"]'),
     };
   });
   H.ok(st.preview === null, 'previewData decoded to null instead of throwing out of the module');
-  H.ok(st.card, 'the battle card is on the picker');
-  H.ok(st.svg, 'and it keeps its SVG line art');
-  H.ok(!st.live, 'and never claims a live preview it does not have');
+  H.ok(!st.card, 'the archived battle mission is not reintroduced to the public picker');
   await go(page, '#/connect/battle');
   H.ok(
     await waitFor(

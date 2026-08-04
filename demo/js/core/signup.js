@@ -85,6 +85,11 @@ const COPY = {
   confirmedBody: "We'll set you up and email your access shortly.",
 };
 
+const ROLE_BODY = {
+  lead: 'Move your team from mission failure to proof. Get 100GB free. First 100 users only.',
+  marketing: 'Turn robot mission data into clear proof. Get 100GB free. First 100 users only.',
+};
+
 /**
  * Page-session one-shot. Deliberately module scope and deliberately NEVER reset by teardown: the
  * old lead form set its flag when the timer was SCHEDULED, so cancelling a pending timer burned
@@ -187,11 +192,13 @@ export function createSignupPopup(host, ctx = {}) {
   const honeypot = paneForm.querySelector('.su-hp-input');
   const submitBtn = paneForm.querySelector('.su-submit');
   const errEl = paneForm.querySelector('.su-err');
+  const headingEl = paneForm.querySelector('.su-h');
+  const bodyEl = paneForm.querySelector('.su-sub');
 
   // textContent, never innerHTML: none of this copy is markup and none of it should ever be
   // parsed as any.
-  paneForm.querySelector('.su-h').textContent = COPY.heading;
-  paneForm.querySelector('.su-sub').textContent = COPY.body;
+  headingEl.textContent = COPY.heading;
+  bodyEl.textContent = COPY.body;
   paneDone.querySelector('.su-done-h').textContent = COPY.confirmedHeading;
   paneDone.querySelector('.su-done-body').textContent = COPY.confirmedBody;
   submitBtn.textContent = COPY.submit;
@@ -376,6 +383,9 @@ export function createSignupPopup(host, ctx = {}) {
     openedAt = Date.now();
     restoreFocus = document.activeElement;
 
+    const roleId = getRoleId();
+    headingEl.textContent = COPY.heading;
+    bodyEl.textContent = ROLE_BODY[roleId] || COPY.body;
     clearError();
     setState('form');
     // Impression based: the gate is written the moment it goes up, so a visitor who never touches

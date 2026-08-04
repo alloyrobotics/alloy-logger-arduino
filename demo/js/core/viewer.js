@@ -10,6 +10,17 @@ import * as THREE from 'three';
 // not at the upstream vendor/addons/controls/ path, so the specifier is flat too.
 import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { clamp } from './prng.js';
+// The anatomy orbit, the commanded-camera ease and the reduced-motion query are staging decisions,
+// not viewer internals: the picker previews and the connect hero already take theirs from stage3d,
+// and this module is the third stage that has to answer them identically. Already in the eager
+// graph (preview.js and context.js both import it), so this costs no extra module fetch.
+import {
+  ANATOMY_ORBIT_MS,
+  CAMERA_EASE_MS,
+  easeOutCubic,
+  orbitSpeedFor,
+  prefersReducedMotion,
+} from './stage3d.js';
 
 /**
  * @param {HTMLElement} mount
@@ -19,7 +30,11 @@ import { clamp } from './prng.js';
  *   el:HTMLElement, scene:THREE.Scene, camera:THREE.Camera, renderer:THREE.WebGLRenderer,
  *   sceneApi:object, setHighlight:(partId:string|null)=>void, get highlight():string|null,
  *   resetView:()=>void, flashMarker:(findingId:string)=>void,
- *   showBanner:(finding:object, onDismiss?:()=>void)=>void, hideBanner:()=>void,
+ *   showBanner:(finding:object, onDismiss?:()=>void)=>void,
+ *   showContextBanner:(text:string, onDismiss?:()=>void)=>void, hideBanner:()=>void,
+ *   setAnatomy:(parts:Array<object>|null)=>void,
+ *   applyCamera:(pose:object|null)=>void, setCamera:(pose:object|null)=>void,
+ *   setOrbit:(on:boolean)=>void, setAutoRotate:(on:boolean)=>void,
  *   dispose:()=>void
  * }}
  */
@@ -663,6 +678,11 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     camera.updateProjectionMatrix();
     // the banner picks its wording off the panel width, so a rotate or a resize has to re-word it
     if (bannerFinding) bannerText.textContent = bannerCopy(bannerFinding);
+    // The anatomy cards were placed by the grid against the OLD box, and the leaders were drawn to
+    // an old projection. Both are stale the instant the panel changes shape, and under reduced
+    // motion this is the only place they are ever recomputed.
+    measureAnatomy();
+    projectAnatomy();
   }
   const ro = new ResizeObserver(resize);
   ro.observe(stage);
@@ -768,15 +788,75 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     bannerFinding = finding;
     bannerText.textContent = bannerCopy(finding);
     banner.dataset.sev = finding.severity || 'warn';
+    delete banner.dataset.static;
+    bannerX.hidden = false;
     banner.hidden = false;
+    el.classList.add('has-banner');
     bannerDismiss = onDismiss || null;
+    anatomyReflowed();
   }
+
+  /**
+   * The same banner strip, with no severity.
+   *
+   * The success step loops a passage where NOTHING went wrong, and it still has to say which
+   * passage it is looping. Reusing showBanner() there would have meant handing it a fake finding
+   * with a severity, and the strip would have opened with an alert-red border and a pulsing dot
+   * over a robot doing its job perfectly - the one screen in the flow whose whole point is that
+   * there is no fault to see. So the tone is a separate entry point rather than a parameter: a
+   * caller either has a finding (severity, window wording, exit affordance) or has a label.
+   *
+   * `text` is written verbatim, because the caller knows what the loop is; the banner does not
+   * re-word it by panel width the way a finding's window copy is re-worded. With no `onDismiss`
+   * there is nothing to exit, so the exit button and the pointer cursor go away and the strip is
+   * a caption rather than a control.
+   *
+   * @param {string} text
+   * @param {(()=>void)=} onDismiss
+   */
+  function showContextBanner(text, onDismiss) {
+    bannerFinding = null;
+    bannerText.textContent = text == null ? '' : String(text);
+    banner.dataset.sev = 'neutral';
+    bannerDismiss = onDismiss || null;
+    bannerX.hidden = !bannerDismiss;
+    if (bannerDismiss) delete banner.dataset.static;
+    else banner.dataset.static = '1';
+    ensureBannerStyles();
+    banner.hidden = false;
+    el.classList.add('has-banner');
+    anatomyReflowed();
+  }
+
+  /**
+   * The neutral tone, injected rather than shipped in the page stylesheet: the base `.v-banner`
+   * rules belong to another writer's file, and this variant is only reachable through the entry
+   * point above. Same trick as the scene HUD strip below, same id-guard, one stylesheet per page.
+   */
+  function ensureBannerStyles() {
+    if (document.getElementById('v-ban-neutral-css')) return;
+    const st = document.createElement('style');
+    st.id = 'v-ban-neutral-css';
+    st.textContent = `
+.v-banner[data-sev="neutral"]{border-color:var(--line-hi);}
+.v-banner[data-sev="neutral"] .v-bdot{background:var(--tx-mute);animation:none;}
+.v-banner[data-static]{cursor:default;}`;
+    document.head.appendChild(st);
+  }
+
   function hideBanner() {
     banner.hidden = true;
     bannerDismiss = null;
     bannerFinding = null;
+    delete banner.dataset.static;
+    bannerX.hidden = false;
+    el.classList.remove('has-banner');
+    anatomyReflowed();
   }
   function dismiss() {
+    // A caption with nothing to exit is not a control, so a tap on it does nothing. Only ever true
+    // for a context banner opened without a callback; every finding banner clears the flag.
+    if (banner.dataset.static) return;
     const cb = bannerDismiss;
     hideBanner();
     if (cb) cb();
@@ -785,6 +865,437 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   banner.addEventListener('click', (e) => {
     if (e.target !== bannerX) dismiss();
   });
+
+  // ---------- optional anatomy overlay ----------
+  //
+  // Four callout cards in the corners of the stage, each tied to a real point on the machine by a
+  // hairline leader. `setAnatomy(parts)` opens it, `setAnatomy(null)` closes it, and a viewer that
+  // is never asked allocates nothing: no element, no stylesheet, no per-frame work, which is what
+  // keeps the six missions that do not use it byte-identical to what they were approved on.
+  //
+  // WHY THE LINE HAS TO BE RE-PROJECTED EVERY FRAME. A static callout is only honest while the
+  // camera and the machine both hold still. This step does neither: the anatomy orbit turns the
+  // robot through a full revolution, and a scene with a follow cam is still tracking its subject
+  // underneath. So the anchor is a WORLD point, resolved through the scene's own rig every frame
+  // (`sceneApi.anchors()`), projected with `Vector3.project(camera)`, and the leader is redrawn
+  // from the card's edge to wherever that point now sits. A label that drifts off its part while
+  // the shot moves is worse than no label: it teaches the wrong part.
+  //
+  // The scene interface is optional and additive:
+  //     sceneApi.anchors?.() -> { [partId]: () => THREE.Vector3 }   world position, posed NOW
+  // Absent, or missing an id, or returning null for an instant the subject is not observed (a
+  // humanoid off the field), and that part simply has no leader; its CARD still renders, because
+  // the card is the copy and the flow has already hidden its own DOM copy of it.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  let anatomyEl = null;
+  let anatomySvg = null;
+  let anatomySlots = [];
+  let anatomyAnchors = null;
+  let anatomyPending = false; // some id has not resolved yet: a scene may build its rig lazily
+  let anatomyMeasured = false;
+  let anatomyTick = null; // per-frame projection; null whenever the overlay is closed
+  const anchorNdc = new THREE.Vector3();
+  const anchorCam = new THREE.Vector3();
+
+  function ensureAnatomyStyles() {
+    if (document.getElementById('v-anat-css')) return;
+    const st = document.createElement('style');
+    st.id = 'v-anat-css';
+    // One grid, both layouts. The two columns push the cards to the left and right edges, and the
+    // outer rows pin them top and bottom, so on a wide panel they read as four corners with the
+    // machine in the middle, and on a phone - where the columns are half of 390 px - the same four
+    // cards read as 2x2 above and below it. No breakpoint decides which; the panel width does.
+    st.textContent = `
+.v-anat{position:absolute;inset:0;z-index:2;pointer-events:none;
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  grid-template-rows:auto minmax(0,1fr) auto;gap:10px;padding:14px;}
+.viewer.has-shud .v-anat{padding-top:48px;}
+/* The scene HUD strip and the evidence banner both open across the top of the stage, and the two
+   upper cards are the only thing on the overlay with a claim on that space. They step down rather
+   than being covered: a callout half behind a banner is a callout nobody reads. */
+.viewer.has-banner .v-anat{padding-top:58px;}
+.viewer.has-shud.has-banner .v-anat{padding-top:92px;}
+.v-anat-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;}
+/* the leader itself: a hairline, at the same weight as every other rule on this page */
+.v-anat-line{stroke:rgba(255,255,255,0.16);stroke-width:1;}
+.v-anat-dot{fill:rgba(255,255,255,0.24);}
+.v-anat-card{max-width:300px;padding:13px 14px;border:1px solid var(--line-hi);border-radius:10px;
+  background:rgba(24,24,24,0.86);backdrop-filter:blur(10px);
+  animation:vAnatIn .34s cubic-bezier(.16,1,.3,1) both;animation-delay:var(--vd,0s);}
+.v-anat-card h2{font-size:14px;font-weight:500;color:var(--tx);line-height:1.25;}
+.v-anat-card p{margin-top:6px;font-size:12px;line-height:1.45;color:var(--tx-body);}
+.v-anat-1{grid-row:1;grid-column:1;justify-self:start;}
+.v-anat-2{grid-row:1;grid-column:2;justify-self:end;}
+.v-anat-3{grid-row:3;grid-column:1;justify-self:start;}
+.v-anat-4{grid-row:3;grid-column:2;justify-self:end;}
+@keyframes vAnatIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@media (max-width:700px){
+  .v-anat{gap:8px;padding:10px;}
+  .v-anat-card{max-width:none;padding:11px 12px;}
+  .v-anat-card h2{font-size:13px;}
+  .v-anat-card p{margin-top:5px;font-size:11.5px;}}
+/* Asked for less motion: the cards are already there when the step opens, and the leader lines are
+   projected once and on resize rather than every frame. Nothing on this overlay moves. */
+@media (prefers-reduced-motion:reduce){.v-anat-card{animation:none;}}`;
+    document.head.appendChild(st);
+  }
+
+  /**
+   * Where each card sits inside the stage, in stage pixels.
+   *
+   * Read in one batch and cached, because the alternative is four `getBoundingClientRect()` calls
+   * interleaved with four SVG attribute writes on every frame, which is a layout flush per card.
+   * The cards do not move between resizes - the grid places them - so the cache is only stale when
+   * the stage is, and `resize()` is exactly where that is already known.
+   */
+  function measureAnatomy() {
+    if (!anatomySlots.length) return;
+    const sr = stage.getBoundingClientRect();
+    if (sr.width < 1 || sr.height < 1) return; // the panel has no size yet; the observer will call back
+    let ok = true;
+    for (const slot of anatomySlots) {
+      const r = slot.card.getBoundingClientRect();
+      if (r.width < 1) ok = false;
+      slot.cx = r.left - sr.left + r.width / 2;
+      slot.cy = r.top - sr.top + r.height / 2;
+      slot.hw = r.width / 2;
+      slot.hh = r.height / 2;
+    }
+    anatomyMeasured = ok;
+  }
+
+  /**
+   * The overlay's own box did not change but its contents moved inside it: opening or closing the
+   * banner steps the two upper cards down or back up, and the leaders are drawn from cached card
+   * geometry. No ResizeObserver fires for that, because the stage is the same size it was.
+   * Inert, and cheap to call blind, while no anatomy is open.
+   */
+  function anatomyReflowed() {
+    if (!anatomySlots.length) return;
+    measureAnatomy();
+    projectAnatomy();
+  }
+
+  function hideLeader(slot) {
+    if (!slot.shown) return;
+    slot.shown = false;
+    slot.g.setAttribute('display', 'none');
+  }
+
+  function projectAnatomy() {
+    if (!anatomySlots.length) return;
+    if (!anatomyMeasured) measureAnatomy();
+    const w = stage.clientWidth;
+    const h = stage.clientHeight;
+    if (w < 1 || h < 1) return;
+    // A scene whose rig is built on its first update() has no anchors at setAnatomy() time. Re-ask
+    // until every id resolves, then stop asking: the map is rebuilt at most once per frame while
+    // something is still missing, and never once everything is found.
+    if (anatomyPending && typeof sceneApi.anchors === 'function') {
+      anatomyAnchors = sceneApi.anchors() || null;
+      anatomyPending = anatomySlots.some((s) => !anatomyAnchors || typeof anatomyAnchors[s.id] !== 'function');
+    }
+    for (const slot of anatomySlots) {
+      const get = anatomyAnchors ? anatomyAnchors[slot.id] : null;
+      const p = typeof get === 'function' ? get() : null;
+      if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) {
+        hideLeader(slot);
+        continue;
+      }
+      // Behind the camera. `project()` divides by w, and w is negative back there, so the point
+      // comes out mirrored into the frame and the leader would confidently point at empty floor.
+      // Camera space is the only place the question has a clean answer.
+      anchorCam.set(p.x, p.y, p.z).applyMatrix4(camera.matrixWorldInverse);
+      if (anchorCam.z > -camera.near) {
+        hideLeader(slot);
+        continue;
+      }
+      anchorNdc.set(p.x, p.y, p.z).project(camera);
+      if (anchorNdc.x < -1 || anchorNdc.x > 1 || anchorNdc.y < -1 || anchorNdc.y > 1) {
+        hideLeader(slot); // off frame: the part the card names is not in shot right now
+        continue;
+      }
+      const ax = (anchorNdc.x * 0.5 + 0.5) * w;
+      const ay = (-anchorNdc.y * 0.5 + 0.5) * h;
+      const dx = ax - slot.cx;
+      const dy = ay - slot.cy;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      // The anchor has orbited under its own card: a leader here would be a scribble inside a box.
+      if (adx <= slot.hw && ady <= slot.hh) {
+        hideLeader(slot);
+        continue;
+      }
+      // Leave the card at its border rather than its centre, with a small gap, so the line reads as
+      // touching the card instead of being drawn over it.
+      const tx = adx > 0.001 ? (slot.hw + 5) / adx : Infinity;
+      const ty = ady > 0.001 ? (slot.hh + 5) / ady : Infinity;
+      const t = Math.min(tx, ty);
+      const sx = slot.cx + dx * t;
+      const sy = slot.cy + dy * t;
+      if ((ax - sx) * (ax - sx) + (ay - sy) * (ay - sy) < 64) {
+        hideLeader(slot); // under 8 px of leader is a smudge, not a line
+        continue;
+      }
+      // Half-pixel guard: at 60 fps most frames move the anchor by less than a pixel, and skipping
+      // those writes keeps the overlay off the critical path of a scene that is already rendering.
+      if (
+        slot.shown &&
+        Math.abs(sx - slot.sx) < 0.5 &&
+        Math.abs(sy - slot.sy) < 0.5 &&
+        Math.abs(ax - slot.ax) < 0.5 &&
+        Math.abs(ay - slot.ay) < 0.5
+      ) {
+        continue;
+      }
+      slot.sx = sx;
+      slot.sy = sy;
+      slot.ax = ax;
+      slot.ay = ay;
+      slot.line.setAttribute('x1', sx.toFixed(1));
+      slot.line.setAttribute('y1', sy.toFixed(1));
+      slot.line.setAttribute('x2', ax.toFixed(1));
+      slot.line.setAttribute('y2', ay.toFixed(1));
+      slot.dot.setAttribute('cx', ax.toFixed(1));
+      slot.dot.setAttribute('cy', ay.toFixed(1));
+      if (!slot.shown) {
+        slot.shown = true;
+        slot.g.setAttribute('display', '');
+      }
+    }
+  }
+
+  function clearAnatomy() {
+    anatomyTick = null;
+    anatomySlots = [];
+    anatomyAnchors = null;
+    anatomyPending = false;
+    anatomyMeasured = false;
+    if (anatomyEl) anatomyEl.remove();
+    anatomyEl = null;
+    anatomySvg = null;
+    el.classList.remove('has-anat');
+  }
+
+  /**
+   * Open (or close) the anatomy overlay.
+   *
+   * @param {Array<{id:string,anchor?:string,label:string,description:string}>|null} parts
+   *   up to four; `anchor` is the key into `sceneApi.anchors()`, defaulting to `id`.
+   */
+  function setAnatomy(parts) {
+    const list = Array.isArray(parts) ? parts.filter(Boolean).slice(0, 4) : null;
+    clearAnatomy();
+    if (!list || !list.length) return;
+    ensureAnatomyStyles();
+    ensureControlHooks();
+
+    anatomyEl = document.createElement('div');
+    anatomyEl.className = 'v-anat';
+    anatomySvg = document.createElementNS(SVG_NS, 'svg');
+    anatomySvg.setAttribute('class', 'v-anat-lines');
+    // The leaders duplicate no information: the card carries the copy, the line only says which
+    // part it belongs to. Nothing for a screen reader to read out.
+    anatomySvg.setAttribute('aria-hidden', 'true');
+    anatomyEl.appendChild(anatomySvg);
+
+    list.forEach((part, i) => {
+      const card = document.createElement('article');
+      card.className = `v-anat-card v-anat-${i + 1}`;
+      card.style.setProperty('--vd', `${(i * 0.06).toFixed(2)}s`);
+      const h = document.createElement('h2');
+      h.textContent = part.label || '';
+      const p = document.createElement('p');
+      p.textContent = part.description || '';
+      card.append(h, p);
+      anatomyEl.appendChild(card);
+
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.setAttribute('display', 'none');
+      const line = document.createElementNS(SVG_NS, 'line');
+      line.setAttribute('class', 'v-anat-line');
+      const dot = document.createElementNS(SVG_NS, 'circle');
+      dot.setAttribute('class', 'v-anat-dot');
+      dot.setAttribute('r', '2.5');
+      g.append(line, dot);
+      anatomySvg.appendChild(g);
+
+      anatomySlots.push({
+        id: part.anchor || part.id,
+        card,
+        g,
+        line,
+        dot,
+        cx: 0,
+        cy: 0,
+        hw: 0,
+        hh: 0,
+        sx: 0,
+        sy: 0,
+        ax: 0,
+        ay: 0,
+        shown: false,
+      });
+    });
+
+    stage.appendChild(anatomyEl);
+    el.classList.add('has-anat');
+    anatomyAnchors = typeof sceneApi.anchors === 'function' ? sceneApi.anchors() || null : null;
+    anatomyPending = anatomySlots.some((s) => !anatomyAnchors || typeof anatomyAnchors[s.id] !== 'function');
+    measureAnatomy();
+    // Reduced motion gets ONE projection pass, and further passes only when the geometry it was
+    // computed against actually changed: a resize, or the visitor orbiting by hand. Everything else
+    // on this step is already still, so a per-frame loop would burn a rAF to redraw four identical
+    // lines. Everything else re-projects with the render loop.
+    if (!prefersReducedMotion()) anatomyTick = projectAnatomy;
+    projectAnatomy();
+  }
+
+  // ---------- commanded camera + anatomy orbit ----------
+  //
+  // Both ride the existing OrbitControls rather than replacing it, so whatever the visitor does by
+  // hand still wins afterwards and `reset view` still means the scene's own cameraHome.
+  let orbitWanted = false;
+  let camTween = null;
+  let controlHooksOn = false;
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  function cancelCamTween() {
+    camTween = null;
+    controls.autoRotate = orbitWanted;
+  }
+
+  /**
+   * Put the shot exactly on a pose and leave nothing behind that will move it off again.
+   *
+   * OrbitControls with damping DECAYS its accumulated rotation instead of clearing it, so for
+   * roughly a second after any rotation - a drag, or the anatomy orbit being switched off - every
+   * `update()` is still adding a shrinking slice of angle. A commanded move that ends during that
+   * window lands on its pose and then quietly drifts about a degree off it. One `update()` with
+   * damping OFF is the only way to zero that accumulator from outside the module, and because that
+   * flushing update applies the whole remaining slice first, the pose is written on both sides of
+   * it. Costs one extra update per commanded move, and only on that path.
+   */
+  function settleControls(p, t) {
+    const damped = controls.enableDamping;
+    controls.enableDamping = false;
+    camera.position.copy(p);
+    controls.target.copy(t);
+    controls.update();
+    controls.enableDamping = damped;
+    camera.position.copy(p);
+    controls.target.copy(t);
+    camera.lookAt(controls.target);
+  }
+
+  function onControlsChange() {
+    // Only ever installed for the overlay. Under reduced motion this is the re-projection path
+    // (a hand orbit is the visitor's own motion, not ours); with the render loop running it is
+    // redundant and costs one no-op call per interaction frame.
+    if (!anatomyTick) projectAnatomy();
+  }
+
+  function ensureControlHooks() {
+    if (controlHooksOn) return;
+    controlHooksOn = true;
+    // A commanded move is a suggestion, not a seatbelt: the moment a hand lands on the stage the
+    // ease gets out of the way.
+    controls.addEventListener('start', cancelCamTween);
+    controls.addEventListener('change', onControlsChange);
+  }
+
+  function releaseControlHooks() {
+    if (!controlHooksOn) return;
+    controlHooksOn = false;
+    controls.removeEventListener('start', cancelCamTween);
+    controls.removeEventListener('change', onControlsChange);
+  }
+
+  /**
+   * Ease the shot to a pose the experience asked for. `null` means the scene's own home framing.
+   *
+   * @param {{position:{x,y,z},target:{x,y,z}}|null} pose
+   */
+  function applyCamera(pose) {
+    if (!pose || !pose.position || !pose.target) {
+      camTween = null;
+      resetView();
+      // Off the scene's own contract rather than off wherever resetView() left the camera: its
+      // controls.update() has the same decaying-rotation problem every other update does.
+      settleControls(
+        new THREE.Vector3(home.position.x, home.position.y, home.position.z),
+        new THREE.Vector3(home.target.x, home.target.y, home.target.z),
+      );
+      controls.autoRotate = orbitWanted;
+      projectAnatomy();
+      return;
+    }
+    const p = pose.position;
+    const t = pose.target;
+    if (![p.x, p.y, p.z, t.x, t.y, t.z].every((n) => Number.isFinite(n))) return;
+    ensureControlHooks();
+    const toP = new THREE.Vector3(p.x, p.y, p.z);
+    const toT = new THREE.Vector3(t.x, t.y, t.z);
+    if (prefersReducedMotion()) {
+      camTween = null;
+      settleControls(toP, toT);
+      projectAnatomy();
+      return;
+    }
+    camTween = {
+      fromP: camera.position.clone(),
+      fromT: controls.target.clone(),
+      toP,
+      toT,
+      start: nowMs(),
+      ms: CAMERA_EASE_MS,
+    };
+    controls.autoRotate = false; // the orbit resumes from wherever the move lands
+  }
+
+  /**
+   * The slow deliberate anatomy rotation. One revolution every ANATOMY_ORBIT_MS.
+   *
+   * Refused outright under reduced motion, which is the whole fallback: the step then shows a
+   * static hero pose with the labels attached to it, which is a complete screen rather than a
+   * degraded one.
+   *
+   * @param {boolean} on
+   */
+  function setOrbit(on) {
+    orbitWanted = !!on && !prefersReducedMotion();
+    controls.autoRotateSpeed = orbitSpeedFor(ANATOMY_ORBIT_MS);
+    controls.autoRotate = orbitWanted && !camTween;
+  }
+
+  /**
+   * Applied LAST in the frame, after both stepFollow() and controls.update().
+   *
+   * Not a stylistic ordering. OrbitControls with damping never zeroes its `sphericalDelta`: it
+   * decays it by `dampingFactor` per frame, so for a second or so after any rotation - including
+   * the anatomy orbit being switched off - `update()` is still adding a shrinking slice of angle
+   * every frame. Written before `update()`, the ease is that slice's starting point and the move
+   * lands tens of millimetres beside the pose it was given. Written after, the ease is the last
+   * writer and lands exactly on it, with the control's own glide-out harmlessly overwritten for
+   * the length of the move. `lookAt` is the line `update()` would have run.
+   *
+   * Absolute in the same way against a follow cam: a commanded move outranks the chase for its
+   * duration. The follow reclaims the target on the first frame after it lands, and because it
+   * translates camera and target by the same delta, the orbit offset this set survives.
+   */
+  function applyCameraTween(now) {
+    const k = clamp((now - camTween.start) / camTween.ms, 0, 1);
+    if (k >= 1) {
+      settleControls(camTween.toP, camTween.toT);
+      camTween = null;
+      controls.autoRotate = orbitWanted;
+      return;
+    }
+    const e = easeOutCubic(k);
+    camera.position.lerpVectors(camTween.fromP, camTween.toP, e);
+    controls.target.lerpVectors(camTween.fromT, camTween.toT, e);
+    camera.lookAt(controls.target);
+  }
 
   // ---------- render loop ----------
   const offTick = timeline.onTick(applyT);
@@ -890,11 +1401,31 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 
   let raf = 0;
   let disposed = false;
+  let lastFrameMs = 0;
   function frame() {
     if (disposed) return;
     stepFollow();
-    controls.update();
+    // Everything conditional below is dead for a viewer that was never handed an anatomy or a
+    // camera pose, which is every mission that is not in the four-step flow: `camTween` stays null,
+    // `autoRotate` stays the false OrbitControls was constructed with, and the loop runs the three
+    // lines it always ran. The clock is only read when one of them is live.
+    if (controls.autoRotate) {
+      const now = nowMs();
+      // Time-based rather than per-frame, so the revolution takes ANATOMY_ORBIT_MS on a 144 Hz
+      // laptop and on a throttled phone alike. Clamped, or a backgrounded tab returning to the
+      // foreground spins the robot through whatever it missed in one frame.
+      const dt = lastFrameMs ? clamp((now - lastFrameMs) / 1000, 1 / 240, 1 / 10) : 1 / 60;
+      lastFrameMs = now;
+      controls.update(dt);
+    } else {
+      lastFrameMs = 0;
+      controls.update();
+    }
+    if (camTween) applyCameraTween(nowMs());
     renderer.render(scene, camera);
+    // After the render, so the matrices this projects against are the ones the frame on screen was
+    // drawn with: the label lands on the pixels it belongs to rather than one frame behind them.
+    if (anatomyTick) anatomyTick();
     raf = requestAnimationFrame(frame);
   }
 
@@ -927,10 +1458,27 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     resetView,
     flashMarker,
     showBanner,
+    showContextBanner,
     hideBanner,
+    setAnatomy,
+    applyCamera,
+    // `setCamera` / `setCameraPose` / `setAutoRotate` are the names the flow probes for. Aliases
+    // rather than a rename, because `applyCamera` and `setOrbit` are the names in the plan and the
+    // flow lane must not have to change a line to get either behaviour.
+    setCamera: applyCamera,
+    setCameraPose: applyCamera,
+    setOrbit,
+    setAutoRotate: setOrbit,
     dispose() {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
+      // The overlay first: its per-frame hook has to stop before anything it reads is torn down,
+      // and its DOM is a child of `stage`, which the canvas removal below does not cover.
+      camTween = null;
+      orbitWanted = false;
+      controls.autoRotate = false;
+      clearAnatomy();
+      releaseControlHooks();
       ro.disconnect();
       offTick();
       offChange();

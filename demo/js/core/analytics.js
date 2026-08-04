@@ -1,4 +1,4 @@
-// analytics.js - the demo's funnel instrumentation. One module, one token, twelve events.
+// analytics.js - the demo's funnel instrumentation. One module, one token, one frozen event map.
 //
 // The question this exists to answer is a single number: how long from landing to the visitor
 // clicking an evidence chip THEMSELVES (`evidence_user_clicked`). That is the aha. Everything else
@@ -48,6 +48,10 @@ export const EVENTS = Object.freeze({
   MOCK_VIEWED: 'mock_viewed',
   BEAT_SHOWN: 'beat_shown',
   BEAT_CTA_CLICKED: 'beat_cta_clicked',
+  FLOW_STEP_SHOWN: 'flow_step_shown',
+  FLOW_STEP_CTA: 'flow_step_cta',
+  DEBUG_CHOICE_SHOWN: 'debug_choice_shown',
+  SHOW_WHY_CLICKED: 'show_why_clicked',
 });
 
 /** localStorage kill switch, for QA sessions that must not pollute the funnel. */
@@ -422,6 +426,26 @@ export const track = {
    */
   beatCtaClicked(robot, extra = {}) {
     capture(EVENTS.BEAT_CTA_CLICKED, { robot, ...extra });
+  },
+
+  /** @param {string} mission @param {{role?:string|null,step:string}} extra */
+  flowStepShown(mission, extra = {}) {
+    capture(EVENTS.FLOW_STEP_SHOWN, { mission, ...extra });
+  },
+
+  /** @param {string} mission @param {{role?:string|null,step:string}} extra */
+  flowStepCta(mission, extra = {}) {
+    capture(EVENTS.FLOW_STEP_CTA, { mission, ...extra });
+  },
+
+  /** @param {string} mission @param {{role?:string|null,step?:string}} extra */
+  debugChoiceShown(mission, extra = {}) {
+    capture(EVENTS.DEBUG_CHOICE_SHOWN, { mission, ...extra });
+  },
+
+  /** @param {string} mission @param {{role?:string|null,step?:string,finding?:string|null}} extra */
+  showWhyClicked(mission, extra = {}) {
+    capture(EVENTS.SHOW_WHY_CLICKED, { mission, ...extra });
   },
 
   /** @param {string} robot @param {{source?:string, length?:number}} [extra] source: chip|composer */

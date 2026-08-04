@@ -17,7 +17,7 @@ const ATTRIBUTION =
 const ROLE_SPLIT =
   'recorded independently on each robot by its onboard rosbag2 logger; converted offline for this demo; replayed here.';
 const FOOTER =
-  "Five synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.";
+  "Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.";
 
 let failures = 0;
 let checks = 0;
@@ -152,7 +152,7 @@ section('4. frozen disclosure and picker surfaces');
     ok(def.context.provenance.includes(token), `context.provenance names ${token}`);
   }
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
-  ok(html.includes('<h1>Replay a mission.</h1>'), 'global headline is frozen');
+  ok(html.includes('id="robot-grid"'), 'global mission library mount is present');
   ok(html.includes(FOOTER), 'global footer is frozen');
   const registry = await readFile(path.join(HERE, '..', 'index.js'), 'utf8');
   ok(/donna:\s*`[^`]*data-figure="donna"[^`]*data-figure="jack"[^`]*data-figure="rory"[^`]*`/s.test(registry), 'Donna picker fallback icon carries three labelled figure groups');

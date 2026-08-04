@@ -137,6 +137,7 @@ const def = {
       '54.100 /bot7/radio rxRssi=-63.80 rxPacketsLost=1.00 rxCrcErrors=0.000',
     ],
   },
+  hasExperience: true,
   accent: '#35c46a',
   duration,
   rate,
@@ -320,7 +321,11 @@ None of the fleet faults can be tied to this goal; they only share the window.`,
       evidence: [],
     },
   ],
-  buildScene,
+  // Why both: role-openers.js.
+  buildScene: (THREE, mount) =>
+    Object.assign(buildScene(THREE, mount), {
+      anchors: () => def.sceneAnchors && def.sceneAnchors(THREE, mount),
+    }),
 };
 
 export default def;

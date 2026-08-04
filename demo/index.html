@@ -39,7 +39,7 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
-body[data-screen="demo"] { overflow: hidden; }
+body[data-screen="demo"], body[data-screen="flow"] { overflow: hidden; }
 code, pre, .mono { font-family: 'Geist Mono', ui-monospace, monospace; }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
@@ -88,187 +88,90 @@ input { font: inherit; color: inherit; }
 }
 .topbar-link:hover { color: var(--tx); }
 
-/* ==================================================================== 0. start (role fork)
-   The first screen: one question, four full-bleed tappable cards, one tap to advance. Built by
-   js/core/start.js; every class below is a `st-` hook that module writes and this file styles.
-   HARD RULE at 390px: all four cards and the escape link fit in ONE viewport, so the fork is
-   a choice and never a scroll. */
-#screen-start { min-height: 100%; display: flex; flex-direction: column; }
-.start-body {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: 34px 22px 54px;
-}
-#start-mount { width: 100%; display: flex; justify-content: center; }
-
-.st { width: min(1180px, 100%); display: flex; flex-direction: column; gap: 26px; }
-.st-head { text-align: center; }
-.st-kicker { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tx-mute); }
-.st-title {
-  font-size: clamp(31px, 6vw, 52px); font-weight: 500; line-height: 1.05;
-  letter-spacing: -0.035em; max-width: 15ch; margin: 14px auto 0;
-}
-.st-sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 14px auto 0; max-width: 44ch; }
-
-/* FOUR cards since roles v2. One row on a desktop viewport: a 2x2 grid put the fourth seat below
-   the fold on a laptop, and the fork only works when every seat is visible at once. */
-.st-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+/* ==================================================================== 0. start (role fork) */
+#screen-start { min-height: 100dvh; display: flex; flex-direction: column; }
+.start-body { flex: 1; min-height: 0; display: flex; padding: 42px 24px 38px; }
+#start-mount { flex: 1; width: 100%; min-height: 0; display: flex; justify-content: center; }
+.st { width: min(1180px, 100%); height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.st-head { margin-top: 4px; }
+.st-title { font-size: clamp(40px, 5vw, 62px); font-weight: 400; line-height: 1.04; letter-spacing: -0.04em; }
+.st-sub { margin-top: 12px; font-size: 16px; color: var(--tx-body); }
+.st-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 28px; }
 .st-card {
-  position: relative; overflow: hidden; text-align: left;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 9px;
-  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 19px 17px 16px;
-  transition: transform .18s cubic-bezier(.16,1,.3,1), border-color .18s ease, background .18s ease;
+  min-height: 104px; display: flex; align-items: center; gap: 18px; text-align: left;
+  padding: 24px 18px; background: var(--card); border: 1px solid var(--line-hi); border-radius: 12px;
+  transition: border-color .16s ease, background .16s ease;
 }
-.st-card::after {
-  content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 100%;
-  background: var(--blue); opacity: 0; transition: opacity .18s ease;
+.st-card:hover { border-color: rgba(47,120,255,.6); }
+.st-card.is-selected { border-color: var(--blue-hi); background: rgba(2,93,254,.16); }
+.st-radio { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255,255,255,.82); display: grid; place-items: center; flex: 0 0 auto; background: #fff; }
+.st-radio i { width: 11px; height: 11px; border-radius: 50%; background: transparent; }
+.st-card.is-selected .st-radio { border-color: var(--blue-hi); }
+.st-card.is-selected .st-radio i { background: var(--blue); box-shadow: inset 0 0 0 2px #fff; }
+.st-label { font-size: 18px; line-height: 1.35; color: var(--tx); }
+.st-continue, .pick-open, .flow-cta {
+  width: 100%; min-height: 52px; display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: auto; padding: 14px 22px; border-radius: 10px; background: var(--blue); color: #fff;
+  font-weight: 500; transition: background .15s ease, transform .15s ease;
 }
-.st-card:hover { transform: translateY(-3px); border-color: var(--line-hi); background: var(--elev); }
-.st-card:hover::after { opacity: .9; }
-.st-glyph {
-  display: grid; place-items: center; width: 38px; height: 38px;
-  border: 1px solid var(--line); border-radius: 10px; color: var(--blue-hi);
-}
-.st-glyph svg { width: 20px; height: 20px; }
-.st-kick { font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--tx-mute); }
-.st-label { font-size: 16px; font-weight: 500; letter-spacing: -0.018em; line-height: 1.25; color: var(--tx); }
-.st-blurb { font-size: 12px; line-height: 1.45; color: var(--tx-body); }
-.st-go { margin-top: auto; padding-top: 12px; font-size: 11px; letter-spacing: 0.02em; color: var(--blue-hi); }
-/* the seat this visitor already took: marked, never auto-advanced */
-.st-card.is-current { border-color: color-mix(in srgb, var(--blue-hi) 45%, var(--line)); }
-.st-card.is-current::after { opacity: .55; }
-/* the tap is the submit: the chosen card lifts and the screen stops taking input while the route
-   changes under it */
-.st-card.is-picked { transform: translateY(-3px); border-color: var(--blue-hi); background: var(--elev); }
-.st-card.is-picked::after { opacity: 1; }
-.st.st-picked { pointer-events: none; }
-.st.st-picked .st-card:not(.is-picked) { opacity: .5; }
-
-.st-hint { text-align: center; font-size: 12.5px; color: var(--tx-mute); }
-.st-escape {
-  align-self: center; display: inline-flex; align-items: center; gap: 7px;
-  font-size: 13px; color: var(--tx-mute); padding: 6px 4px; transition: color .15s ease;
-}
+.st-continue:hover, .pick-open:hover, .flow-cta:hover { background: var(--blue-hi); transform: translateY(-1px); }
+.st-continue:disabled { opacity: .42; cursor: default; transform: none; }
+.st-escape { align-self: center; margin-top: 12px; padding: 5px; font-size: 12px; color: var(--tx-mute); }
 .st-escape:hover { color: var(--tx); }
-.st-escape-go { color: inherit; }
-
-/* SHORT desktop windows. The four-in-a-row grid is a width rule, but the thing that pushes the
-   fourth seat and the escape link under the fold is HEIGHT: at the default rhythm the fork is about
-   660 px tall, so a windowed browser or a 1024x640 panel scrolled the one screen whose hard rule is
-   that every seat is visible at once. The rhythm tightens instead of the cards wrapping, because a
-   second row is the layout that put a seat below the fold in the first place. */
-@media (min-width: 900px) and (max-height: 720px) {
-  .start-body { padding: 20px 20px 26px; }
-  .st { gap: 16px; }
-  .st-title { font-size: clamp(28px, 3.4vw, 38px); margin-top: 10px; }
-  .st-sub { font-size: 15px; margin-top: 9px; }
-  .st-card { padding: 15px 14px 13px; gap: 7px; }
-  .st-glyph { width: 32px; height: 32px; }
-  .st-glyph svg { width: 17px; height: 17px; }
-  .st-go { padding-top: 9px; }
-}
+.st.st-picked { pointer-events: none; }
 
 @media (max-width: 899px) {
-  .start-body { padding: 18px 16px 26px; }
-  .st { gap: 18px; }
-  .st-title { font-size: clamp(28px, 8.2vw, 36px); margin-top: 10px; }
-  .st-sub { font-size: 14.5px; margin-top: 10px; }
-  .st-cards { grid-template-columns: minmax(0, 1fr); gap: 9px; }
-  /* stacked and full width, and compact enough that all four plus the escape sit in one 390x844
-     viewport: glyph on the left, the sentence in the middle, the affordance on the right */
-  .st-card {
-    display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center; gap: 2px 12px; padding: 12px 14px; border-radius: 14px;
-  }
-  .st-glyph { grid-row: 1 / span 2; width: 32px; height: 32px; }
-  .st-glyph svg { width: 17px; height: 17px; }
-  .st-kick { display: none; }
-  .st-label { grid-column: 2; font-size: 15px; }
-  .st-blurb { grid-column: 2; font-size: 11.5px; line-height: 1.4; }
-  .st-go { grid-column: 3; grid-row: 1 / span 2; margin-top: 0; padding-top: 0; font-size: 10.5px; }
-  .st-hint { font-size: 12px; }
+  .start-body { padding: 34px 18px 22px; }
+  .st-title { font-size: clamp(38px, 12vw, 54px); }
+  .st-sub { font-size: 15px; }
+  .st-cards { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 24px; }
+  .st-card { min-height: 70px; padding: 18px 16px; border-radius: 12px; }
+  .st-label { font-size: 19px; }
+  .st-continue { min-height: 54px; }
 }
 
 /* ==================================================================== 1. picker */
-#screen-picker { min-height: 100%; display: flex; flex-direction: column; }
-.pick-wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; width: 100%; }
-.pick-hero { padding: 62px 0 34px; text-align: center; }
-.pick-hero h1 {
-  font-size: clamp(32px, 6.2vw, 54px); font-weight: 500; line-height: 1.04;
-  letter-spacing: -0.035em; max-width: 720px; margin: 18px auto 0;
-}
-.pick-hero .sub { font-size: clamp(15px, 3.4vw, 18px); color: var(--tx-body); margin: 16px auto 0; max-width: 480px; }
-
-/* Four across, not seven. The cards carry the mission and the fault now, and a seventh of 1080px
-   is 140px of line length: a two-line clamp there truncated mid-word on every card. The picker is
-   the secondary screen since the role fork took the landing, so it can afford the second row. */
-#robot-grid {
-  --gap: 14px;
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap);
-  padding-bottom: 46px;
-}
-@media (max-width: 1000px) {
-  #robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* An odd number of cards leaves the last one alone on its row. The art panel is a square, so
-     stretching it across both columns opens a tile as tall as the phone is wide; instead the lone
-     card keeps a normal card's width and sits centred.
-     Matched by TYPE, not by child position: preview.js appends its shared WebGL canvas to this
-     same grid, so the last card is never the last child. */
-  #robot-grid > a.rcard:nth-of-type(odd):last-of-type {
-    grid-column: 1 / -1; width: calc(50% - var(--gap) / 2); justify-self: center;
-  }
-}
-
+#screen-picker { height: 100dvh; display: flex; flex-direction: column; }
+.pick-wrap { width: min(1180px, 100%); margin: 0 auto; padding: 0 24px; }
+.pick-library { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 38px; padding-bottom: 20px; }
+#robot-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .rcard {
-  display: flex; flex-direction: column; gap: 11px;
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-  padding: 12px 12px 13px; position: relative; overflow: hidden;
-  transition: transform .18s cubic-bezier(.16,1,.3,1), border-color .18s ease, background .18s ease;
+  min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  text-align: left; background: var(--card); border: 1px solid var(--line-hi); border-radius: 12px;
+  transition: border-color .16s ease, background .16s ease;
 }
-.rcard::after {
-  content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 100%;
-  background: var(--acc); opacity: 0; transition: opacity .18s ease;
-}
-.rcard:hover { transform: translateY(-3px); border-color: var(--line-hi); background: var(--elev); }
-.rcard:hover::after { opacity: .85; }
+.rcard:hover { border-color: color-mix(in srgb, var(--acc) 55%, var(--line-hi)); }
+.rcard.is-selected { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 7%, var(--card)); }
 .rcard-art {
-  aspect-ratio: 1 / 1; width: 100%; display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--line); border-radius: 10px; color: var(--tx-mute);
-  /* product-shot backdrop: lifted vignetted base + a faint accent glow behind the machine,
-     so the dark-metal models separate from the tile instead of sinking into it */
+  aspect-ratio: 16 / 8; display: flex; align-items: center; justify-content: center; color: var(--tx-mute);
+  border: 1px solid var(--line-hi); border-radius: 8px;
   background:
-    linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 14px 14px,
-    linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px) 0 0 / 14px 14px,
-    radial-gradient(ellipse 78% 66% at 50% 50%, color-mix(in srgb, var(--acc) 17%, transparent), transparent 74%),
-    radial-gradient(ellipse 120% 105% at 50% 42%, #2a303a 0%, #20242b 55%, #171a1f 100%);
+    linear-gradient(rgba(255,255,255,.055) 1px, transparent 1px) 0 0 / 18px 18px,
+    linear-gradient(90deg, rgba(255,255,255,.055) 1px, transparent 1px) 0 0 / 18px 18px,
+    #202326;
 }
-.rcard-art svg { width: 132px; height: 88px; overflow: visible; transition: opacity .4s ease; }
+.rcard-art svg { width: 104px; height: 68px; overflow: visible; transition: opacity .3s ease; }
 .rcard-art svg .acc { stroke: var(--acc); }
-/* the SVG line art is the instant placeholder and the no-WebGL fallback. js/core/preview.js adds
-   .preview-live once that card's robot has actually rendered a frame, and the art crossfades out
-   under the live 3D. */
 .rcard-art.preview-live svg { opacity: 0; }
-.rcard-body { padding: 0 3px; }
-.rcard-name { font-size: 15.5px; font-weight: 500; letter-spacing: -0.015em; }
-.rcard-tag { font-size: 12.5px; color: var(--tx-body); margin-top: 3px; }
-/* the problem, under the label: what went wrong in this mission. The copy is authored short and
-   fault-first (`context.cardProblem`), so the clamp is a guard against a generated demo's derived
-   line rather than the thing that shapes the card. Three lines, not two: at 11.5px in a quarter of
-   1180px a two-line clamp holds about 80 characters, and the fault is the half that earns the
-   click, so it must never be the half that falls off the bottom. */
-.rcard-prob {
-  font-size: 11.5px; line-height: 1.42; color: var(--tx-mute); margin-top: 5px;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
-  overflow: hidden;
-}
-.rcard-go { padding: 0 3px; }
-.rcard-go { font-size: 11.5px; color: var(--acc); letter-spacing: 0.02em; }
+.rcard-body { min-width: 0; }
+.rcard-name { font-size: 16px; font-weight: 400; letter-spacing: -0.015em; }
+.rcard-tag { margin-top: 8px; font-size: 12.5px; line-height: 1.45; color: var(--tx-mute); }
+.pick-open { margin-top: auto; }
+.pick-foot { flex: 0 0 auto; padding: 0 24px 18px; }
+.pick-foot .note { max-width: 980px; margin: 0 auto; text-align: center; color: var(--tx-mute); font-size: 11px; }
 
-.pick-foot {
-  margin-top: auto; border-top: 1px solid var(--line); padding: 26px 0 40px;
+@media (max-width: 899px) {
+  .pick-wrap { padding: 0 18px; }
+  .pick-library { padding-top: 24px; padding-bottom: 16px; }
+  #robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .rcard { padding: 12px; gap: 10px; }
+  .rcard-art { aspect-ratio: 16 / 8; }
+  .rcard-art svg { width: 86px; height: 54px; }
+  .rcard-name { font-size: 15px; }
+  .rcard-tag { font-size: 11.5px; }
+  .pick-open { min-height: 54px; }
+  .pick-foot { padding: 0 18px 12px; }
 }
-.pick-foot .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
-.pick-foot .note { text-align: center; color: var(--tx-mute); font-size: 12.5px; margin-top: 16px; }
 
 /* ==================================================================== 2. connect */
 #screen-connect { min-height: 100%; display: flex; flex-direction: column; }
@@ -951,6 +854,106 @@ input { font: inherit; color: inherit; }
   .mk.mk-live .mk-ard-out::after, .mk.mk-live .mk-inbox-wall::after { animation: none; }
 }
 
+/* ==================================================================== 2e. four-step flow */
+#screen-flow { height: 100dvh; display: flex; flex-direction: column; }
+.flow-head { flex: 0 0 auto; }
+.flow-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.flow-id .flow-dot { width: 12px; height: 12px; border-radius: 4px; background: var(--blue); }
+.flow-id h2 { min-width: 0; font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flow-progress { font-size: 12px; color: var(--tx-mute); letter-spacing: .08em; }
+.flow-body { flex: 1; min-height: 0; padding: 26px 24px 20px; overflow-y: auto; overscroll-behavior: contain; }
+.flow { width: min(1180px, 100%); height: 100%; margin: 0 auto; display: grid; gap: 14px; min-height: 620px; }
+.flow-title { grid-area: title; font-size: clamp(38px, 4.6vw, 58px); line-height: 1.02; font-weight: 400; letter-spacing: -.04em; }
+.flow-intro { grid-area: intro; color: var(--tx); font-size: 15px; line-height: 1.45; }
+.flow-provenance {
+  grid-area: provenance; min-width: 0; max-width: 100%; padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
+  font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.5;
+  color: var(--tx-mute); overflow-wrap: anywhere;
+}
+.flow-viewer-frame { grid-area: viewer; position: relative; min-width: 0; min-height: 0; border: 1px solid var(--line-hi); border-radius: 12px; overflow: hidden; background: #101313; }
+.flow-viewer-mount { position: absolute; inset: 0; }
+#screen-flow .v-shud { display: none !important; }
+#screen-flow .viewer.has-shud .v-anat { padding-top: 14px !important; }
+#screen-flow .viewer.has-shud.has-banner .v-anat { padding-top: 56px !important; }
+#screen-flow .viewer.has-shud .v-banner { top: 12px !important; }
+.flow-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: var(--tx-mute); }
+.flow-fallback svg { width: min(44%, 320px); height: auto; overflow: visible; }
+.flow-fallback svg .acc { stroke: var(--acc, var(--blue-hi)); }
+.flow-play {
+  position: absolute; left: 50%; bottom: 18px; z-index: 5; transform: translateX(-50%);
+  padding: 8px 14px; border: 1px solid var(--line-hi); border-radius: 60px;
+  color: var(--tx); background: rgba(17,17,17,.82); backdrop-filter: blur(10px);
+}
+.flow-play:hover { border-color: var(--blue-hi); }
+.flow-anatomy { display: contents; }
+.flow-part { padding: 14px; background: var(--card); border: 1px solid var(--line-hi); border-radius: 10px; align-self: center; }
+.flow-part h2 { font-size: 14px; font-weight: 500; }
+.flow-part p { margin-top: 6px; font-size: 12px; line-height: 1.45; color: var(--tx-body); }
+.flow-context { grid-area: context; display: flex; flex-direction: column; justify-content: center; }
+.flow-context-row { padding: 14px 0; border-top: 1px solid var(--line-hi); }
+.flow-context-row:last-child { border-bottom: 1px solid var(--line-hi); }
+.flow-context-row strong { font-size: 16px; font-weight: 400; }
+.flow-context-row span { display: block; margin-top: 4px; color: var(--tx-mute); font-size: 12px; }
+.flow-chart-frame { grid-area: chart; min-width: 0; min-height: 0; border: 1px solid var(--line-hi); border-radius: 12px; overflow: hidden; }
+.flow-chart-mount { width: 100%; height: 100%; display: flex; }
+.flow-debug { grid-area: debug; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.flow-debug-card { min-height: 192px; display: flex; flex-direction: column; padding: 18px; background: var(--card); border: 1px solid var(--line-hi); border-radius: 12px; }
+.flow-debug-card.is-choice { border-color: var(--blue-hi); background: rgba(2,93,254,.16); }
+.flow-debug-card h2 { font-size: 17px; font-weight: 400; }
+.flow-debug-card p { margin-top: 28px; color: var(--tx-mute); font-size: 12px; }
+.flow-debug-card strong { margin-top: auto; font-size: 40px; line-height: 1; font-weight: 400; }
+.flow-debug-card.is-choice strong { color: var(--sage); }
+.flow-cta { grid-area: cta; margin-top: 0; }
+
+.flow[data-step="robot"] { grid-template-columns: minmax(210px, 1fr) minmax(380px, 1.45fr) minmax(210px, 1fr); grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto; grid-template-areas: "title title title" "part1 viewer part2" "part3 viewer part4" "cta cta cta"; }
+.flow.has-provenance[data-step="robot"] { grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto auto; grid-template-areas: "title title title" "part1 viewer part2" "part3 viewer part4" "provenance provenance provenance" "cta cta cta"; }
+.flow[data-step="robot"] .flow-part-1 { grid-area: part1; }
+.flow[data-step="robot"] .flow-part-2 { grid-area: part2; }
+.flow[data-step="robot"] .flow-part-3 { grid-area: part3; }
+.flow[data-step="robot"] .flow-part-4 { grid-area: part4; }
+.flow[data-step="robot"] .flow-intro, .flow[data-step="robot"] .flow-context, .flow[data-step="robot"] .flow-chart-frame, .flow[data-step="robot"] .flow-debug { display: none; }
+.flow[data-step="robot"] .flow-viewer-frame .v-hud { display: none; }
+.flow.has-viewer-anatomy[data-step="robot"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "title" "viewer" "cta"; }
+.flow.has-viewer-anatomy.has-provenance[data-step="robot"] { grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "title" "viewer" "provenance" "cta"; }
+.flow.has-viewer-anatomy[data-step="robot"] .flow-anatomy { display: none; }
+.flow[data-step="mission"] { grid-template-columns: minmax(0, 3fr) minmax(180px, .8fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro intro" "viewer context" "cta cta"; }
+.flow[data-step="mission"] .flow-intro { padding: 10px 12px; border: 1px solid var(--line-hi); border-radius: 9px; background: rgba(17,17,17,.9); }
+.flow[data-step="mission"] .flow-viewer-frame .v-hud { display: none; }
+.flow[data-step="mission"] .flow-anatomy, .flow[data-step="mission"] .flow-chart-frame, .flow[data-step="mission"] .flow-debug { display: none; }
+.flow[data-step="failure"] { grid-template-columns: minmax(300px, .75fr) minmax(0, 1.65fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro chart" "viewer chart" "cta cta"; }
+.flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title title" "intro chart" "viewer chart" "provenance provenance" "cta cta"; }
+.flow[data-step="failure"] .flow-intro { padding: 0 4px; align-self: start; }
+.flow[data-step="failure"] .flow-viewer-frame .v-hud { display: none; }
+.flow[data-step="failure"] .flow-anatomy, .flow[data-step="failure"] .flow-context, .flow[data-step="failure"] .flow-debug { display: none; }
+.flow[data-step="choose"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title" "debug" "." "cta"; }
+.flow[data-step="choose"] .flow-intro, .flow[data-step="choose"] .flow-anatomy, .flow[data-step="choose"] .flow-viewer-frame, .flow[data-step="choose"] .flow-context, .flow[data-step="choose"] .flow-chart-frame { display: none; }
+
+@media (max-width: 899px) {
+  .flow-body { padding: 24px 18px 18px; }
+  .flow { height: auto; min-height: 100%; }
+  .flow-title { font-size: clamp(36px, 11vw, 50px); }
+  .flow[data-step="robot"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto auto minmax(260px, 1fr) auto auto; grid-template-areas: "title title" "part1 part2" "viewer viewer" "part3 part4" "cta cta"; }
+  .flow.has-provenance[data-step="robot"] { grid-template-rows: auto auto minmax(260px, 1fr) auto auto auto; grid-template-areas: "title title" "part1 part2" "viewer viewer" "part3 part4" "provenance provenance" "cta cta"; }
+  .flow.has-viewer-anatomy[data-step="robot"] { grid-template-columns: 1fr; grid-template-rows: auto minmax(560px, 1fr) auto; grid-template-areas: "title" "viewer" "cta"; }
+  .flow.has-viewer-anatomy.has-provenance[data-step="robot"] { grid-template-rows: auto minmax(560px, 1fr) auto auto; grid-template-areas: "title" "viewer" "provenance" "cta"; }
+  .flow-part { align-self: stretch; padding: 12px; }
+  .flow-part h2 { font-size: 13px; }
+  .flow-part p { font-size: 11.5px; }
+  .flow[data-step="mission"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title" "intro" "viewer" "context" "cta"; }
+  .flow[data-step="mission"] .flow-context { flex-direction: row; gap: 10px; }
+  .flow[data-step="mission"] .flow-context-row { flex: 1; border-bottom: 0; }
+  .flow[data-step="failure"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(220px, .72fr) minmax(300px, 1.28fr) auto; grid-template-areas: "title" "intro" "viewer" "chart" "cta"; }
+  .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(220px, .72fr) minmax(300px, 1.28fr) auto auto; grid-template-areas: "title" "intro" "viewer" "chart" "provenance" "cta"; }
+  .flow[data-step="failure"] .flow-intro { font-size: 14px; }
+  .flow-provenance { font-size: 10px; line-height: 1.45; }
+  .flow[data-step="choose"] { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .flow-debug { grid-template-columns: 1fr; gap: 10px; }
+  .flow-debug-card { min-height: 86px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 6px 14px; }
+  .flow-debug-card p { margin-top: 0; }
+  .flow-debug-card strong { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 32px; }
+}
+
 /* ==================================================================== 3. demo */
 #screen-demo { height: 100dvh; display: flex; flex-direction: column; }
 .demo-head { flex: 0 0 auto; }
@@ -979,6 +982,11 @@ input { font: inherit; color: inherit; }
 .viewer { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .v-stage { flex: 1; min-height: 0; position: relative; }
 .v-canvas { display: block; width: 100%; height: 100%; }
+
+/* no-WebGL stand-in: the mission's line art where the renderer would be */
+.v-fallback .v-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--tx-mute); }
+.v-fallback .v-stage svg { width: min(46%, 220px); height: auto; }
+.v-fallback-note { font-size: 11px; color: var(--tx-mute); text-align: center; max-width: 300px; padding: 0 16px; }
 
 .v-hud {
   flex: 0 0 auto; padding: 9px 14px 12px;
@@ -1203,7 +1211,7 @@ input { font: inherit; color: inherit; }
 }
 
 /* The coach line: one system note, once per session, right after the auto-played chip. It is NOT
-   an analyst message and must not look like one — the analyst only ever says things it can cite,
+   an analyst message and must not look like one. The analyst only ever says things it can cite,
    and this is the demo explaining its own interface. Hairline rule, mono, muted, no avatar. */
 .msg.coach { align-items: stretch; }
 .coach-note {
@@ -1312,6 +1320,40 @@ input { font: inherit; color: inherit; }
 .guide-cta:disabled {
   background: none; border-color: var(--line); color: var(--tx-mute);
   cursor: default; transform: none;
+}
+
+/* ============================================== 3c. demo internal modes */
+/* The onboarding wall owns the primary action. Header acquisition links stay out of chat and
+   follow-up, and the pending Show why row temporarily replaces the composer as the only action. */
+#screen-demo[data-mode="chat"] .demo-ctas [data-cta],
+#screen-demo[data-mode="followup"] .demo-ctas [data-cta],
+#screen-demo[data-mode="followup"].show-why-pending .chat-form { display: none; }
+#screen-demo[data-mode="chat"] .demo-main,
+#screen-demo[data-mode="followup"] .demo-main { grid-template-columns: minmax(0, 1fr); }
+#screen-demo[data-mode="chat"] .right-col,
+#screen-demo[data-mode="followup"] .right-col { display: none; }
+#screen-demo[data-mode="chat"] .chat-col,
+#screen-demo[data-mode="followup"] .chat-col { border-right: 0; }
+#screen-demo[data-mode="chat"] #chat-mount,
+#screen-demo[data-mode="followup"] #chat-mount { width: 100%; max-width: 760px; margin: 0 auto; }
+#screen-demo[data-mode="proof"] .demo-main { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(320px, .75fr); grid-template-rows: minmax(0, 1fr) auto; }
+#screen-demo[data-mode="proof"] .right-col { display: contents; }
+#screen-demo[data-mode="proof"] .viewer-panel { grid-column: 1; grid-row: 1 / span 2; }
+#screen-demo[data-mode="proof"] .chart-panel { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line); }
+#screen-demo[data-mode="proof"] .chat-col { grid-column: 2; grid-row: 2; min-height: 94px; border-left: 1px solid var(--line); border-right: 0; }
+#screen-demo[data-mode="proof"] .chat-log, #screen-demo[data-mode="proof"] .sugg { display: none; }
+#screen-demo[data-mode="proof"] .chat-foot { padding-top: 12px; }
+
+@media (max-width: 899px) {
+  #screen-demo[data-mode="chat"] .chat-col,
+  #screen-demo[data-mode="followup"] .chat-col { order: 1; min-height: 0; }
+  #screen-demo[data-mode="proof"] .demo-main { display: flex; flex-direction: column; }
+  #screen-demo[data-mode="proof"] .right-col { display: contents; }
+  #screen-demo[data-mode="proof"] .viewer-panel { order: 1; flex: 1 1 48dvh; min-height: 36dvh; }
+  #screen-demo[data-mode="proof"] .chart-panel { order: 2; flex: 0 0 28dvh; border-left: 0; }
+  #screen-demo[data-mode="proof"] .chart-panel .chart-mount { height: 28dvh; flex-basis: 28dvh; border-top: 1px solid var(--line); }
+  #screen-demo[data-mode="proof"] .chart-toggle { display: none; }
+  #screen-demo[data-mode="proof"] .chat-col { order: 3; flex: 0 0 auto; min-height: 82px; border-left: 0; border-top: 1px solid var(--line); }
 }
 
 /* ================================================================= signup popup */
@@ -1454,11 +1496,9 @@ input { font: inherit; color: inherit; }
   /* one-line header: the device string and the secondary CTA are picker information,
      not worth their pixels on a phone */
   .demo-id .dev { display: none; }
-  /* The ONE CTA that survives on a phone is the library, not the org signup. A guided visitor goes
-     #/start -> #/connect/<mission> -> #/demo/<mission> and never passes the picker, and the guided
-     brief renders no CTA of its own, so this header is the only place "Get the library" is on
-     screen for that whole journey. Hiding it here left the mobile guided path with zero library
-     impressions and the signup popup as the only conversion surface on the page. */
+  /* Experience modes keep both acquisition links off the phone. Legacy demos retain the library
+     link as their compact conversion surface, while setup remains desktop-only. */
+  #screen-demo[data-mode] .demo-ctas [data-cta] { display: none; }
   .demo-ctas [data-cta="setup"] { display: none; }
   /* the back arrow already goes to #/missions and is labelled for it: the text link is desktop
      chrome and there is no room for it beside the one CTA that survives */
@@ -1560,7 +1600,7 @@ input { font: inherit; color: inherit; }
 <body class="gridbg" data-screen="start">
 
 <!-- ============================================================ 0. START  #/start
-     The role fork. One question, one tap, three cards, and an escape to the full picker.
+     The role fork. One question, four radio cards, one Continue action, and an escape to the picker.
      js/core/start.js builds the panel into #start-mount; nothing is authored here but the frame. -->
 <section id="screen-start" hidden>
   <header class="topbar">
@@ -1581,22 +1621,13 @@ input { font: inherit; color: inherit; }
     <a class="topbar-link mono" href="#/start">Pick your seat <span aria-hidden="true">&rsaquo;</span></a>
   </header>
 
-  <div class="pick-wrap">
-    <div class="pick-hero">
-      <h1>Replay a mission.</h1>
-      <p class="sub">Pick a robot. Ask it why it failed.</p>
-    </div>
-    <div id="robot-grid"></div>
+  <div class="pick-wrap pick-library">
+    <div id="robot-grid" role="radiogroup" aria-label="Mission library"></div>
+    <button class="pick-open" id="picker-open" type="button"><span>Open a mission</span><span aria-hidden="true">→</span></button>
   </div>
 
   <div class="pick-foot">
-    <div class="pick-wrap">
-      <div class="row">
-        <a class="btn" data-cta="github" href="#" target="_blank" rel="noopener">Get the library</a>
-        <a class="btn ghost" data-cta="setup" href="#" target="_blank" rel="noopener">Set up your org</a>
-      </div>
-      <p class="note">Five synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.</p>
-    </div>
+    <p class="note">Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.</p>
   </div>
 </section>
 
@@ -1611,13 +1642,44 @@ input { font: inherit; color: inherit; }
   </div>
 </section>
 
-<!-- ============================================================ 3. DEMO  #/demo/:id -->
+<!-- ============================================================ 3. FLOW  #/connect/:id/:step -->
+<section id="screen-flow" hidden>
+  <header class="topbar flow-head">
+    <a class="flow-id" href="#/missions" aria-label="Back to all missions">
+      <i class="flow-dot"></i><h2 id="flow-name">Mission</h2>
+    </a>
+    <span class="flow-progress mono" id="flow-progress">1 / 4</span>
+  </header>
+  <div class="flow-body">
+    <main class="flow" id="flow-mount">
+      <h1 class="flow-title" id="flow-title"></h1>
+      <p class="flow-intro" id="flow-intro" hidden></p>
+      <div class="flow-anatomy" id="flow-anatomy"></div>
+      <section class="flow-viewer-frame" aria-label="Mission replay">
+        <div class="flow-viewer-mount" id="flow-viewer-mount"></div>
+        <button class="flow-play mono" id="flow-play" type="button" hidden>Play success loop</button>
+        <div class="flow-fallback" id="flow-fallback" hidden>
+          <svg viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>
+        </div>
+      </section>
+      <aside class="flow-context" id="flow-context"></aside>
+      <section class="flow-chart-frame" aria-label="Focused telemetry">
+        <div class="flow-chart-mount" id="flow-chart-mount"></div>
+      </section>
+      <div class="flow-debug" id="flow-debug"></div>
+      <p class="flow-provenance" id="flow-provenance" hidden></p>
+      <button class="flow-cta" id="flow-cta" type="button"><span></span><span aria-hidden="true">→</span></button>
+    </main>
+  </div>
+</section>
+
+<!-- ============================================================ 4. DEMO  #/demo/:id -->
 <!-- `data-guide="chat"` is the GUIDED entry state, and it is authored here rather than set by JS on
      purpose: js/core/guide.js walks sbr, ssl and battle one beat at a time, and the chart and the
      3D stage must be out of the layout in this section's first painted frame. app.js deletes the
      attribute before the screen is shown for every mission that is not guided, and again at the
      walk's handover, which is the moment the layout below becomes the one every mission shares. -->
-<section id="screen-demo" data-guide="chat" hidden>
+<section id="screen-demo" hidden>
   <header class="topbar demo-head">
     <a class="back" href="#/missions" aria-label="Back to all missions">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.5 2.5L4 7l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -225,12 +225,12 @@ section('5. disclosure surfaces');
 
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
   ok(
-    html.includes('Five synthetic missions'),
-    'the picker footer counts five synthetic missions now that the battle round shipped',
+    html.includes('Two synthetic missions'),
+    'the picker footer counts the two synthetic missions still in the public roster',
   );
   ok(
     html.includes(
-      "Five synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.",
+      "Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.",
     ),
     'the picker footer sentence is the authored copy, verbatim',
   );

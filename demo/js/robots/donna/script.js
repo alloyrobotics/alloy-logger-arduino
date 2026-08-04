@@ -18,7 +18,7 @@ import {
   buildData,
   findings,
   factsSeriesPoints,
-  loadSceneData,
+  loadSceneData as loadMissionData,
   isSceneDataLoaded,
   getSceneData,
   previewData,
@@ -40,7 +40,31 @@ const ATTRIBUTION =
 const ROLE_SPLIT =
   'recorded independently on each robot by its onboard rosbag2 logger; converted offline for this demo; replayed here.';
 
-export default {
+/**
+ * The four-step connect-flow experience, merged onto the def when the recorded payload lands.
+ *
+ * It lives behind a dynamic import for the reason `experience.js` gives in full: script.js is eager
+ * on every visitor who opens the picker and none of the flow's copy, windows or anchors can be read
+ * before the payload exists. This side stays one call, and a module that will not load leaves
+ * `experience` unset so the mission falls back to the legacy brief instead of stranding the route.
+ * `hasExperience` below is the static flag routing reads before any of this has run.
+ */
+let experiencePromise = null;
+function loadExperience() {
+  if (!experiencePromise) {
+    experiencePromise = import('./experience.js').then(
+      (mod) => {
+        if (mod && mod.applyExperience) mod.applyExperience(def);
+      },
+      (err) => {
+        console.warn('[donna] mission experience unavailable; the legacy brief is used', err);
+      },
+    );
+  }
+  return experiencePromise;
+}
+
+const def = {
   id: 'donna',
   name: 'Donna, Jack & Rory',
   device: 'Three Wolfgang-OP humanoids · Hamburg Bit-Bots · onboard ROS 2 rosbag2 recordings',
@@ -142,9 +166,11 @@ export default {
   findings,
   factsSeriesPoints,
   previewData,
-  loadSceneData,
+  loadSceneData: () => loadMissionData().then((d) => loadExperience().then(() => d)),
   isSceneDataLoaded,
   getSceneData,
+  // Routing reads this before the payload lands; `experience` itself arrives with it.
+  hasExperience: true,
   // Picker framing: cameraHome is 7.42 m (three-robot frame), so the stage3d default
   // scenery thresholds misclassify the pitch as subject and distance-cull the two
   // teammates. These values keep all three bodies + ball and cull field furniture.
@@ -330,3 +356,5 @@ Record locally first and treat a live stream as best effort. This window contain
   ],
   buildScene,
 };
+
+export default def;

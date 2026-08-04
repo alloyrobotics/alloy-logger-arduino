@@ -1,52 +1,27 @@
-// start.js - `#/start`, the first screen. One question, one tap, four cards.
+// start.js - the seat fork at #/start.
 //
-// The fork is by WORK FUNCTION, never by identity: what the visitor does with robots decides the
-// register the analyst answers in, which mission they are guided into, and which incumbent tool the
-// brief mocks up in front of them. There is no multi-select and no Continue button, because a form
-// is a gate and this screen is a doorway: the tap IS the submit. The escape hatch ("just exploring")
-// goes straight to the seven-mission picker and leaves no role behind.
-//
-// The cards are `ROLES` in order and nothing here knows how many there are: v2 went from three to
-// four as a data edit in role.js plus a grid column in index.html, and this file did not change.
-//
-//   const start = createStart({
-//     onPick: (role) => { location.hash = `#/connect/${role.mission}`; },
-//     onExplore: () => { location.hash = '#/'; },
-//   });
-//   screens.start.appendChild(start.el);   // the router mounts it like any other screen
-//   start.dispose();
-//
-// The tap persists the role (role.js) and fires `role_selected` (analytics.js) BEFORE `onPick`
-// runs, so the router never has to remember to do either, and every event after this point is
-// already segmented. Pass `persist: false` to take that over.
-//
-// Styling hooks are classes only, all `st-` prefixed, and the integrator owns every one of them in
-// index.html. Nothing here sets a colour, a size or a layout.
+// A card selects a work function. The single Continue button persists it, records role_selected,
+// and advances. The mission-library escape does neither.
 
 import { ROLES, getRoleId, setRole, roleById } from './role.js';
 import { track } from './analytics.js';
 
 const COPY = {
-  kicker: 'alloylogger live demo',
-  title: 'Your robot failed. Ask it why.',
-  // "a mission, real or simulated": four of the seven are synthetic scenarios and one is a scripted
-  // simulation, so the blanket "a real mission" was a claim this screen cannot make. app.js passes
-  // the spec's locked sub-line over the top of this one; it is the module default, and a second
-  // caller (a test harness, an embed) would otherwise ship the false version.
-  sub: 'Replay a mission, real or simulated, and put its telemetry in front of an analyst. First, what do you do with robots?',
-  // Not "only changes how the answers are pitched": the tap also picks the mission the visitor
-  // lands on and is persisted, so `#/` sends them back to it. "Only" was false about the most
-  // consequential half of the tap, and undersold the half that is actually good.
-  hint: 'It picks the mission you land on and how the answers are pitched. You can change it later.',
+  title: 'What do you do?',
+  sub: 'This will help personalize the demo experience.',
   escape: 'Just exploring. Show me every mission',
-  go: 'start here',
+  continue: 'Continue',
 };
 
+const LABELS = Object.freeze({
+  hobbyist: 'Hobbyist',
+  engineer: 'Engineer',
+  lead: 'Leadership',
+  marketing: 'Marketing, support, or sales',
+});
+
 /**
- * @param {HTMLElement|object} [mountOrOpts] the screen's options. An element is accepted as the
- *   first argument too, in which case the panel is appended to it and the options move along one:
- *   `createStart(mount, opts)` and `createStart(opts)` both work, so a router that mounts screens
- *   the way the other modules expect cannot silently build a panel that is never attached.
+ * @param {HTMLElement|object} [mountOrOpts]
  * @param {{
  *   onPick?: (role:object) => void,
  *   onExplore?: () => void,
@@ -54,167 +29,144 @@ const COPY = {
  *   copy?: object,
  * }} [maybeOpts]
  * @returns {{el:HTMLElement, focus:()=>void, current:()=>string|null,
- *   pick:(id:string)=>object|null, dispose:()=>void}}
+ *   select:(id:string)=>object|null, pick:(id:string)=>object|null, dispose:()=>void}}
  */
 export function createStart(mountOrOpts, maybeOpts) {
   const isEl = !!(mountOrOpts && typeof mountOrOpts === 'object' && mountOrOpts.nodeType === 1);
   const mount = isEl ? mountOrOpts : null;
   const opts = (isEl ? maybeOpts : mountOrOpts) || {};
-
   const onPick = typeof opts.onPick === 'function' ? opts.onPick : () => {};
   const onExplore = typeof opts.onExplore === 'function' ? opts.onExplore : null;
   const persist = opts.persist !== false;
   const copy = { ...COPY, ...(opts.copy || {}) };
-
-  // The role a returning visitor already chose. The card is marked, never auto-advanced: bouncing
-  // someone straight past the only screen they can change their mind on is a trap, not a shortcut.
-  const currentId = getRoleId();
+  const arrivalId = getRoleId();
 
   const el = document.createElement('div');
   el.className = 'st';
-
   el.innerHTML = `
     <header class="st-head">
-      <p class="st-kicker mono"></p>
       <h1 class="st-title"></h1>
       <p class="st-sub"></p>
     </header>
-    <div class="st-cards" role="group"></div>
-    <p class="st-hint"></p>
-    <a class="st-escape" href="#/missions"><span></span> <span class="st-escape-go" aria-hidden="true">&rsaquo;</span></a>`;
+    <div class="st-cards" role="radiogroup"></div>
+    <button class="st-continue" type="button" disabled><span></span><span aria-hidden="true">→</span></button>
+    <a class="st-escape" href="#/missions"></a>`;
 
   const q = (sel) => el.querySelector(sel);
-  q('.st-kicker').textContent = copy.kicker;
   q('.st-title').textContent = copy.title;
   q('.st-sub').textContent = copy.sub;
-  q('.st-hint').textContent = copy.hint;
-  q('.st-escape span').textContent = copy.escape;
+  q('.st-continue span').textContent = copy.continue;
+  q('.st-escape').textContent = copy.escape;
 
   const cards = q('.st-cards');
   cards.setAttribute('aria-label', copy.title);
+  const continueButton = q('.st-continue');
+  let selectedId = arrivalId;
+  let committed = false;
+  let disposed = false;
 
   ROLES.forEach((role) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'st-card';
-    btn.dataset.role = role.id;
-    if (role.id === currentId) btn.classList.add('is-current');
-    btn.innerHTML = `
-      <span class="st-glyph" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-             stroke-linecap="round" stroke-linejoin="round">${role.glyph}</svg>
-      </span>
-      <span class="st-kick mono"></span>
-      <span class="st-label"></span>
-      <span class="st-blurb"></span>
-      <span class="st-go mono"></span>`;
-    btn.querySelector('.st-kick').textContent = role.kicker;
-    btn.querySelector('.st-label').textContent = role.label;
-    btn.querySelector('.st-blurb').textContent = role.blurb;
-    // a returning visitor is told which one they are on, in the slot that otherwise says "start here"
-    btn.querySelector('.st-go').textContent =
-      role.id === currentId ? 'continue' : copy.go;
-    // the visible label is the whole card; the accessible name should be the sentence, not the glyph
-    btn.setAttribute('aria-label', `${role.label}. ${role.blurb}`);
-    cards.appendChild(btn);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'st-card';
+    button.dataset.role = role.id;
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String(role.id === selectedId));
+    button.innerHTML = '<span class="st-radio" aria-hidden="true"><i></i></span><span class="st-label"></span>';
+    button.querySelector('.st-label').textContent = LABELS[role.id] || role.label;
+    if (role.id === selectedId) button.classList.add('is-selected');
+    cards.appendChild(button);
   });
+  continueButton.disabled = !selectedId;
 
   if (mount) mount.appendChild(el);
 
-  let picked = false;
-  let disposed = false;
+  function renderSelection() {
+    cards.querySelectorAll('.st-card').forEach((button) => {
+      const selected = button.dataset.role === selectedId;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-checked', String(selected));
+    });
+    continueButton.disabled = !selectedId || committed;
+  }
 
-  /**
-   * Take a role. Exactly once per screen, ever: a double tap, or a tap during the route change
-   * the first one started, must not fire a second `role_selected` or a second navigation.
-   *
-   * @param {string} id
-   * @returns {object|null} the role record, or null if the id is not a role
-   */
-  function choose(id) {
-    if (picked || disposed) return null;
+  function select(id) {
+    if (disposed || committed) return null;
     const role = roleById(id);
     if (!role) return null;
-    picked = true;
-    el.classList.add('st-picked');
-    const card = cards.querySelector(`.st-card[data-role="${role.id}"]`);
-    if (card) card.classList.add('is-picked');
+    selectedId = role.id;
+    renderSelection();
+    return role;
+  }
 
-    // order matters: persist, then report, then navigate. The super-prop has to be registered
-    // before `role_selected` leaves, or the fork's own event is the one row missing its role.
+  function commit(id = selectedId) {
+    if (disposed || committed) return null;
+    const role = roleById(id);
+    if (!role) return null;
+    selectedId = role.id;
+    committed = true;
+    el.classList.add('st-picked');
+    renderSelection();
     if (persist) setRole(role.id);
-    track.roleSelected(role, { returning: role.id === currentId, mission: role.mission });
+    track.roleSelected(role, { returning: role.id === arrivalId, mission: role.mission });
     onPick(role);
     return role;
   }
 
-  function onClick(e) {
-    const card = e.target && e.target.closest ? e.target.closest('.st-card') : null;
+  function onCardsClick(event) {
+    const card = event.target && event.target.closest ? event.target.closest('.st-card') : null;
     if (!card) return;
-    e.preventDefault();
-    choose(card.dataset.role);
+    event.preventDefault();
+    select(card.dataset.role);
   }
 
-  /** Left/right (and up/down) walk the cards. Tab and Enter already work: these are buttons. */
-  function onKey(e) {
-    const key = e.key;
-    const fwd = key === 'ArrowRight' || key === 'ArrowDown';
-    const back = key === 'ArrowLeft' || key === 'ArrowUp';
-    if (!fwd && !back) return;
+  function onCardsKey(event) {
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+    const backward = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+    if (!forward && !backward) return;
     const list = Array.from(cards.querySelectorAll('.st-card'));
     if (!list.length) return;
     const at = list.indexOf(document.activeElement && document.activeElement.closest('.st-card'));
-    const next = at < 0 ? 0 : (at + (fwd ? 1 : -1) + list.length) % list.length;
-    e.preventDefault();
+    const next = at < 0 ? 0 : (at + (forward ? 1 : -1) + list.length) % list.length;
+    event.preventDefault();
     list[next].focus();
+    select(list[next].dataset.role);
   }
 
-  function onEscapeClick(e) {
-    // With no handler the anchor's own href is the behaviour, and the href is `#/missions`, which
-    // is the picker. NOT `#/`: that is the door, and app.js sends anyone already holding a role
-    // straight back into their guided mission - so the one link on this screen whose job is "let me
-    // out" would have returned a returning visitor to the seat they were trying to leave. A handler
-    // takes it over so the router can decide (and so leaving deliberately WITHOUT a role stays one
-    // code path).
-    if (!onExplore || picked || disposed) return;
-    e.preventDefault();
-    picked = true;
+  function onContinue() {
+    commit();
+  }
+
+  function onEscape(event) {
+    if (!onExplore || committed || disposed) return;
+    event.preventDefault();
+    committed = true;
     onExplore();
   }
 
-  cards.addEventListener('click', onClick);
-  cards.addEventListener('keydown', onKey);
-  const escape = q('.st-escape');
-  escape.addEventListener('click', onEscapeClick);
+  cards.addEventListener('click', onCardsClick);
+  cards.addEventListener('keydown', onCardsKey);
+  continueButton.addEventListener('click', onContinue);
+  q('.st-escape').addEventListener('click', onEscape);
 
   return {
     el,
-
-    /** Move focus onto the fork: the returning visitor's card, or the first one. */
     focus() {
-      const card =
-        cards.querySelector('.st-card.is-current') || cards.querySelector('.st-card');
-      if (card && typeof card.focus === 'function') card.focus();
+      const selected = cards.querySelector('.st-card.is-selected');
+      const first = cards.querySelector('.st-card');
+      (selected || first)?.focus();
     },
-
-    /** The role this visitor arrived with, if any. Page state for QA, not a pixel. */
-    current: () => currentId,
-
-    /** Programmatic tap, for deep links and for QA. Runs the full persist/report/advance path. */
-    pick: choose,
-
-    /** Idempotent, and safe when the mount has already been emptied out from under us. */
+    current: () => selectedId,
+    select,
+    pick: commit,
     dispose() {
       if (disposed) return;
       disposed = true;
-      try {
-        cards.removeEventListener('click', onClick);
-        cards.removeEventListener('keydown', onKey);
-        escape.removeEventListener('click', onEscapeClick);
-      } catch (_) {
-        /* nodes already gone: listeners went with them */
-      }
-      if (el && typeof el.remove === 'function') el.remove();
+      cards.removeEventListener('click', onCardsClick);
+      cards.removeEventListener('keydown', onCardsKey);
+      continueButton.removeEventListener('click', onContinue);
+      q('.st-escape').removeEventListener('click', onEscape);
+      el.remove();
     },
   };
 }

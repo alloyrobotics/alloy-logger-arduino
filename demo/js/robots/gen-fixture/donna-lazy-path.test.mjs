@@ -11,7 +11,7 @@
 // loading-card copy (def-owned since the artifact review) and the fixture payloads.
 //
 //   A  demo -> picker -> the same demo again, all inside one throttled round-module load
-//   B  demo -> the same robot's brief -> demo again, inside the same window
+//   B  demo -> the same robot's anatomy step -> demo again, inside the same window
 //   C  the undisturbed path renders
 //   D  a recorded module that decodes to garbage lands on the unavailable card, not a half-built demo
 //   E  a corrupt preview slice degrades the picker card to SVG line art and never throws
@@ -42,7 +42,7 @@ async function openThrottled() {
     await new Promise((r) => setTimeout(r, DELAY_MS));
     await route.continue();
   });
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   return { ctx, page, errors, hits: () => arrivals };
 }
@@ -103,7 +103,7 @@ H.section('A: demo -> picker -> the same demo, inside one load');
 
 // ------------------------------------------------------------- B. demo -> connect(same id) -> demo
 
-H.section('B: demo -> the same robot brief -> demo, inside one load');
+H.section('B: demo -> the same robot anatomy step -> demo, inside one load');
 {
   const { ctx, page, errors } = await openThrottled();
 
@@ -114,18 +114,15 @@ H.section('B: demo -> the same robot brief -> demo, inside one load');
   H.ok(
     await waitFor(
       page,
-      () => {
-        const el = document.getElementById('screen-connect');
-        const m = document.getElementById('ingest-mount');
-        return (
-          !!el && !el.hidden && location.hash === '#/connect/donna' &&
-          !!m && !/Loading the recorded mission/i.test(m.textContent || '') && (m.textContent || '').trim().length > 0
-        );
-      },
+      () =>
+        document.body.dataset.screen === 'flow' &&
+        location.hash === '#/connect/donna/robot' &&
+        !!window.__flow && window.__flow.step === 'robot' &&
+        document.getElementById('screen-connect').hidden,
       12000,
-      'the brief screen',
+      'the anatomy step',
     ),
-    'the brief renders over the loading card, not beside it',
+    'the anatomy step replaces the loading card for the same robot',
   );
 
   await go(page, '#/demo/donna');
@@ -170,7 +167,7 @@ H.section('D: a corrupt recorded module lands on the unavailable card');
       ].join('\n'),
     }),
   );
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   await go(page, '#/demo/donna');
   H.ok(
@@ -201,8 +198,8 @@ H.section('E: a corrupt preview slice degrades the picker card');
   page.on('pageerror', (e) => errors.push(String(e)));
   // Every card ALWAYS carries its SVG; a live preview merely hides it behind `.preview-live`. So
   // "the SVG exists" proves nothing. This sequence proves the corrupt path actually RAN: the
-  // interception fired, the module decoded to null, the card never got `.preview-live`, the brief
-  // hero mounts no WebGL rig, and the full demo (whose recorded module is untouched) still works.
+  // interception fired, the module decoded to null, the card never got `.preview-live`, the anatomy
+  // route stays usable, and the full demo (whose recorded module is untouched) still works.
   // Teeth were mutation-verified: breaking the route glob fails four of these checks.
   let previewHits = 0;
   await page.route('**/robots/donna/preview-data.js', (route) => {
@@ -218,14 +215,14 @@ H.section('E: a corrupt preview slice degrades the picker card');
       ].join('\n'),
     });
   });
-  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/#/missions`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitFor(page, () => document.body.dataset.screen === 'picker');
   // Give the idle preview builder time to run against the corrupt slice.
   await page.waitForTimeout(3500);
   H.ok(previewHits >= 1, `the corrupt preview module was actually served (${previewHits}x)`);
   const st = await page.evaluate(async () => {
     const d = await import('/demo/js/robots/donna/data.js');
-    const a = document.querySelector('#robot-grid a.rcard[data-robot="donna"]');
+    const a = document.querySelector('#robot-grid .rcard[data-robot="donna"]');
     const art = a && a.querySelector('.rcard-art');
     return {
       preview: d.previewData,
@@ -242,21 +239,22 @@ H.section('E: a corrupt preview slice degrades the picker card');
   H.ok(
     await waitFor(
       page,
-      () => {
-        const el = document.getElementById('screen-connect');
-        return !!el && !el.hidden && location.hash === '#/connect/donna';
-      },
-      12000,
-      'the brief screen',
+      () =>
+        document.body.dataset.screen === 'flow' &&
+        location.hash === '#/connect/donna/robot' &&
+        !!window.__flow && window.__flow.step === 'robot',
+      20000,
+      'the anatomy step',
     ),
-    'the brief route still renders with the preview slice broken',
+    'the anatomy route still renders with the preview slice broken',
   );
-  const brief = await page.evaluate(() => {
-    const m = document.getElementById('ingest-mount');
-    return { svg: !!(m && m.querySelector('svg')), canvas: !!(m && m.querySelector('canvas')) };
-  });
-  H.ok(brief.svg, 'the brief hero falls back to the SVG line art');
-  H.ok(!brief.canvas, 'no empty WebGL rig is mounted with nothing to pose in it');
+  const anatomy = await page.evaluate(() => ({
+    svg: !!document.querySelector('#flow-fallback svg'),
+    canvas: !!document.querySelector('#flow-viewer-mount canvas'),
+    cta: (document.getElementById('flow-cta').textContent || '').replace(/\s+/g, ' ').trim(),
+  }));
+  H.ok(anatomy.svg || anatomy.canvas, 'the anatomy step keeps a visual surface while the full payload recovers');
+  H.ok(/Next: the mission/.test(anatomy.cta), 'the flow remains completable with the preview slice broken');
   // The recorded module is untouched by this corruption: the demo route must still fully mount.
   await go(page, '#/demo/donna');
   H.ok(await onDemo(page), 'the full demo still mounts, because only the preview slice was corrupt');

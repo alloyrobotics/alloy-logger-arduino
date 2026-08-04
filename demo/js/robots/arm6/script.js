@@ -22,6 +22,66 @@ export default {
   channels,
   buildData,
   findings,
+  // Four-step mission experience. Every anchor id resolves through sceneApi.anchors() in scene.js;
+  // every window, field and number below is read out of data.js, not estimated.
+  experience: {
+    anatomy: {
+      camera: null, // cameraHome already frames the whole arm, the pedestal and both pads
+      rotation: 'orbit',
+      // mid cycle 5, part in the jaws at full lift: all four anchors sit clear of each other
+      heroT: 30,
+      parts: [
+        {
+          id: 'j2',
+          anchor: 'j2',
+          label: 'J2 shoulder servo',
+          description: 'Lifts the whole arm; the joint that saturates at 12 Nm.',
+        },
+        {
+          id: 'gripper',
+          anchor: 'gripper',
+          label: 'Parallel gripper',
+          description: 'Grips the part at the tool centre point; grip state is logged 0 or 1.',
+        },
+        {
+          id: 'drv3',
+          anchor: 'drv3',
+          // drive boards on the bus are numbered 1..6, so J2 runs on drv3 (see data.js header)
+          label: 'J2 servo driver',
+          description: 'The drive electronics whose temperature creeps during the run.',
+        },
+        {
+          id: 'base',
+          anchor: 'base',
+          label: 'Base turret',
+          description: 'Rotates the arm between the two stations on q0.',
+        },
+      ],
+    },
+    success: {
+      // CYCLES[4] exactly: one clean A to B transfer, 18.6 s before the heavy blank is swapped
+      // onto pad A at 50.6 s and well clear of the drop finding window [52, 60].
+      window: [26.0, 32.0],
+      // swung toward +x so both pads separate across the frame instead of stacking front to back.
+      // Verified: every anchor and both pads stay inside the frustum for the whole window, at
+      // desktop and at mobile aspect, with the pads 0.6 of NDC apart.
+      camera: {
+        position: { x: 2.37, y: 1.38, z: 0.59 },
+        target: { x: 0.40, y: 0.42, z: -0.10 },
+      },
+      loopLabel: 'success loop',
+      contextualLabels: [
+        { label: '12 cycles' },
+        { label: 'Pick at A' },
+        { label: 'Place at B' },
+      ],
+    },
+    failure: {
+      findingId: 'drop',
+      camera: null, // cameraHome holds J2 and the pad B landing point in one frame
+      plottedFields: { channel: '/joints', fields: ['tau2', 'tau1', 'tau3'] },
+    },
+  },
   firstQuestion: 'Why did the arm drop the payload?',
   suggested: [
     'Show me exactly where it failed',

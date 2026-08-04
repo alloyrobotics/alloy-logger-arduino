@@ -1,33 +1,15 @@
-// role-registers.test.mjs - the register maps (`answerByRole`, `sayByRole`) against the live role
-// table, across every hand-written robot AND both lazy guided side-modules.
-//
-//   node demo/js/robots/gen-fixture/role-registers.test.mjs
-//
-// WHY THIS EXISTS. Roles v2 retired `operator` and `support` and added `hobbyist` and `marketing`.
-// role.js, worker/roles.js and the worker's register table were all updated; three `answerByRole`
-// maps were not, and they still keyed only the retired ids. `getRoleId()` degrades a retired id to
-// `engineer` BEFORE chat.js's `answerFor()` runs, so those keys could never be selected again: a
-// hobbyist tapping the first card was served the engineer table on the one answer the guided walk
-// is built around, while the agent line one bubble above it was in their own register. Nothing
-// caught it, because nothing anywhere asserted that a register map's keys are role ids.
-//
-// What it proves:
-//   1  every key of every register map is a LIVE role id, and never `engineer` (the default IS the
-//      unkeyed `answer` / `say`, so keying it is a second copy of the same register)
-//   2  every value is a non-empty string
-//   3  a role GUIDED into a mission is keyed on that mission's opener and on every one of its
-//      beats, unless that role is the engineer default. This is the regression, stated directly:
-//      the four cards promise "the analyst speaks your language" and this is where that is true
-//   4  every beat's `answer` names a real script entry and every action's `evidence` a real
-//      finding, so the walk cannot point at something the def does not have
+// role-registers.test.mjs - role routes resolve to experience copy, with legacy choreography kept valid.
 
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadRobotDefinition } from '../../../../worker/build-facts.mjs';
-import { ROLES, ROLE_IDS, DEFAULT_ROLE_ID, isGuidedMission } from '../../core/role.js';
+import { ROLES, ROLE_IDS, DEFAULT_ROLE_ID, hasExperience } from '../../core/role.js';
+import { getFlowCopy } from '../../core/flow-copy.js';
+import { matchEntry } from '../../core/matcher.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROBOTS = path.join(HERE, '..');
+const IDS = ['sbr', 'rescue', 'arm6', 'drone', 'ssl', 'battle', 'donna'];
 
 let failures = 0;
 let checks = 0;
@@ -38,35 +20,58 @@ function ok(cond, msg) {
     console.error(`  FAIL  ${msg}`);
   }
 }
-const section = (n) => console.log(`\n${n}`);
+const section = (name) => console.log(`\n${name}`);
 
-/** Hand-written robots. `stub` is the fixture template and ships no registers. */
-const IDS = ['sbr', 'rescue', 'arm6', 'drone', 'ssl', 'battle', 'donna'];
+async function importIfPresent(rel) {
+  try {
+    return await import(pathToFileURL(path.join(ROBOTS, rel)).href);
+  } catch (err) {
+    if (err && err.code === 'ERR_MODULE_NOT_FOUND') return null;
+    throw err;
+  }
+}
 
-/** Load a def and merge whatever its lazy guided module would have merged at runtime. */
-async function loadWithGuided(id) {
+/** Load a def and apply the same lazy side modules its route applies. */
+async function loadWithSides(id) {
   const def = await loadRobotDefinition(id);
-  for (const rel of [`${id}/role-openers.js`, `${id}/guided.js`]) {
-    const abs = path.join(ROBOTS, rel);
-    let mod = null;
-    try {
-      mod = await import(pathToFileURL(abs).href);
-    } catch (_) {
-      continue; // this robot ships no side-module, which is not a failure
-    }
-    ok(typeof mod.applyGuided === 'function', `${rel} exports applyGuided()`);
-    if (typeof mod.applyGuided === 'function') mod.applyGuided(def);
+  for (const rel of [`${id}/role-openers.js`, `${id}/guided.js`, `${id}/experience.js`]) {
+    const mod = await importIfPresent(rel);
+    if (!mod) continue;
+    const apply = mod.applyGuided || mod.applyExperience;
+    ok(typeof apply === 'function', `${rel} exports applyGuided() or applyExperience()`);
+    if (typeof apply === 'function') apply(def);
   }
   return def;
 }
 
 const defs = new Map();
-for (const id of IDS) defs.set(id, await loadWithGuided(id));
+for (const id of IDS) defs.set(id, await loadWithSides(id));
 
-// ---------------------------------------------------------------- 1 + 2. keys and values
+section('role missions use the experience and flow-copy contract');
+for (const role of ROLES) {
+  const def = defs.get(role.mission);
+  const copy = getFlowCopy(role.mission, role.id);
+  ok(!!def, `${role.id} resolves to the live ${role.mission} definition`);
+  ok(hasExperience(def), `${role.id}'s ${role.mission} route has an experience capability`);
+  ok(!!def.experience, `${role.id}'s ${role.mission} experience block is attached by its live side module`);
+  ok(!!copy, `${role.id}/${role.mission} resolves role-specific flow copy`);
+  if (!copy) continue;
+  for (const key of ['missionIntro', 'failureIntro', 'firstQuestion', 'followUp']) {
+    ok(typeof copy[key] === 'string' && copy[key].trim(), `${role.id}/${role.mission}.${key} is non-empty`);
+  }
+  ok(Array.isArray(copy.debugCards) && copy.debugCards.length === 3, `${role.id}/${role.mission} has three debug cards`);
+  for (const [index, card] of (copy.debugCards || []).entries()) {
+    ok(
+      card && ['title', 'desc', 'time'].every((key) => typeof card[key] === 'string' && card[key].trim()),
+      `${role.id}/${role.mission}.debugCards[${index}] is complete`,
+    );
+  }
+  const opener = matchEntry(def.script, copy.firstQuestion);
+  ok(!!opener, `${role.id}/${role.mission} firstQuestion resolves to a scripted answer`);
+}
 
-section('register map keys are live role ids');
-const LIVE = new Set(ROLE_IDS);
+section('register maps use live roles');
+const live = new Set(ROLE_IDS);
 for (const [id, def] of defs) {
   const maps = [];
   for (const entry of def.script || []) {
@@ -76,59 +81,27 @@ for (const [id, def] of defs) {
     if (beat.sayByRole) maps.push([`${id}/choreo[${beat.id}].sayByRole`, beat.sayByRole]);
   }
   for (const [where, map] of maps) {
-    for (const key of Object.keys(map)) {
-      ok(LIVE.has(key), `${where}: "${key}" is a live role id (a retired id is degraded upstream and can never be selected)`);
-      ok(key !== DEFAULT_ROLE_ID, `${where}: "${key}" is not the default register, which is the unkeyed copy itself`);
-      const v = map[key];
-      ok(typeof v === 'string' && v.trim().length > 0, `${where}.${key} is a non-empty string`);
+    for (const [roleId, value] of Object.entries(map)) {
+      ok(live.has(roleId), `${where}: "${roleId}" is a live role id`);
+      ok(roleId !== DEFAULT_ROLE_ID, `${where}: the engineer default stays in the unkeyed copy`);
+      ok(typeof value === 'string' && value.trim(), `${where}.${roleId} is non-empty`);
     }
   }
 }
 
-// ---------------------------------------------------------------- 3. the guided promise
-
-section('a role guided into a mission is keyed on that mission');
-for (const role of ROLES) {
-  const def = defs.get(role.mission);
-  ok(!!def, `${role.id}: its mission "${role.mission}" is a real robot`);
-  if (!def) continue;
-  ok(isGuidedMission(role.mission), `${role.id}: "${role.mission}" is in the guided set`);
-  const beats = (def.choreo && def.choreo.beats) || [];
-  ok(beats.length > 0, `${role.mission}: ships choreography beats`);
-  if (role.id === DEFAULT_ROLE_ID) continue; // the default register IS the unkeyed copy
-
-  for (const beat of beats) {
-    ok(
-      !!(beat.sayByRole && typeof beat.sayByRole[role.id] === 'string' && beat.sayByRole[role.id].trim()),
-      `${role.mission}/choreo[${beat.id}]: authored for the "${role.id}" register it is guided into`,
-    );
-  }
-  const opener = beats.find((b) => b.answer);
-  ok(!!opener, `${role.mission}: a beat references the scripted opener`);
-  if (!opener) continue;
-  const entry = (def.script || []).find((e) => e.id === opener.answer);
-  ok(!!entry, `${role.mission}: the opener beat names a real script entry ("${opener.answer}")`);
-  if (!entry) continue;
-  ok(
-    !!(entry.answerByRole && typeof entry.answerByRole[role.id] === 'string' && entry.answerByRole[role.id].trim()),
-    `${role.mission}/script[${entry.id}]: the opener answers in the "${role.id}" register it is guided into`,
-  );
-}
-
-// ---------------------------------------------------------------- 4. the walk resolves
-
-section('every beat reference resolves');
+section('definitions that still carry choreography remain internally valid');
 for (const [id, def] of defs) {
   const beats = (def.choreo && def.choreo.beats) || [];
   if (!beats.length) continue;
-  const entries = new Set((def.script || []).map((e) => e.id));
-  const findings = new Set((def.findings || []).map((f) => f.id));
+  const entries = new Set((def.script || []).map((entry) => entry.id));
+  const findings = new Set((def.findings || []).map((finding) => finding.id));
+  ok(new Set(beats.map((beat) => beat.id)).size === beats.length, `${id} choreography beat ids are unique`);
   for (const beat of beats) {
     ok(typeof beat.id === 'string' && beat.id.trim(), `${id}: every beat carries a stable id`);
-    ok(typeof beat.cta === 'string' && beat.cta.trim(), `${id}/choreo[${beat.id}]: carries a CTA label`);
-    if (beat.answer) ok(entries.has(beat.answer), `${id}/choreo[${beat.id}]: answer "${beat.answer}" is a script entry`);
-    for (const a of beat.actions || []) {
-      ok(findings.has(a.evidence), `${id}/choreo[${beat.id}]: action evidence "${a.evidence}" is a finding`);
+    ok(typeof beat.cta === 'string' && beat.cta.trim(), `${id}/choreo[${beat.id}] carries a CTA label`);
+    if (beat.answer) ok(entries.has(beat.answer), `${id}/choreo[${beat.id}] answer "${beat.answer}" is a script entry`);
+    for (const action of beat.actions || []) {
+      ok(findings.has(action.evidence), `${id}/choreo[${beat.id}] evidence "${action.evidence}" is a finding`);
     }
   }
 }

@@ -12,6 +12,51 @@ import * as THREE from 'three';
 
 export const PICKER_ORBIT_MS = 14000; // one revolution
 
+/**
+ * One revolution of the ANATOMY orbit, in ms.
+ *
+ * Deliberately slower than the picker's 14 s. A picker card is a thumbnail competing for a glance,
+ * so it turns fast enough to read as alive in the two seconds it gets. The anatomy step is the
+ * opposite job: four callout cards are being read while the machine turns under them, and a
+ * revolution quick enough to feel lively is quick enough to make the leader lines sweep across the
+ * frame faster than a sentence can be finished. 30 s is one slow deliberate look around the robot.
+ */
+export const ANATOMY_ORBIT_MS = 30000;
+
+/** How long a commanded camera move takes. Long enough to read as travel, short enough to skip. */
+export const CAMERA_EASE_MS = 620;
+
+/**
+ * OrbitControls' `autoRotateSpeed` for a given revolution period.
+ *
+ * The control's own units are "2*PI/60 * speed radians per second", i.e. a revolution every
+ * `60 / speed` seconds, which is why its default of 2.0 is documented as 30 s per orbit. Callers
+ * think in revolution time; this converts.
+ *
+ * @param {number} ms one revolution, milliseconds
+ * @returns {number} autoRotateSpeed
+ */
+export function orbitSpeedFor(ms) {
+  const period = Number.isFinite(ms) && ms > 0 ? ms : ANATOMY_ORBIT_MS;
+  return 60000 / period;
+}
+
+/**
+ * The visitor asked the operating system for less motion.
+ *
+ * Every 3D stage in this demo has to answer it the same way (a static posed frame instead of an
+ * orbit, an instant camera cut instead of an ease), so the query lives here rather than being
+ * re-typed per screen. Wrapped because a matchMedia-less environment must not throw a staging
+ * helper: the honest answer there is "no preference expressed".
+ */
+export function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch (_) {
+    return false;
+  }
+}
+
 /** Healthy hero moment per robot. Deliberately not the failure window, and for rescue also
  * before the thermal build-up: its update() drives a data-driven heat glow on the left track,
  * so a late-mission pose reads as a red robot. 22 s is the cool, clean traverse.

@@ -127,9 +127,24 @@ export function buildScene(THREE, mount) {
   root.add(pad);
 
   // ---------- flown track ----------
-  // Built once from the real /pos arrays. A faint ghost shows the whole mission so the survey
-  // pattern is legible from the first frame; a bright copy is revealed up to the playhead.
-  // The two lines share attributes but need separate geometries, because drawRange is per-geometry.
+  // Built once from the real /pos arrays, as two lines over one shared position attribute. They
+  // need separate geometries because drawRange is per-geometry, and they carry deliberately
+  // different colour, because they are answering different questions.
+  //
+  //   ghost: where the aircraft is GOING. A faint path preview so the survey pattern is legible
+  //     from the first frame. It is a preview, not a readout, so it is nominal blue end to end and
+  //     never carries failure colour. It used to share the live line's per-vertex colours, which
+  //     painted the post-T_FAIL leg alert red for the whole mission from frame one. That put a
+  //     failure tint on screen before anything had failed, on every consumer of this scene: the
+  //     success step loops [18.6, 27.7], more than 30 s before the bearing binds, and is only
+  //     allowed to show the survey working.
+  //
+  //   live: where the aircraft HAS BEEN, revealed up to the playhead by drawRange. Its per-vertex
+  //     colour is the honest one: a vertex is red only if the aircraft was already past T_FAIL when
+  //     it flew through that point. Colour and reveal together mean red can only ever reach the
+  //     screen where and when the failure actually happened, so the replay still turns the track
+  //     from blue to alert red as it crosses the fault, and nothing red exists ahead of the
+  //     playhead to give it away.
   let trailGeo = null;
   let trailVerts = 0;
 
@@ -148,18 +163,18 @@ export function buildScene(THREE, mount) {
     }
     trailVerts = pos.length / 3;
     const posAttr = new THREE.Float32BufferAttribute(pos, 3);
-    const colAttr = new THREE.Float32BufferAttribute(col, 3);
 
     trailGeo = G(new THREE.BufferGeometry());
     trailGeo.setAttribute('position', posAttr);
-    trailGeo.setAttribute('color', colAttr);
+    trailGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     trailGeo.setDrawRange(0, 0);
     root.add(new THREE.Line(trailGeo, M(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.92 }))));
 
+    // No colour attribute at all rather than an all-blue one: the preview cannot go red by
+    // accident later, and there is nothing to keep in step with the live line's colours.
     const ghostGeo = G(new THREE.BufferGeometry());
     ghostGeo.setAttribute('position', posAttr);
-    ghostGeo.setAttribute('color', colAttr);
-    root.add(new THREE.Line(ghostGeo, M(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.13 }))));
+    root.add(new THREE.Line(ghostGeo, M(new THREE.LineBasicMaterial({ color: COL.blue, transparent: true, opacity: 0.13 }))));
   }
 
   // drop line to the ground, so altitude is readable in a still frame
@@ -258,6 +273,7 @@ export function buildScene(THREE, mount) {
 
   const props = [];
   const m3Parts = []; // [{ mesh, base }] restored when the highlight clears
+  let m3Bell = null; // motor 3's bell, kept for the anatomy anchor below
 
   MOTORS.forEach((m) => {
     const front = m.x > 0;
@@ -317,6 +333,7 @@ export function buildScene(THREE, mount) {
 
     props.push({ disc, discMat, blades, bladeMat, cw: m.cw, phase: m.id * 1.1 });
     if (m.id === 3) {
+      m3Bell = bell;
       m3Parts.push({ mesh: arm, base: carbonMat }, { mesh: bell, base: metalMat }, { mesh: bellTop, base: metalMat });
       m3Parts.push({ mesh: ring, base: accentMat, accent: true });
     }
@@ -434,11 +451,33 @@ export function buildScene(THREE, mount) {
     return { x: craft.position.x, y: craft.position.y + 0.04, z: craft.position.z };
   }
 
+  // ---------- anatomy anchors ----------
+  // World positions for the four parts the anatomy step labels, read off the real meshes rather
+  // than written down as constants: this aircraft never sits still, so a fixed point would drift
+  // off the part within one frame. Each closure walks the parent chain (craft -> body -> mesh) and
+  // returns where the part is RIGHT NOW, after whatever update() last posed. That keeps the labels
+  // and their leader lines attached while the craft flies its lanes, banks and yaws.
+  //
+  // The ids are the part ids the def declares. Only 'm3' is also a setHighlight target; the other
+  // three are label anchors only, and setHighlight is unchanged. Every call hands back a fresh
+  // vector, so the caller can project it in place without corrupting the next frame's reading.
+  const anchorMap = {
+    m3: () => m3Bell.getWorldPosition(new THREE.Vector3()), // motor 3 bell, rear-left corner
+    battery: () => batt.getWorldPosition(new THREE.Vector3()), // pack under the lower plate
+    camera: () => lens.getWorldPosition(new THREE.Vector3()), // survey lens on the nose gimbal
+    imu: () => upper.getWorldPosition(new THREE.Vector3()), // body centre plate
+  };
+
+  /** @returns {Record<string, () => import('three').Vector3>} same object every call */
+  function anchors() {
+    return anchorMap;
+  }
+
   function dispose() {
     mount.remove(root);
     geos.forEach((g) => g.dispose());
     mats.forEach((m) => m.dispose());
   }
 
-  return { update, setHighlight, dispose, cameraHome, cameraFocus };
+  return { update, setHighlight, dispose, cameraHome, cameraFocus, anchors };
 }
