@@ -1,7 +1,7 @@
 // flow-roster.test.mjs - the public mission library and role routing contract.
 
 import { ROBOTS, PICKER_ROBOTS, ROBOTS_BY_ID } from '../index.js';
-import { ROLES, missionFor, DEFAULT_MISSION, LEGACY_ROLE_IDS } from '../../core/role.js';
+import { ROLES, missionFor, normalizeRoleId, DEFAULT_MISSION, LEGACY_ROLE_IDS } from '../../core/role.js';
 
 let failures = 0;
 let checks = 0;
@@ -50,6 +50,10 @@ ok(missionFor(null) === 'arm6', 'a missing role resolves to arm6');
 ok(missionFor('unknown-role') === 'arm6', 'an unknown role resolves to arm6');
 ok(LEGACY_ROLE_IDS.operator === 'engineer', 'the operator alias still degrades to engineer');
 ok(LEGACY_ROLE_IDS.support === 'engineer', 'the support alias still degrades to engineer');
+ok(normalizeRoleId('hobbyist') === 'hobbyist', 'normalizeRoleId keeps the hobbyist canonical id');
+ok(normalizeRoleId('marketing') === 'marketing', 'normalizeRoleId keeps the marketing canonical id');
+ok(normalizeRoleId('operator') === 'engineer', 'normalizeRoleId resolves the operator legacy alias');
+ok(normalizeRoleId('nonsense') === null, 'normalizeRoleId rejects garbage');
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures) process.exit(1);

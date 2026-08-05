@@ -344,6 +344,19 @@ export function setRole(id) {
   return rec;
 }
 
+/**
+ * Adopt an inbound role without counting it as a human fork choice. `setRole` persists the
+ * canonical id and notifies the analytics subscriber, while `role_selected` remains owned solely
+ * by start.js's explicit Continue tap.
+ *
+ * @param {string} raw
+ * @returns {Role|null} the adopted record, or null when the value is not a known role
+ */
+export function adoptRole(raw) {
+  const id = normalizeRoleId(raw);
+  return id ? setRole(id) : null;
+}
+
 /** Forget the role (the "start over" path). */
 export function clearRole() {
   if (getRoleId() == null) return;

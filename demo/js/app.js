@@ -29,7 +29,7 @@ import { createGuide, hasChoreo } from './core/guide.js';
 import { createStart } from './core/start.js';
 import { consumeFlowHandoff, createFlow, hasFlowExperience } from './core/flow.js';
 import { webglAvailable } from './core/stage3d.js';
-import { getRoleId, hasRole, hasExperience, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { adoptRole, getRoleId, hasRole, hasExperience, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
@@ -1438,14 +1438,20 @@ function route() {
 
 // ---------------------------------------------------------------------------- boot
 function boot() {
+  const q = new URLSearchParams(location.search);
+
+  // An embedding page can preset the visitor's seat without pretending they tapped the fork.
+  // Adoption runs before analytics reads the stored role and before the doorway router decides
+  // where #/ opens. The query string stays in place, exactly like the ?robot= deep link below.
+  const deepRole = q.get('role');
+  if (deepRole != null) adoptRole(deepRole);
+
   // CTA hrefs. A ?src=<channel> tag on the demo URL (dm, dm_fu, bio) is forwarded into the
   // setup-org CTAs as utm_content "<channel>-demo", same idea as the landing page's passthrough,
   // so PostHog keeps channel attribution when the DM or bio points here instead of the landing.
   // Clamped to the server's 64-char tag limit: an oversized crafted ?src= must never bloat the
   // signup-lead body toward its 8KB cap and sink an otherwise valid submission.
-  const srcTag = (new URLSearchParams(location.search).get('src') || '')
-    .replace(/[^a-z0-9_-]/gi, '')
-    .slice(0, 64);
+  const srcTag = (q.get('src') || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
   const contentTag = srcTag ? `${srcTag}-demo` : 'demo';
 
   // Before anything else that can fire an event. The role is picked up from storage inside
@@ -1472,7 +1478,6 @@ function boot() {
   });
 
   // ?robot=<id> deep link
-  const q = new URLSearchParams(location.search);
   const deep = q.get('robot');
   // A generated id is not in the registry yet, so it is gated on its shape instead: route() then
   // resolves it exactly as it does for a #/demo/g-... hash.
