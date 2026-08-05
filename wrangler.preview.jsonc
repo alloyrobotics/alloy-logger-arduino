@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  // Review-preview of the demo for the UX wall. Separate worker because
+  // alloylogger-site's DemoGenDO disqualifies it from version preview URLs.
+  // Deploy: npx wrangler deploy --config wrangler.preview.jsonc
+  // Serves at alloylogger-demo-preview.alloylogger.workers.dev; production untouched.
+  "name": "alloylogger-demo-preview",
+  "compatibility_date": "2026-07-02",
+  "workers_dev": true,
+  "main": "preview-worker.js",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+}

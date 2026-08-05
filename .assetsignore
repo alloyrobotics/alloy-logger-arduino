@@ -36,3 +36,5 @@ package-lock.json
 .dev.vars*
 .env*
 .claude/
+preview-worker.js
+wrangler.preview.jsonc
