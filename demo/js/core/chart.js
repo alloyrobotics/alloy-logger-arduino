@@ -401,8 +401,28 @@ export function createChart(mount, robotDef, timeline) {
         g.lo = c - 0.5;
         g.hi = c + 0.5;
       } else {
-        const pad = (g.hi - g.lo) * 0.12;
-        g.lo -= pad;
+        // Headroom around the readings. The flow's failure step is the one place this panel is a
+        // FIGURE rather than an instrument: it is stacked under a replay on a phone, it is zoomed
+        // to one finding window, and the axis is auto-fitted to that window - so the sag the
+        // finding is about arrives filling the panel corner to corner, which reads as a cliff
+        // whatever its actual size. A wider pad there plots the same numbers across less of the
+        // panel, so the shape is the shape of the signal and not the shape of the box. The
+        // instrument view (full chrome, hover readout, the whole mission in domain) keeps the tight
+        // fit it has always had, because there the point IS to spend every pixel on the reading.
+        //
+        // The headroom is never allowed to invent a SIGN the readings do not have. A capacitor
+        // bank that never reads below zero, padded by half its own span, gets an axis whose bottom
+        // label is "-97.50 V", and a voltage floor that cannot physically happen is a worse figure
+        // than the cliff the pad was widening the axis to avoid: the reader is now being asked to
+        // believe the instrument can go there. So a group whose readings are entirely non-negative
+        // keeps its floor at zero: the pad it cannot spend below is simply not spent, rather than
+        // being pushed onto the top of the axis, where it buys no extra flattening the reader can
+        // use and leaves half the panel empty above the trace. On the failure step's kicker pair
+        // that is a 0 V to 450 V axis with everything in the bottom half becoming 0 V to 350 V with
+        // the readings across two thirds of it, and the axis floor is now a number the bank can
+        // actually sit at.
+        const pad = (g.hi - g.lo) * (minimalChrome ? 0.5 : 0.12);
+        g.lo = g.lo >= 0 && g.lo - pad < 0 ? 0 : g.lo - pad;
         g.hi += pad;
       }
     });

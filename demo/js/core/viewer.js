@@ -936,7 +936,23 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   .v-anat-card p{margin-top:5px;font-size:11.5px;}}
 /* Asked for less motion: the cards are already there when the step opens, and the leader lines are
    projected once and on resize rather than every frame. Nothing on this overlay moves. */
-@media (prefers-reduced-motion:reduce){.v-anat-card{animation:none;}}`;
+@media (prefers-reduced-motion:reduce){.v-anat-card{animation:none;}}
+/* ---- directed tour ----
+   The cards stop being four labels that arrive together and become four BEATS. Only added when a
+   tour is actually running (never under reduced motion, never on a def without a tour), so every
+   other overlay keeps the stagger it was approved on.
+
+   ONE CARD AT A TIME, and the previous one leaves. Holding spent cards on the overlay at reduced
+   weight was tried first, and by the fourth beat it is four blocks of text and four leader lines
+   over a shot whose whole point is that it is close on a moving machine: the label that is being
+   demonstrated right now stops being findable, which is the one thing the sequence exists to do.
+   A card that has had its beat lifts out (it was read, it is finished) and a card that has not had
+   one yet rises in, so the direction of travel says which way the sequence is going. */
+.v-anat.is-tour .v-anat-card{opacity:0;transform:translateY(10px);animation:none;
+  transition:opacity .4s ease,transform .4s cubic-bezier(.16,1,.3,1);}
+.v-anat.is-tour .v-anat-card.is-seen{opacity:0;transform:translateY(-8px);}
+.v-anat.is-tour .v-anat-card.is-live{opacity:1;transform:none;
+  border-color:color-mix(in srgb,var(--acc,#2f78ff) 42%,var(--line-hi));}`;
     document.head.appendChild(st);
   }
 
@@ -996,6 +1012,13 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       anatomyPending = anatomySlots.some((s) => !anatomyAnchors || typeof anatomyAnchors[s.id] !== 'function');
     }
     for (const slot of anatomySlots) {
+      // Only the beat being flown has a card on screen, so it is the only one with anything for a
+      // leader to start from. Off the tour every slot is revealed from the first frame and this is
+      // inert.
+      if (!slot.revealed) {
+        hideLeader(slot);
+        continue;
+      }
       const get = anatomyAnchors ? anatomyAnchors[slot.id] : null;
       const p = typeof get === 'function' ? get() : null;
       if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) {
@@ -1065,7 +1088,269 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     }
   }
 
+  // ---------- directed anatomy tour ----------
+  //
+  // The anatomy step used to be a machine turning on the spot under four labels that all arrived at
+  // once. A visitor learning what an omni drive IS gets nothing from a slow revolution: the claim is
+  // that the machine moves in any direction without turning to face it, and a stationary robot
+  // cannot demonstrate it. So a def MAY ship `anatomyTour` and the step becomes four SHOTS. Each
+  // shot owns one card, one passage of the mission, and one camera move, and they run in sequence.
+  //
+  //   def.anatomyTour = {
+  //     hold: 2900,                                   // ms a shot is held, and its card is live
+  //     basis: { origin: partId, forward: partId },    // two anchors -> the robot's own frame
+  //     beats: [{
+  //       part:   partId,          // which card this shot belongs to
+  //       window: [t0, t1],        // the seconds of the mission it plays, replayed once per hold
+  //       frame:  'robot'|'world', // whose axes the offsets below are read in
+  //       pos:    [fwd, side, up], // camera offset from the aim point, metres, at the shot's start
+  //       posEnd: [fwd, side, up], // and at its end: the move. Omitted = a locked-off shot.
+  //       aim:    [fwd, side, up], // aim point, offset from the part's own anchor
+  //       aimEnd: [fwd, side, up],
+  //     }],
+  //   }
+  //
+  // WHY EACH BEAT CARRIES ITS OWN WINDOW. The first version ran one contiguous passage and split it
+  // into four equal quarters. That makes the footage an accident of where the quarter boundaries
+  // fall: the dribbler card ended up over 2.9 s in which the subject was never closer than 1.87 m
+  // to the ball, which is a card claiming ball control over footage of a robot nowhere near it.
+  // A log is not obliged to demonstrate four mechanisms in a row. Naming the passage per beat means
+  // each card is over the seconds that actually show its claim, and the cut between beats is a cut,
+  // which is the ordinary grammar for changing what a shot is about.
+  //
+  // WHY THE SHOTS ARE OFFSETS IN A FRAME AND NOT WORLD POSES. The subject is driving at up to
+  // 3 m/s. A world pose is a shot of the patch of carpet the robot was standing on when the pose was
+  // written; an offset resolved against the live rig every frame is a camera bolted to the machine,
+  // which is what "tracks the robot as it moves" means. `frame: 'robot'` bolts it to the hull, so
+  // the world sweeps past a robot that holds still in frame - a chase shot, and the reading that
+  // makes a crab-walk legible. `frame: 'world'` bolts it to the robot's POSITION only, so the robot
+  // visibly turns inside the frame; a beat about the machine's own rotation has to use it, or the
+  // camera turns with the robot and the rotation disappears.
+  //
+  // The basis comes from two of the anatomy anchors the overlay already resolves - no new scene API,
+  // and it stays correct through a presence gap, because the anchors hold their last observed pose
+  // exactly as the labels do.
+  //
+  // WHY THE BEAT CLOCK IS THE WALL CLOCK AND THE MOTION CLOCK IS THE TIMELINE. The first version
+  // derived the beat index from `timeline.t`, which sounds tidier - one clock - but ties how long a
+  // card is readable to how fast its passage happens to be replayed, and breaks entirely once each
+  // beat has its own window. Here the wall clock decides WHICH shot, and the timeline decides what
+  // the world is doing inside it: the beat's window is handed to the timeline as a loop whose speed
+  // is derived so the passage plays through exactly once per hold. Nothing to keep in sync by hand,
+  // and a passage that needs slow motion to be legible at 0.4 m gets it by being short.
+  const TOUR_HOLD_MS = 2900;
+  const WORLD_UP = new THREE.Vector3(0, 1, 0);
+  const WORLD_FWD = new THREE.Vector3(1, 0, 0);
+  const tourSpec =
+    robotDef.anatomyTour && typeof robotDef.anatomyTour === 'object' ? robotDef.anatomyTour : null;
+  const tourHold =
+    tourSpec && Number.isFinite(tourSpec.hold) && tourSpec.hold > 400 ? tourSpec.hold : TOUR_HOLD_MS;
+  let tourOn = false;
+  let tourStart = 0; // rAF handle for the deferred start
+  let tourFrom = 0; // wall ms the sequence started at
+  let tourBeatAt = 0; // and the current shot
+  let tourIdx = -1;
+  const tourOrigin = new THREE.Vector3();
+  const tourNose = new THREE.Vector3();
+  const tourAnchor = new THREE.Vector3();
+  const tourFwd = new THREE.Vector3();
+  const tourSide = new THREE.Vector3();
+  const tourPos = new THREE.Vector3();
+  const tourAim = new THREE.Vector3();
+
+  /** The slot a beat's card is, or -1. Beats name parts; slots are in the order the flow passed. */
+  function tourSlotOf(beat) {
+    return anatomySlots.findIndex((slot) => slot.id === (beat && beat.part));
+  }
+
+  /** Every beat names a card that exists, a window and a start offset, and the basis resolves. */
+  function tourUsable() {
+    if (!tourSpec || !anatomySlots.length) return false;
+    const beats = tourSpec.beats;
+    if (!Array.isArray(beats) || !beats.length) return false;
+    const basis = tourSpec.basis || {};
+    const resolves = (id) =>
+      typeof id === 'string' && anatomyAnchors && typeof anatomyAnchors[id] === 'function';
+    if (!resolves(basis.origin) || !resolves(basis.forward)) return false;
+    return beats.every((beat) => {
+      const w = beat && beat.window;
+      return (
+        tourSlotOf(beat) >= 0 &&
+        Array.isArray(beat.pos) &&
+        resolves(beat.part) &&
+        Array.isArray(w) &&
+        Number.isFinite(w[0]) &&
+        w[1] > w[0]
+      );
+    });
+  }
+
+  /** `a` blended `k` of the way to `b`, per component, with `b` defaulting to `a`: a locked shot. */
+  function tourAxis(a, b, i, k) {
+    const from = (a && a[i]) || 0;
+    const to = b && Number.isFinite(b[i]) ? b[i] : from;
+    return from + (to - from) * k;
+  }
+
+  /**
+   * The camera pose for a beat at phase `k`, resolved against the rig as it is posed RIGHT NOW.
+   *
+   * @returns {boolean} false when the rig cannot answer this frame, which leaves the camera where
+   *   the last good frame put it rather than snapping it to the origin.
+   */
+  function tourPose(beat, k, outPos, outAim) {
+    if (!anatomyAnchors) return false;
+    const getA = anatomyAnchors[beat.part];
+    if (typeof getA !== 'function') return false;
+    tourAnchor.copy(getA());
+    if (beat.frame === 'world') {
+      tourFwd.copy(WORLD_FWD);
+    } else {
+      const getO = anatomyAnchors[tourSpec.basis.origin];
+      const getF = anatomyAnchors[tourSpec.basis.forward];
+      if (typeof getO !== 'function' || typeof getF !== 'function') return false;
+      // Copied out, never aliased: the anchor closures each own ONE Vector3 and hand the same
+      // instance back every call, so a beat whose part IS the basis origin would otherwise read its
+      // own anchor twice and derive a zero-length forward.
+      tourOrigin.copy(getO());
+      tourNose.copy(getF());
+      tourFwd.set(tourNose.x - tourOrigin.x, 0, tourNose.z - tourOrigin.z);
+      if (tourFwd.lengthSq() < 1e-8) return false;
+      tourFwd.normalize();
+    }
+    tourSide.crossVectors(tourFwd, WORLD_UP).normalize();
+    outAim
+      .copy(tourAnchor)
+      .addScaledVector(tourFwd, tourAxis(beat.aim, beat.aimEnd, 0, k))
+      .addScaledVector(tourSide, tourAxis(beat.aim, beat.aimEnd, 1, k));
+    outAim.y += tourAxis(beat.aim, beat.aimEnd, 2, k);
+    outPos
+      .copy(outAim)
+      .addScaledVector(tourFwd, tourAxis(beat.pos, beat.posEnd, 0, k))
+      .addScaledVector(tourSide, tourAxis(beat.pos, beat.posEnd, 1, k));
+    outPos.y += tourAxis(beat.pos, beat.posEnd, 2, k);
+    return Number.isFinite(outPos.x) && Number.isFinite(outAim.x);
+  }
+
+  /**
+   * Hand the beat's passage to the timeline, and light its card.
+   *
+   * Exactly one card is on the overlay: the one whose shot is running. `revealed` is what
+   * `projectAnatomy()` reads, so turning it off for every other slot retires their leader lines
+   * with them - a leader drawn to an invisible card is a hairline across the shot pointing at
+   * nothing. `seen` is only ever a class, and only decides which way a card leaves.
+   */
+  function tourEnterBeat(idx) {
+    const beat = tourSpec.beats[idx];
+    const live = tourSlotOf(beat);
+    const seconds = beat.window[1] - beat.window[0];
+    timeline.setLoop([beat.window[0], beat.window[1]], { speed: seconds / (tourHold / 1000) });
+    timeline.seek(beat.window[0]);
+    timeline.play();
+    for (let i = 0; i < anatomySlots.length; i++) {
+      const slot = anatomySlots[i];
+      const isLive = i === live;
+      if (idx === 0) slot.seen = false; // the wrap reads the same way round as the first pass
+      slot.revealed = isLive;
+      slot.card.classList.toggle('is-live', isLive);
+      slot.card.classList.toggle('is-seen', slot.seen && !isLive);
+      if (isLive) slot.seen = true;
+      else hideLeader(slot);
+    }
+    anatomyReflowed();
+  }
+
+  /**
+   * Applied LAST in the frame, for the same reason the commanded ease is: OrbitControls' damped
+   * `update()` is still adding a decaying slice of rotation, and it clamps the radius to
+   * `minDistance`, which is a metre out from a robot 180 mm across. Writing after it is what lets
+   * the shot sit where the beat asked for.
+   */
+  function stepTour(now) {
+    const beats = tourSpec.beats;
+    // `tourFrom` is the origin of the whole SEQUENCE and is never moved: the beat index has to be a
+    // function of time since the tour opened, or the shot that just started immediately reads as
+    // beat 0 again on the next frame and the sequence never leaves its first card.
+    const slot = Math.floor(Math.max(0, now - tourFrom) / tourHold);
+    const idx = slot % beats.length;
+    if (idx !== tourIdx) {
+      tourIdx = idx;
+      tourBeatAt = tourFrom + slot * tourHold;
+      tourEnterBeat(idx);
+    }
+    const k = clamp((now - tourBeatAt) / tourHold, 0, 1);
+    if (!tourPose(beats[idx], k, tourPos, tourAim)) return;
+    camera.position.copy(tourPos);
+    controls.target.copy(tourAim);
+    camera.lookAt(controls.target);
+  }
+
+  function startTour() {
+    tourStart = 0;
+    if (disposed) return;
+    if (!tourUsable()) {
+      // The def asked for a tour and the scene cannot answer it (an anchor that never resolved, a
+      // beat naming a card that is not on this overlay). Fall back to the orbit rather than to a
+      // frozen frame: a def that declares a tour also declares `rotation: 'tour'`, so the flow has
+      // already switched the auto-rotate off and nothing else is going to turn it back on.
+      setOrbit(true);
+      return;
+    }
+    // The step's own playback is written by the flow SYNCHRONOUSLY after `setAnatomy()` returns
+    // (a hero seek and a pause), which is why the start is deferred a frame: the tour is the later
+    // writer, and it wants a passage running rather than one instant held.
+    ensureControlHooks();
+    camTween = null;
+    orbitWanted = false;
+    controls.autoRotate = false;
+    tourIdx = -1;
+    tourFrom = nowMs();
+    tourBeatAt = tourFrom;
+    tourOn = true;
+    if (anatomyEl) anatomyEl.classList.add('is-tour');
+    anatomySlots.forEach((slot) => {
+      slot.revealed = false;
+      slot.seen = false;
+      hideLeader(slot);
+    });
+  }
+
+  function stopTour() {
+    if (tourStart) cancelAnimationFrame(tourStart);
+    tourStart = 0;
+    tourOn = false;
+    tourIdx = -1;
+    if (anatomyEl) anatomyEl.classList.remove('is-tour');
+    anatomySlots.forEach((slot) => {
+      slot.revealed = true;
+      slot.seen = false;
+      slot.card.classList.remove('is-live', 'is-seen');
+    });
+    // The timeline is deliberately NOT restored here: the caller closing the overlay is the flow
+    // moving to its next step, and that step writes its own loop one line later. Putting the old
+    // window back would be a third writer racing the two that matter.
+  }
+
+  /**
+   * A hand on the stage ends the sequence, because a choreographed camera and a dragged one cannot
+   * both be right and the visitor's is the one that is asked for. Every card is left on the overlay
+   * at full weight - the tour's job was to introduce them one at a time, and it is over - and the
+   * replay is widened from the one beat's window to the whole passage so the scene the visitor is
+   * now steering is still alive rather than looping two seconds of it.
+   */
+  function tourHandover() {
+    if (!tourOn) return;
+    const beats = tourSpec.beats;
+    const lo = Math.min(...beats.map((b) => b.window[0]));
+    const hi = Math.max(...beats.map((b) => b.window[1]));
+    stopTour();
+    projectAnatomy();
+    timeline.setLoop([lo, hi], { speed: 1 });
+    timeline.play();
+  }
+
   function clearAnatomy() {
+    stopTour();
     anatomyTick = null;
     anatomySlots = [];
     anatomyAnchors = null;
@@ -1135,6 +1420,8 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
         ax: 0,
         ay: 0,
         shown: false,
+        revealed: true, // a tour leaves this on for the live card only
+        seen: false, // and this on for the cards whose beat has already run
       });
     });
 
@@ -1149,6 +1436,11 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     // lines. Everything else re-projects with the render loop.
     if (!prefersReducedMotion()) anatomyTick = projectAnatomy;
     projectAnatomy();
+
+    // A tour is motion, and it is the whole screen's motion: refused outright when the visitor
+    // asked for less of it, which leaves the static posed hero with all four labels attached - a
+    // complete screen, the one this step shipped with.
+    if (tourSpec && !prefersReducedMotion()) tourStart = requestAnimationFrame(startTour);
   }
 
   // ---------- commanded camera + anatomy orbit ----------
@@ -1163,6 +1455,10 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   function cancelCamTween() {
     camTween = null;
     controls.autoRotate = orbitWanted;
+    // Same event, and it has to be the same handler: the tour outranks the ease in the frame loop,
+    // so cancelling only the ease would leave the choreography overwriting the drag it was supposed
+    // to yield to on that frame and every frame after it.
+    tourHandover();
   }
 
   /**
@@ -1422,6 +1718,10 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       controls.update();
     }
     if (camTween) applyCameraTween(nowMs());
+    // After the ease and after `update()`, and it outranks both: while a tour is running the
+    // choreography owns the shot. `startTour()` has already cleared the ease, so the two only ever
+    // coexist for the single frame a hand-drag takes to cancel it.
+    if (tourOn) stepTour(nowMs());
     renderer.render(scene, camera);
     // After the render, so the matrices this projects against are the ones the frame on screen was
     // drawn with: the label lands on the pixels it belongs to rather than one frame behind them.

@@ -20,6 +20,8 @@
 //      the producer's one real back-to-back ball pair rather than a fabricated one
 //  12  the VISION_2014 cross-check ships UNCROPPED, checked against the exporter's own
 //      pre-publication extract (ssl-vision-cache.fixture.json) rather than against itself
+//  13  every beat of the anatomy step's directed fly-through is over footage that shows what its
+//      card claims, measured off this same decoded payload
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -748,6 +750,87 @@ ok(
   !/^\s*(?!\/\/).*decodeMatchData/m.test(await readFile(path.join(SSL, 'match-data.js'), 'utf8')),
   'match-data.js decodes nothing at import time',
 );
+
+// ---------------------------------------------------------------- 13. the anatomy tour is honest
+//
+// Each card of the anatomy step is held over a named passage of THIS log, and the whole point of
+// naming passages instead of one contiguous window is that the footage has to show the mechanism
+// the card is about. That is a claim about the payload, so it is checked against the payload. The
+// first version of the tour shipped a dribbler card over 2.9 s in which bot 8 was never closer than
+// 1.87 m to the ball; these are the assertions that would have caught it.
+section('anatomy tour beats');
+{
+  const { EXPERIENCE, applyExperience } = await import('../ssl/experience.js');
+  const tourDef = {};
+  applyExperience(tourDef);
+  const tour = tourDef.anatomyTour;
+  const beats = new Map((tour.beats || []).map((b) => [b.part, b]));
+  const parts = (EXPERIENCE.anatomy.parts || []).map((p) => p.id);
+
+  ok(beats.size === parts.length && parts.every((id) => beats.has(id)), 'every anatomy card has exactly one beat');
+  for (const beat of tour.beats || []) {
+    const w = beat.window;
+    ok(
+      Array.isArray(w) && w[0] >= 0 && w[1] > w[0] && w[1] <= D.duration,
+      `${beat.part} window is ordered inside 0..${D.duration} (${JSON.stringify(w)})`,
+    );
+    ok(Array.isArray(beat.pos) && beat.pos.length === 3 && beat.pos.every(Number.isFinite), `${beat.part} has a finite start pose`);
+    ok(beat.frame === undefined || beat.frame === 'robot' || beat.frame === 'world', `${beat.part} names a known frame`);
+  }
+
+  // The subject, and the samples of it inside a beat. `present` matters: a card held over seconds
+  // the tracker never saw this robot is a camera locked to a stale pose.
+  const bot = M.robots.find((r) => r.name === 'yellow8');
+  ok(!!bot, 'bot 8 is in the decoded roster');
+  const dtBall = M.tBall[1] - M.tBall[0];
+  const samples = (w) => {
+    const out = [];
+    for (let i = 0; i < M.tRobot.length; i++) {
+      const t = M.tRobot[i];
+      if (t < w[0] || t > w[1]) continue;
+      const j = Math.max(0, Math.min(M.tBall.length - 1, Math.round(t / dtBall)));
+      const dx = M.ball.x[j] - bot.x[i];
+      const dy = M.ball.y[j] - bot.y[i];
+      let bearing = Math.atan2(dy, dx) - bot.yaw[i];
+      while (bearing > Math.PI) bearing -= 2 * Math.PI;
+      while (bearing < -Math.PI) bearing += 2 * Math.PI;
+      out.push({
+        t,
+        present: !!bot.present[i],
+        speed: Math.hypot(bot.vx[i], bot.vy[i]),
+        yawRate: Math.abs(bot.w[i]),
+        yaw: bot.yaw[i],
+        ball: Math.hypot(dx, dy),
+        bearing: Math.abs(bearing),
+      });
+    }
+    return out;
+  };
+
+  for (const beat of tour.beats || []) {
+    const rows = samples(beat.window);
+    ok(rows.length >= 8, `${beat.part} beat has samples to play (${rows.length})`);
+    ok(rows.every((r) => r.present), `${beat.part} beat never runs over an untracked stretch of bot 8`);
+  }
+
+  // omni: translating hard, and NOT turning to do it. Both halves are the card's claim.
+  const omni = samples(beats.get('omni').window);
+  ok(Math.max(...omni.map((r) => r.speed)) > 2.0, 'omni beat reaches over 2 m/s');
+  ok(
+    Math.max(...omni.map((r) => r.yaw)) - Math.min(...omni.map((r) => r.yaw)) < 0.25,
+    'omni beat holds its heading inside a quarter radian while it does it',
+  );
+
+  // imu: the robot's own rotation, which is the only thing on the overlay that beat can show.
+  ok(Math.max(...samples(beats.get('imu').window).map((r) => r.yawRate)) > 4.0, 'imu beat turns faster than 4 rad/s');
+
+  // dribbler: the ball at the mouth, not merely somewhere on the same pitch. The 0.2 m is a hull
+  // radius (0.09 m) plus a ball radius (0.0215 m) plus tracker slack; the bearing is the mouth.
+  const drib = samples(beats.get('dribbler').window);
+  const contact = drib.filter((r) => r.ball < 0.2 && r.bearing < 0.7);
+  ok(contact.length >= 3, `dribbler beat has the ball in the mouth (${contact.length} samples under 0.20 m and 40 deg)`);
+  ok(Math.max(...drib.map((r) => r.speed)) > 0.35, 'dribbler beat is not a stationary robot');
+}
 
 // ---------------------------------------------------------------- result
 

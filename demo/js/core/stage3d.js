@@ -171,8 +171,35 @@ export function addStageLights(scene) {
  * @param {number[]|string} [opts.focus] override the point the cull and the framing centre on:
  *   a world point `[x, y, z]`, or the name of an object in `mount`. Defaults to `cameraFocus()`
  *   then `cameraHome.target`, which is what the four hand-written robots use.
+ * @param {string} [opts.solo] name ONE node in `mount` and it becomes the entire subject: every
+ *   sibling is hidden and the framing is solved against that node's box alone. The heuristic cull
+ *   below asks "what is scenery"; a scene that draws nineteen identical robots on a pitch, or three
+ *   humanoids in a match, has no answer to that - none of them is scenery and all of them together
+ *   are not a thumbnail. Naming the one the mission is about is the only honest way to get a card
+ *   that shows one machine, and it is exactly the robot the rest of the flow is about.
  * @returns {{target:THREE.Vector3, dist:number, elev:number, az0:number}}
  */
+/**
+ * How much of the requested fill a SOLOED card is allowed to claim back.
+ *
+ * `orbitDistance()` below solves the distance that holds the subject's worst CORNER at its worst
+ * AZIMUTH, which is the only safe answer for a card that turns: nothing may swing out of frame
+ * mid-revolution. The cost is that the worst azimuth is the only one where the machine is actually
+ * the size that was asked for. On a box with a square footprint - a 180 mm hull, a humanoid with
+ * its arms at its sides - the diagonal is 1.41x the side, and the corner that binds is also the
+ * corner nearest the lens, so the azimuths in between render the subject at little more than half
+ * the fill the solve was handed. Measured on the two soloed cards: 0.78 asked for, 0.44 delivered.
+ *
+ * A soloed card is a THUMBNAIL of one machine and has no scenery left to lose it in, so it is the
+ * one place worth spending that margin. The gain is applied to the fill rather than to the solved
+ * distance so the guarantee itself is untouched: the worst azimuth still frames the whole subject,
+ * it just frames it edge to edge instead of at 78%. 1.28 is the largest gain that keeps
+ * `fill * gain` at or under 1.0, which is exactly the point where the binding corner lands on the
+ * frame border. Past it the machine would clip on the azimuths that bind, which is the failure the
+ * orbit-safe solve exists to prevent.
+ */
+const SOLO_FILL_GAIN = 1.28;
+
 export function fitOrbit(opts) {
   const {
     mount,
@@ -185,6 +212,7 @@ export function fitOrbit(opts) {
     envCull = 1.5,
     envRadius = 0.28,
     focus: focusIn = null,
+    solo: soloIn = null,
   } = opts;
   const api = apiIn || {};
   const home = api.cameraHome;
@@ -251,6 +279,41 @@ export function fitOrbit(opts) {
     return Math.max(size.x, size.y, size.z) > limit || centre.distanceTo(focus) > keep;
   };
 
+  // ---- named subject: one machine, everything else hidden ----
+  // Taken BEFORE the heuristic cull and instead of it. A soloed scene has no "scenery" question to
+  // answer: the answer is "everything that is not this node". The elevation is clamped with it,
+  // because a cameraHome framed to hold a 12 x 9 m pitch in shot looks down at ~58 deg, and at that
+  // pitch a 180 mm robot is a top plate and a shadow. 30 deg is the flattest a card can go before
+  // the robot starts hiding its own base ring behind its hull.
+  const soloNode = typeof soloIn === 'string' && soloIn ? mount.getObjectByName(soloIn) : null;
+  if (soloNode) {
+    const soloChain = new Set();
+    for (let p = soloNode; p; p = p.parent) soloChain.add(p);
+    const prune = (o) => {
+      if (o === soloNode) return; // the subject's own subtree is kept whole
+      if (!soloChain.has(o)) {
+        o.visible = false;
+        return;
+      }
+      for (const child of o.children) prune(child);
+    };
+    prune(mount);
+    mount.updateWorldMatrix(true, true);
+    subject.setFromObject(soloNode);
+    if (!subject.isEmpty()) {
+      subject.getCenter(target);
+      const soloElev = Math.min(elev, 0.52);
+      return {
+        target,
+        dist: orbitDistance(subject, target, fov, fill * SOLO_FILL_GAIN, aspect, samples, soloElev, az0),
+        elev: soloElev,
+        az0,
+      };
+    }
+    // The named node exists but drew nothing at this moment (a robot the tracker never saw). Fall
+    // through to the heuristic solve rather than handing back a degenerate frame.
+  }
+
   // The machine, for the cull below: the mesh nearest the focus point that is not itself scenery.
   // Its ancestors are the only groups allowed to stay bigger than the shot.
   let anchor = null;
@@ -310,11 +373,23 @@ export function fitOrbit(opts) {
   }
 
   subject.getCenter(target);
-  // Frame the WHOLE orbit, not one axis-aligned silhouette. With the camera at unit direction u
-  // from the target, a subject corner at offset o needs dist >= o.u + |o.up| / kY (and the same
-  // horizontally): the depth term is what perspective adds as a corner swings towards the camera.
-  // A fit that ignores it is only correct at the azimuths where the machine happens to be side
-  // on, and slices the machine off along the card's bottom border at the rest.
+  return { target, dist: orbitDistance(subject, target, fov, fill, aspect, samples, elev, az0), elev, az0 };
+}
+
+/**
+ * The distance that holds the whole box in frame at EVERY azimuth of the orbit.
+ *
+ * Frame the WHOLE orbit, not one axis-aligned silhouette. With the camera at unit direction u from
+ * the target, a subject corner at offset o needs dist >= o.u + |o.up| / kY (and the same
+ * horizontally): the depth term is what perspective adds as a corner swings towards the camera. A
+ * fit that ignores it is only correct at the azimuths where the machine happens to be side on, and
+ * slices the machine off along the card's bottom border at the rest.
+ *
+ * @param {THREE.Box3} subject world-space bounds of what has to stay in shot
+ * @param {THREE.Vector3} target the point the camera looks at
+ * @returns {number} metres
+ */
+function orbitDistance(subject, target, fov, fill, aspect, samples, elev, az0) {
   const halfFov = Math.tan(((fov * Math.PI) / 180) / 2);
   const kY = fill * halfFov;
   const kX = kY * aspect; // square tile: horizontal allowance equals vertical
@@ -343,5 +418,5 @@ export function fitOrbit(opts) {
       if (need > dist) dist = need;
     }
   }
-  return { target, dist, elev, az0 };
+  return dist;
 }

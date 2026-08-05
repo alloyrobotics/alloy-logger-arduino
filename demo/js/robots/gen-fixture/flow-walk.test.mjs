@@ -145,6 +145,7 @@ async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') 
         return !el.hidden && style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
       }).length,
       alertBanner: visible('.v-banner[data-sev="alert"]'),
+      context: visible('#flow-context'),
       chart: !!document.querySelector('#flow-chart-mount .chart-canvas'),
       loop: window.__flow.timeline.loopWindow,
     };
@@ -152,6 +153,10 @@ async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') 
   H.ok(state.intro === expectedCopy.missionIntro, `${mission} mission intro matches the selected role variant`);
   H.ok(state.evidenceClass === 0, `${mission} success step has no evidence-on failure state`);
   H.ok(!state.alertBanner, `${mission} success step has no alert finding banner`);
+  H.ok(
+    state.context === (mission !== 'ssl'),
+    `${mission} success step ${mission === 'ssl' ? 'removes' : 'keeps'} its contextual-label block`,
+  );
   H.ok(!state.chart, `${mission} success step has no failure chart or alert shading`);
   H.ok(Array.isArray(state.loop), `${mission} success step loops its healthy passage`);
   if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} mission step`);
@@ -175,6 +180,8 @@ async function assertFailureStep(page, mission, expectedCopy, mobileLabel = '') 
       channel: chart && chart.channel,
       fields: chart && chart.fields,
       minimal: !!document.querySelector('#flow-chart-mount .chart.chart-minimal'),
+      headerVisible: isVisible(document.querySelector('#screen-flow .flow-head')),
+      provenanceVisible: isVisible(document.getElementById('flow-provenance')),
       timestampVisible: isVisible(document.querySelector('#flow-viewer-mount .v-time')),
       chartBarVisible: isVisible(document.querySelector('#flow-chart-mount .chart-bar')),
       fieldChipsVisible: isVisible(document.querySelector('#flow-chart-mount .field-chips')),
@@ -187,6 +194,14 @@ async function assertFailureStep(page, mission, expectedCopy, mobileLabel = '') 
   H.ok(state.channel === expected.channel, `${mission} failure chart selects ${expected.channel} (${state.channel})`);
   H.ok(JSON.stringify(state.fields) === JSON.stringify(expected.fields), `${mission} direct-label fields match the experience (${(state.fields || []).join(', ')})`);
   H.ok(state.canvas && state.minimal, `${mission} failure chart is present in direct-label minimal mode`);
+  H.ok(
+    state.headerVisible === (mission !== 'ssl'),
+    `${mission} failure step ${mission === 'ssl' ? 'removes' : 'keeps'} the top progress header`,
+  );
+  H.ok(
+    state.provenanceVisible === (mission === 'donna'),
+    `${mission} failure step ${mission === 'ssl' ? 'removes' : mission === 'donna' ? 'keeps' : 'does not invent'} the bottom provenance block`,
+  );
   H.ok(!state.timestampVisible, `${mission} failure step hides the replay timestamp`);
   H.ok(!state.chartBarVisible && !state.fieldChipsVisible && !state.readoutVisible, `${mission} failure step hides generic chart summary controls`);
   if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} failure step`);
@@ -298,6 +313,8 @@ async function fullWalk(viewport, label) {
   await page.goto(`${server.origin}/demo/#/start`, { waitUntil: 'domcontentloaded' });
   H.section(`${label}: seat, library and complete flow`);
   H.ok(await waitFor(page, () => document.body.dataset.screen === 'start', 10000, 'seat fork'), `${label} opens the seat fork`);
+  H.ok((await page.locator('#screen-start .wordmark').count()) === 0, `${label} seat fork removes redundant AlloyLogger branding`);
+  H.ok((await page.locator('#screen-start .st-escape').count()) === 0, `${label} seat fork removes the bottom-center escape link`);
   await page.click('.st-card[data-role="engineer"]');
   H.ok((await page.locator('.st-continue:not(:disabled)').count()) === 1, `${label} seat fork has one enabled Continue CTA`);
   await page.click('.st-continue');

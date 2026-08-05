@@ -200,6 +200,10 @@ export function createPickerPreviews(entries, host) {
       envCull: Number.isFinite(ov.envCull) ? ov.envCull : ENV_CULL,
       envRadius: Number.isFinite(ov.envRadius) ? ov.envRadius : ENV_RADIUS,
       focus: ov.focus || null,
+      // The card is a thumbnail of ONE machine. A def whose scene draws a whole match names the
+      // robot the mission is about and the solve hides everything else; the four single-machine
+      // defs name nothing and frame exactly as they always did.
+      solo: ov.solo || null,
     });
     rec.target.copy(fit.target);
     rec.dist = fit.dist;
@@ -272,15 +276,23 @@ export function createPickerPreviews(entries, host) {
   // ------------------------------------------------------------------ render loop
   // Card rect RELATIVE to the grid. Both rects are read in the same frame, so their difference is
   // unaffected by scroll position; scroll cannot detach a preview from its card.
+  //
+  // SQUARE, always, and centred in the art panel. The framing solve is run at ASPECT_REF = 1 - it
+  // is a machine turning on the spot, so the distance that holds it has to hold on the narrow axis
+  // - and rendering that solve into a 2:1 letterbox spends the whole horizontal surplus on empty
+  // panel while the robot stays sized to the short side. A square scissor makes the pixels the
+  // shot was solved for the pixels it is drawn into, so the machine reads at the size the fit
+  // asked for whatever aspect the panel's CSS ends up with.
   function rectFor(rec, cw, ch, hostRect) {
     const r = rec.el.getBoundingClientRect();
     const w = Math.round(r.width);
     const h = Math.round(r.height);
     if (w < 8 || h < 8) return null;
-    const x = Math.round(r.left - hostRect.left);
-    const top = Math.round(r.top - hostRect.top);
-    if (top + h <= 0 || top >= ch || x + w <= 0 || x >= cw) return null;
-    return { x, y: ch - (top + h), w, h };
+    const side = Math.min(w, h);
+    const x = Math.round(r.left - hostRect.left + (w - side) / 2);
+    const top = Math.round(r.top - hostRect.top + (h - side) / 2);
+    if (top + side <= 0 || top >= ch || x + side <= 0 || x >= cw) return null;
+    return { x, y: ch - (top + side), w: side, h: side };
   }
 
   function placeCamera(rec, elapsed) {

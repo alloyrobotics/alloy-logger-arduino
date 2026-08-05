@@ -129,11 +129,22 @@ section('4. frozen disclosure and picker surfaces');
   eq(def.name, 'Donna, Jack & Rory', 'card title is frozen');
   eq(def.firstQuestion, 'How many times did Jack fall, and did Donna or Rory fall too?', 'firstQuestion is frozen');
   eq(def.loadingCopy?.line, 'Loading the recorded mission.', 'loading line is frozen');
-  // These picker framing overrides keep the three preview robots inside the lightweight card view;
-  // drifting or removing them restores the empty-card regression while the full replay still works.
+  // The picker framing override, frozen, and it carries settings for TWO surfaces.
+  //
+  // `solo` is the picker CARD: it used to be framed by the envCull/envRadius pair alone, which kept
+  // all three preview robots in shot and produced a card of three specks on a pitch. The card is now
+  // a thumbnail of ONE machine, so the override names Donna's own torso node and the solve hides
+  // everything else - the torso and not the `:robot` group, because the group also carries the name
+  // tag that floats half a metre over her head.
+  //
+  // `envCull`/`envRadius` are the brief's HERO, which is a whole panel rather than a stamp and wants
+  // all three bodies. `stage3d.fitOrbit` reads `solo`; `context.js` does not pass it, so the hero
+  // still runs the heuristic cull and these are the values that keep it framed. They are live, not
+  // leftovers: dropping them is the empty-card regression this assertion has always guarded, just
+  // moved one surface over.
   ok(
-    isDeepStrictEqual(def.preview, { envCull: 0.6, envRadius: 0.5, distScale: 0.55 }),
-    'preview framing override is frozen against the empty-card regression',
+    isDeepStrictEqual(def.preview, { solo: 'donna:torso', envCull: 0.6, envRadius: 0.5, distScale: 0.55 }),
+    'preview framing override is frozen on the one-robot solo plus the hero cull',
   );
   ok(def.context.provenance.startsWith(ATTRIBUTION), 'context provenance begins with the attribution verbatim');
   for (const [surface, text] of [

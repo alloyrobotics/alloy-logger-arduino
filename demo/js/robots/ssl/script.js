@@ -167,13 +167,12 @@ const def = {
     cap: 'Every tracked robot, the ball and the referee timeline, decoded in your browser.',
   },
   /**
-   * Framing overrides for the two staged shots (picker card, brief hero). The shared solve culls
-   * "scenery" relative to this scene's own cameraHome distance, and its defaults are tuned for a
-   * machine on a table: on a 12 x 9 m pitch they keep the carpet and lose the robots. These pull
-   * the cull in tight around the hero moment's ball so the shot is a cluster of robots, which is
-   * what a 171 px card can actually show. Every other def ships no block and is unaffected.
+   * Framing for the two staged shots, which do not want the same shot. `solo` is the picker CARD:
+   * nothing on a pitch of nineteen robots answers the "what is scenery" cull, so this names bot 8
+   * and the solve hides the rest. The other three are the brief HERO, which is a whole panel and
+   * wants that cluster: it does not pass `solo`, so the cull these three tune is what it runs.
    */
-  preview: { envCull: 0.3, envRadius: 0.3, distScale: 0.7 },
+  preview: { solo: 'bot_y8', envCull: 0.3, envRadius: 0.3, distScale: 0.7 },
   /**
    * Which second to pose at, resolved against the payload actually in hand. stage3d's table cannot
    * do this: seconds mean different things in the preview slice and in the full match export, and

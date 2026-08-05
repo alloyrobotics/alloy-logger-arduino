@@ -64,6 +64,14 @@ for (const mission of MISSIONS) {
 }
 ok(getFlowCopy('not-a-mission', 'engineer') === null, 'an unknown mission has no invented copy');
 
+section('SSL mission explainer');
+for (const [variantId, copy] of Object.entries(flowCopy.ssl)) {
+  ok(
+    copy.missionIntro === 'Soccer, played by autonomous robots.',
+    `ssl/${variantId} uses the dead-simple mission explainer`,
+  );
+}
+
 section('active experience copy');
 const ssl = ROBOTS_BY_ID.get('ssl');
 const donna = ROBOTS_BY_ID.get('donna');

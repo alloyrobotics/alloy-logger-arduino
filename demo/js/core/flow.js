@@ -112,12 +112,14 @@ function setOrbit(viewer, enabled) {
  */
 export function createFlow(def, role, mounts, deps) {
   const root = mounts.root;
+  const screen = root.closest('#screen-flow');
   const viewerMount = mounts.viewer;
   const chartMount = mounts.chart;
   const roleId = roleIdFor(role);
   const timeline = deps.createTimeline(def.duration);
   let viewer = null;
   let followSuspended = false;
+  let followAnchor = null;
   let chart = null;
   let step = null;
   let disposed = false;
@@ -139,6 +141,22 @@ export function createFlow(def, role, mounts, deps) {
     viewerMount.innerHTML = '';
   }
 
+  /**
+   * The viewer follows `sceneApi.cameraFocus()`, and on a mission whose scene is a whole match that
+   * point is the BALL. Two of the four steps want something else:
+   *
+   *   robot    nothing at all. The step holds one instant and labels it, and a live follow drags
+   *            the shot off the subject the moment the camera ease lands.
+   *   failure  the robot the finding is ABOUT. The kicker fault belongs to one machine; framing the
+   *            ball leaves that machine a speck at the top edge whenever play is anywhere else,
+   *            which is exactly what it was doing. An experience can name an anchor from the same
+   *            additive `anchors()` map the anatomy overlay reads, and the follow tracks that point
+   *            instead - so the pose written in `failure.camera` is an offset from the robot rather
+   *            than from wherever the ball happens to be.
+   *
+   * Read at CALL time, not at build time: this mission's anchor factory arrives with its match
+   * payload, after the first viewer has already been mounted.
+   */
   function viewerDef() {
     if (typeof def.buildScene !== 'function') return def;
     return {
@@ -150,7 +168,14 @@ export function createFlow(def, role, mounts, deps) {
         return {
           ...sceneApi,
           cameraFocus(...args) {
-            return followSuspended ? null : cameraFocus(...args);
+            if (followSuspended) return null;
+            if (followAnchor && typeof sceneApi.anchors === 'function') {
+              const map = sceneApi.anchors() || {};
+              const get = map[followAnchor];
+              const p = typeof get === 'function' ? get() : null;
+              if (p && Number.isFinite(p.x)) return p;
+            }
+            return cameraFocus(...args);
           },
         };
       },
@@ -165,9 +190,10 @@ export function createFlow(def, role, mounts, deps) {
     if (svg && deps.icon) svg.innerHTML = deps.icon;
   }
 
-  function ensureViewer(mode = 'full') {
+  function ensureViewer(mode = 'full', anchor = null) {
     if (disposed) return null;
     followSuspended = mode === 'anatomy';
+    followAnchor = followSuspended ? null : anchor;
     if (viewer) return viewer;
     if (!webglAvailable()) {
       showViewerFallback();
@@ -225,7 +251,9 @@ export function createFlow(def, role, mounts, deps) {
     if (!provenance) return;
     const value = def.context && def.context.provenance;
     const visible =
-      (nextStep === 'robot' || nextStep === 'failure') && typeof value === 'string' && !!value.trim();
+      (nextStep === 'robot' || (nextStep === 'failure' && def.id !== 'ssl')) &&
+      typeof value === 'string' &&
+      !!value.trim();
     provenance.textContent = visible ? value : '';
     provenance.hidden = !visible;
     root.classList.toggle('has-provenance', visible);
@@ -248,7 +276,10 @@ export function createFlow(def, role, mounts, deps) {
   }
 
   function applyPlayback(nextStep, experience) {
-    const v = ensureViewer(nextStep === 'robot' ? 'anatomy' : 'full');
+    const v = ensureViewer(
+      nextStep === 'robot' ? 'anatomy' : 'full',
+      nextStep === 'failure' ? (experience.failure && experience.failure.followAnchor) || null : null,
+    );
     if (v) v.hideBanner();
     if (nextStep !== 'failure' && chart) {
       chart.setDirectLabels(false);
@@ -335,6 +366,10 @@ export function createFlow(def, role, mounts, deps) {
     step = nextStep;
     const experience = experienceFor(def);
     root.dataset.step = nextStep;
+    if (screen) {
+      screen.dataset.flowMission = def.id;
+      screen.dataset.flowStep = nextStep;
+    }
     renderProvenance(nextStep);
     title.textContent =
       nextStep === 'robot'
@@ -366,7 +401,11 @@ export function createFlow(def, role, mounts, deps) {
     intro.textContent = nextStep === 'mission' ? copy.missionIntro : nextStep === 'failure' ? copy.failureIntro : '';
     intro.hidden = nextStep !== 'mission' && nextStep !== 'failure';
     renderAnatomy(nextStep === 'robot' ? experience.anatomy && experience.anatomy.parts : []);
-    renderContext(nextStep === 'mission' ? experience.success && experience.success.contextualLabels : []);
+    renderContext(
+      nextStep === 'mission' && def.id !== 'ssl'
+        ? experience.success && experience.success.contextualLabels
+        : [],
+    );
     renderDebug(nextStep === 'choose' ? copy.debugCards : []);
     cta.querySelector('span').textContent = CTA[nextStep];
     applyPlayback(nextStep, experience);
@@ -443,6 +482,10 @@ export function createFlow(def, role, mounts, deps) {
       }
       root.classList.remove('has-viewer-anatomy', 'has-provenance', 'no-viewer');
       delete root.dataset.step;
+      if (screen) {
+        delete screen.dataset.flowMission;
+        delete screen.dataset.flowStep;
+      }
     },
   };
 }

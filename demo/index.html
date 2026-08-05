@@ -116,8 +116,6 @@ input { font: inherit; color: inherit; }
 }
 .st-continue:hover, .pick-open:hover, .flow-cta:hover { background: var(--blue-hi); transform: translateY(-1px); }
 .st-continue:disabled { opacity: .42; cursor: default; transform: none; }
-.st-escape { align-self: center; margin-top: 12px; padding: 5px; font-size: 12px; color: var(--tx-mute); }
-.st-escape:hover { color: var(--tx); }
 .st.st-picked { pointer-events: none; }
 
 @media (max-width: 899px) {
@@ -128,6 +126,16 @@ input { font: inherit; color: inherit; }
   .st-card { min-height: 70px; padding: 18px 16px; border-radius: 12px; }
   .st-label { font-size: 19px; }
   .st-continue { min-height: 54px; }
+  /* One column of four cards is about 500 px of a 844 px phone, and the topbar and the escape link
+     that used to take up the rest are both gone. `margin-top: auto` on the button alone put every
+     one of the ~290 px left over in a single hole between the last card and the CTA, which reads as
+     a missing element rather than as space. Two more autos split that slack above the question and
+     below the cards instead, so the question and its four answers sit as one centred block with the
+     action still flush to the bottom edge where a thumb is. Mobile only: the desktop column is
+     nearly full at four across. */
+  .st-head { margin-top: auto; }
+  .st-cards { margin-bottom: auto; }
+  .st-continue { margin-top: 0; }
 }
 
 /* ==================================================================== 1. picker */
@@ -142,8 +150,12 @@ input { font: inherit; color: inherit; }
 }
 .rcard:hover { border-color: color-mix(in srgb, var(--acc) 55%, var(--line-hi)); }
 .rcard.is-selected { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 7%, var(--card)); }
+/* SQUARE, and the WebGL preview is scissored square to match (js/core/preview.js). The framing
+   solve is run at aspect 1 - it is a machine turning on the spot, so the distance that holds it
+   has to hold on the narrow axis - and a 2:1 panel spends the whole horizontal surplus on empty
+   grid while the machine stays sized to the short side. Same box, same solve, one aspect. */
 .rcard-art {
-  aspect-ratio: 16 / 8; display: flex; align-items: center; justify-content: center; color: var(--tx-mute);
+  aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; color: var(--tx-mute);
   border: 1px solid var(--line-hi); border-radius: 8px;
   background:
     linear-gradient(rgba(255,255,255,.055) 1px, transparent 1px) 0 0 / 18px 18px,
@@ -165,7 +177,6 @@ input { font: inherit; color: inherit; }
   .pick-library { padding-top: 24px; padding-bottom: 16px; }
   #robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .rcard { padding: 12px; gap: 10px; }
-  .rcard-art { aspect-ratio: 16 / 8; }
   .rcard-art svg { width: 86px; height: 54px; }
   .rcard-name { font-size: 15px; }
   .rcard-tag { font-size: 11.5px; }
@@ -857,6 +868,7 @@ input { font: inherit; color: inherit; }
 /* ==================================================================== 2e. four-step flow */
 #screen-flow { height: 100dvh; display: flex; flex-direction: column; }
 .flow-head { flex: 0 0 auto; }
+#screen-flow[data-flow-mission="ssl"][data-flow-step="failure"] .flow-head { display: none; }
 .flow-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .flow-id .flow-dot { width: 12px; height: 12px; border-radius: 4px; background: var(--blue); }
 .flow-id h2 { min-width: 0; font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -918,9 +930,38 @@ input { font: inherit; color: inherit; }
 .flow.has-viewer-anatomy.has-provenance[data-step="robot"] { grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "title" "viewer" "provenance" "cta"; }
 .flow.has-viewer-anatomy[data-step="robot"] .flow-anatomy { display: none; }
 .flow[data-step="mission"] { grid-template-columns: minmax(0, 3fr) minmax(180px, .8fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro intro" "viewer context" "cta cta"; }
+#screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title" "intro" "viewer" "cta"; }
+/* A SHAPE for the replay, not whatever is left over. Dropping the context column handed this step's
+   viewer the full width AND the row the labels used to sit in, and on a 390 px phone that is a
+   354 x 1180 panel: an aspect of 0.30. viewer.js widens the vertical fov as a panel narrows, so at
+   0.30 the camera opens to about 92 deg vertically against 35 deg horizontally, and the match ends
+   up as a strip of play across the middle of a column of empty carpet. No camera distance fixes
+   that; the panel is the wrong shape for a game played on a plane. Capping it at 4:5 gives the
+   solve a frame it can fill, and `margin: auto 0` splits the slack above and below so what is left
+   reads as air around a figure rather than as a hole under one. `max-height: 100%` keeps the cap a
+   cap: on a short viewport, and on every desktop one, the row wins and the panel is exactly as wide
+   as its column and as tall as its row, which is the shape it already had.
+
+   `width: 100%` + `height: auto` is load-bearing. A grid item is stretched in BOTH axes by default,
+   which makes both sizes definite and lets `aspect-ratio` resolve the WIDTH from the height: on a
+   1440px desktop that shrank a 1200px panel to a 665px portrait slab with half the row empty beside
+   it. Fixing the inline size and freeing the block one is what makes the ratio a height cap rather
+   than a shape.
+
+   The width is bounded for the same reason the height is. Full width on a 1440px desktop is a
+   1180 x 570 letterbox, aspect 2.07, and `viewer.js` stops widening the fov at 2.2 - so the camera
+   that puts two hulls and the ball across a phone panel puts them across the left third of that one
+   and leaves the right two thirds on empty carpet. 680px keeps the panel's aspect near 1.2 wherever
+   it is drawn, which is close enough to the phone's 0.8 that the fov compensation lands the same
+   shot at both ends. */
+#screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] .flow-viewer-frame {
+  width: 100%; height: auto; aspect-ratio: 4 / 5;
+  max-width: 680px; max-height: 100%; align-self: center; margin-inline: auto;
+}
 .flow[data-step="mission"] .flow-intro { padding: 10px 12px; border: 1px solid var(--line-hi); border-radius: 9px; background: rgba(17,17,17,.9); }
 .flow[data-step="mission"] .flow-viewer-frame .v-hud { display: none; }
 .flow[data-step="mission"] .flow-anatomy, .flow[data-step="mission"] .flow-chart-frame, .flow[data-step="mission"] .flow-debug { display: none; }
+#screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] .flow-context { display: none; }
 .flow[data-step="failure"] { grid-template-columns: minmax(300px, .75fr) minmax(0, 1.65fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro chart" "viewer chart" "cta cta"; }
 .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title title" "intro chart" "viewer chart" "provenance provenance" "cta cta"; }
 .flow[data-step="failure"] .flow-intro { padding: 0 4px; align-self: start; }
@@ -943,8 +984,16 @@ input { font: inherit; color: inherit; }
   .flow[data-step="mission"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title" "intro" "viewer" "context" "cta"; }
   .flow[data-step="mission"] .flow-context { flex-direction: row; gap: 10px; }
   .flow[data-step="mission"] .flow-context-row { flex: 1; border-bottom: 0; }
-  .flow[data-step="failure"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(220px, .72fr) minmax(300px, 1.28fr) auto; grid-template-areas: "title" "intro" "viewer" "chart" "cta"; }
-  .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(220px, .72fr) minmax(300px, 1.28fr) auto auto; grid-template-areas: "title" "intro" "viewer" "chart" "provenance" "cta"; }
+  #screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] { grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title" "intro" "viewer" "cta"; }
+  /* The chart used to take 1.28fr against the replay's 0.72fr, which on a phone is a 420 px panel
+     of one channel pair: the sag the finding is about arrived filling it corner to corner and read
+     as a cliff whatever its actual size, and the replay it is supposed to be read against was the
+     smaller of the two. The split is now the other way round, and by more than it was: the replay
+     is the thing being explained and the chart is the evidence for it. Plotted across ~200 px
+     instead of ~420, the same numbers make the same shape flatter, which is what the axis headroom
+     in chart.js is also for, and the height the chart gives up is height the replay gets. */
+  .flow[data-step="failure"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(240px, 1.3fr) minmax(190px, .7fr) auto; grid-template-areas: "title" "intro" "viewer" "chart" "cta"; }
+  .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(240px, 1.3fr) minmax(190px, .7fr) auto auto; grid-template-areas: "title" "intro" "viewer" "chart" "provenance" "cta"; }
   .flow[data-step="failure"] .flow-intro { font-size: 14px; }
   .flow-provenance { font-size: 10px; line-height: 1.45; }
   .flow[data-step="choose"] { grid-template-rows: auto auto minmax(0, 1fr) auto; }
@@ -1520,7 +1569,11 @@ input { font: inherit; color: inherit; }
     -webkit-line-clamp: 4; line-clamp: 4;
   }
   .rcard-go { font-size: 10.5px; }
-  .pick-foot { padding: 20px 0 30px; }
+  /* Keeps the 18px side gutter every other block on this screen uses (`.pick-wrap`). Zeroing it
+     here let the note set its lines edge to edge on a 390px phone: the first character of a wrapped
+     line touches x=0 and the last touches the frame border, which reads as text running off the
+     screen rather than as a caption. Only the vertical padding was ever meant to change. */
+  .pick-foot { padding: 20px 18px 30px; }
 
   /* compact pill instead of a full-width card: fit-content, title only, whole pill dismisses */
   .v-banner {
@@ -1600,12 +1653,9 @@ input { font: inherit; color: inherit; }
 <body class="gridbg" data-screen="start">
 
 <!-- ============================================================ 0. START  #/start
-     The role fork. One question, four radio cards, one Continue action, and an escape to the picker.
+     The role fork. One question, four radio cards and one Continue action.
      js/core/start.js builds the panel into #start-mount; nothing is authored here but the frame. -->
 <section id="screen-start" hidden>
-  <header class="topbar">
-    <a class="wordmark" href="/"><i></i><span>AlloyLogger</span></a>
-  </header>
   <div class="start-body">
     <div id="start-mount"></div>
   </div>

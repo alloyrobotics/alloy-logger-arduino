@@ -171,10 +171,15 @@ const def = {
   getSceneData,
   // Routing reads this before the payload lands; `experience` itself arrives with it.
   hasExperience: true,
-  // Picker framing: cameraHome is 7.42 m (three-robot frame), so the stage3d default
-  // scenery thresholds misclassify the pitch as subject and distance-cull the two
-  // teammates. These values keep all three bodies + ball and cull field furniture.
-  preview: { envCull: 0.6, envRadius: 0.5, distScale: 0.55 },
+  // Picker framing: cameraHome is 7.42 m (a three-robot frame), which puts three humanoids and a
+  // pitch inside a card the size of a stamp and reads as three specks. `solo` names Donna's own
+  // rig and hides the rest, so the card is a thumbnail of the robot the mission is named after.
+  // The torso node rather than the `:robot` group: the group also carries the floating name tag,
+  // which sits half a metre over the head and pushes the body down to a third of the card.
+  // envCull/envRadius are unused on the soloed card path and are kept for the brief's HERO, which
+  // does not pass `solo` and still wants all three bodies and the ball with the furniture culled.
+  // Dropping them is what silently swaps that panel back to the default cull.
+  preview: { solo: 'donna:torso', envCull: 0.6, envRadius: 0.5, distScale: 0.55 },
   loadingCopy: {
     line: 'Loading the recorded mission.',
     cap:

@@ -78,6 +78,44 @@ for (const mission of MISSIONS) {
       `${mission}/${part.id} resolves to finite world coordinates`,
     );
   }
+  // A def MAY ship a directed fly-through for the anatomy step. `viewer.setAnatomy()` silently
+  // falls back to the plain orbit when the spec cannot be resolved against the live rig, which is
+  // the right runtime behaviour and a terrible thing to find out from a screenshot: this is the
+  // build-time half of it. Content truth for the ssl beats - that the footage each card is held
+  // over shows what the card claims - is checked against the decoded payload in ssl-data.test.mjs.
+  const tour = def.anatomyTour;
+  if (tour) {
+    const ids = new Set((parts || []).map((part) => part.id));
+    const anchorOf = (part) => (parts || []).find((p) => p.id === part);
+    const resolves = (anchorId) => !!anchors && typeof anchors[anchorId] === 'function';
+    ok(Array.isArray(tour.beats) && tour.beats.length === ids.size, `${mission} tour has one beat per anatomy card`);
+    ok(
+      resolves((tour.basis || {}).origin) && resolves((tour.basis || {}).forward),
+      `${mission} tour basis anchors resolve against the live scene`,
+    );
+    ok(
+      new Set((tour.beats || []).map((beat) => beat.part)).size === (tour.beats || []).length,
+      `${mission} tour beats name distinct cards`,
+    );
+    for (const beat of tour.beats || []) {
+      const part = anchorOf(beat.part);
+      ok(!!part, `${mission} tour beat "${beat.part}" names a card on the overlay`);
+      ok(!!part && resolves(part.anchor), `${mission} tour beat "${beat.part}" resolves its card's anchor`);
+      ok(
+        Array.isArray(beat.window) && beat.window[0] >= 0 && beat.window[1] > beat.window[0] &&
+          beat.window[1] <= def.duration,
+        `${mission} tour beat "${beat.part}" window is ordered inside 0..${def.duration}`,
+      );
+      for (const key of ['pos', 'posEnd', 'aim', 'aimEnd']) {
+        if (beat[key] === undefined) continue;
+        ok(
+          Array.isArray(beat[key]) && beat[key].length === 3 && beat[key].every(Number.isFinite),
+          `${mission} tour beat "${beat.part}" ${key} is three finite metres`,
+        );
+      }
+    }
+  }
+
   if (scene && typeof scene.dispose === 'function') scene.dispose();
 
   const success = exp.success || {};

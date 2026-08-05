@@ -259,7 +259,7 @@ try {
     await ctx.close();
   }
 
-  H.section('flow provenance is verbatim and precedes failure claims');
+  H.section('flow provenance is verbatim wherever each mission keeps it');
   {
     const ctx = await newContext(browser, { width: 390, height: 844 });
     const page = await ctx.newPage();
@@ -299,12 +299,12 @@ try {
           expectedPresent: !!expectedText.trim(),
         };
       }, expected);
-      if (id === 'ssl' || id === 'donna') {
-        H.ok(failure.visible, `${id} failure step keeps provenance visible`);
-        H.ok(failure.text === expected, `${id} failure step renders context.provenance verbatim`);
+      if (id === 'ssl') {
+        H.ok(!failure.visible, 'ssl failure step removes the bottom provenance block');
+        H.ok(failure.text === '', 'ssl failure step clears provenance text');
       } else {
         H.ok(failure.visible === failure.expectedPresent, `${id} failure provenance presence matches the definition (${failure.expectedPresent})`);
-        H.ok(!failure.expectedPresent || failure.text === expected, `${id} failure provenance copy matches the definition when present`);
+        H.ok(!failure.expectedPresent || failure.text === expected, `${id} failure step renders context.provenance verbatim when present`);
       }
     }
     H.ok(errors.pageErrors.length === 0, `provenance route walk has no page errors (${errors.pageErrors.join(' | ')})`);

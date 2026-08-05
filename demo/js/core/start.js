@@ -1,7 +1,7 @@
 // start.js - the seat fork at #/start.
 //
 // A card selects a work function. The single Continue button persists it, records role_selected,
-// and advances. The mission-library escape does neither.
+// and advances.
 
 import { ROLES, getRoleId, setRole, roleById } from './role.js';
 import { track } from './analytics.js';
@@ -9,7 +9,6 @@ import { track } from './analytics.js';
 const COPY = {
   title: 'What do you do?',
   sub: 'This will help personalize the demo experience.',
-  escape: 'Just exploring. Show me every mission',
   continue: 'Continue',
 };
 
@@ -24,7 +23,6 @@ const LABELS = Object.freeze({
  * @param {HTMLElement|object} [mountOrOpts]
  * @param {{
  *   onPick?: (role:object) => void,
- *   onExplore?: () => void,
  *   persist?: boolean,
  *   copy?: object,
  * }} [maybeOpts]
@@ -36,7 +34,6 @@ export function createStart(mountOrOpts, maybeOpts) {
   const mount = isEl ? mountOrOpts : null;
   const opts = (isEl ? maybeOpts : mountOrOpts) || {};
   const onPick = typeof opts.onPick === 'function' ? opts.onPick : () => {};
-  const onExplore = typeof opts.onExplore === 'function' ? opts.onExplore : null;
   const persist = opts.persist !== false;
   const copy = { ...COPY, ...(opts.copy || {}) };
   const arrivalId = getRoleId();
@@ -49,14 +46,12 @@ export function createStart(mountOrOpts, maybeOpts) {
       <p class="st-sub"></p>
     </header>
     <div class="st-cards" role="radiogroup"></div>
-    <button class="st-continue" type="button" disabled><span></span><span aria-hidden="true">→</span></button>
-    <a class="st-escape" href="#/missions"></a>`;
+    <button class="st-continue" type="button" disabled><span></span><span aria-hidden="true">→</span></button>`;
 
   const q = (sel) => el.querySelector(sel);
   q('.st-title').textContent = copy.title;
   q('.st-sub').textContent = copy.sub;
   q('.st-continue span').textContent = copy.continue;
-  q('.st-escape').textContent = copy.escape;
 
   const cards = q('.st-cards');
   cards.setAttribute('aria-label', copy.title);
@@ -137,17 +132,9 @@ export function createStart(mountOrOpts, maybeOpts) {
     commit();
   }
 
-  function onEscape(event) {
-    if (!onExplore || committed || disposed) return;
-    event.preventDefault();
-    committed = true;
-    onExplore();
-  }
-
   cards.addEventListener('click', onCardsClick);
   cards.addEventListener('keydown', onCardsKey);
   continueButton.addEventListener('click', onContinue);
-  q('.st-escape').addEventListener('click', onEscape);
 
   return {
     el,
@@ -165,7 +152,6 @@ export function createStart(mountOrOpts, maybeOpts) {
       cards.removeEventListener('click', onCardsClick);
       cards.removeEventListener('keydown', onCardsKey);
       continueButton.removeEventListener('click', onContinue);
-      q('.st-escape').removeEventListener('click', onEscape);
       el.remove();
     },
   };
