@@ -198,6 +198,40 @@ const ALERT = 0xff5f57;
 const TAG_INK = 0xf2f5f8;
 const TAG_BACK = [14, 16, 20, 176]; // rgba bytes behind the glyphs
 
+// ---- name tags on the anatomy step
+//
+// A name tag is a WIDE-SHOT device: 0.34 m of sprite riding over the hips is what makes three
+// identical white humanoids identifiable at the follow cam's 7.4 m, and it is unusable on a step
+// that closes to half a metre, where "Donna" is wider than the phone panel and was measured lying
+// across 88% of the live anatomy card with the card's copy reading through the glyphs. So the tags
+// stand down while an anatomy overlay is live on this scene. `experience.js` (which authors the
+// tour, and is lazy) states the policy and keeps the argument for it; a session where that module
+// never loads keeps the legacy brief's labels exactly as they shipped.
+//
+// LIVE means "this instance's anchors are being read". The viewer's ABI has no step flag, and this
+// file has no DOM (see NO `document` above), but the overlay resolves every leader and every camera
+// beat through `anchors()` - so a scene whose closures were read within the last twelve frames is
+// the scene an overlay is drawing. Per-instance by construction, and it lapses by itself when the
+// step closes. Reduced motion projects ONCE and holds still, which is not a heartbeat, so that
+// visitor keeps the tags on the static hero pose the step ships for them.
+const ANCHOR_LIVE_MS = 200;
+const TAG_FADE_MS = 240;
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+let tagsStandDownOnAnatomy = false;
+
+/**
+ * Declare that this mission's anatomy step is a directed close-range tour, so every robot's name tag
+ * stands down for the duration of it. Called by `experience.js` and by nobody else.
+ *
+ * Module scope because it is one statement about this mission's step and every instance built here
+ * is that mission; WHICH instance stands its tags down is decided per-instance, above.
+ *
+ * @param {boolean} [on]
+ */
+export function holdNameTagsOnAnatomy(on = true) {
+  tagsStandDownOnAnatomy = on !== false;
+}
+
 /**
  * The three recorded robots, in the payload's own robot order. `accent` is the identity colour;
  * `label` is the approved factual robot name and is what the floating tag and the HUD chip say.
@@ -550,6 +584,12 @@ export function buildScene(THREE, mount) {
   // The follow spring asks cameraFocus() for the SAME instant update() was just handed, so the
   // posed moment is cached: without it every frame poses three whole rigs twice.
   let lastPoseT = null;
+  // Name-tag stand-down, per instance. See holdNameTagsOnAnatomy(): `anchorReadAt` is the wall clock
+  // of the last anatomy-anchor read, which is this scene's evidence that an overlay is live on it,
+  // and `tagFade` is the opacity all three tags are currently carrying.
+  let anchorReadAt = 0;
+  let tagFade = 1;
+  let tagFadeAt = 0;
 
   const vTmp = new THREE.Vector3();
   const qTmp = new THREE.Quaternion();
@@ -1434,8 +1474,37 @@ export function buildScene(THREE, mount) {
     }
     const t = clampT(Number.isFinite(tSec) ? tSec : 0);
     pose(t);
+    stepTags();
     lastFocus = readFocus(focusOut);
     if (highlight) driveHighlight(t);
+  }
+
+  /**
+   * Carry the three name tags to the opacity the current step wants them at.
+   *
+   * ASYMMETRIC ON PURPOSE. Standing down is instant, because the anatomy step arrives as a cut to a
+   * half-metre stand-off and easing out means a quarter second of a giant label over a card fading
+   * in under it. Coming back is eased: it comes back on the replay, where a tag snapping to full
+   * opacity on the frame the overlay closes reads as a glitch rather than as a label.
+   */
+  function stepTags() {
+    const now = nowMs();
+    const want = tagsStandDownOnAnatomy && now - anchorReadAt < ANCHOR_LIVE_MS ? 0 : 1;
+    if (want < tagFade) tagFade = want;
+    else if (want > tagFade) {
+      // Clamped, so a backgrounded tab resuming after seconds of no frames eases in over the
+      // authored time instead of snapping.
+      const dt = tagFadeAt ? Math.min(now - tagFadeAt, TAG_FADE_MS) : 16;
+      tagFade = Math.min(want, tagFade + dt / TAG_FADE_MS);
+    }
+    tagFadeAt = now;
+    for (let i = 0; i < bots.length; i++) {
+      const tag = bots[i].tag;
+      tag.material.opacity = tagFade;
+      // Off the render list at zero rather than drawn transparent, so a stood-down tag cannot put a
+      // depth-sorted pass over the shot it is standing down for.
+      tag.visible = tagFade > 0.02;
+    }
   }
 
   function driveHighlight(t) {
@@ -1627,13 +1696,38 @@ export function buildScene(THREE, mount) {
   // first build and after dispose() they answer with the zero vector for the same reason: an
   // anchor is a rendering hint, and a missing one must not take the screen down with it. The
   // anatomy step poses the scene at the frozen hero moment (187.6 s), where she is on the pitch.
+  //
+  // A FIFTH KEY THAT IS NOT A CARD. `bodyForward` is not a part and the anatomy overlay never asks
+  // for it: it exists so a directed tour can resolve WHICH WAY DONNA IS FACING. The viewer builds
+  // the robot's frame from two anchors and drops the vertical component of their difference, and no
+  // pair of the four card anchors survives that. compute -> imu is the spine, 0.02-0.04 m of
+  // horizontal residue whose bearing swings through 280 degrees across 187-190 s; compute -> servos
+  // is a LEG, which the gait swings through 60 degrees of the same passage; head is on two live
+  // joints that pan +-1.5 rad. This point is the torso link's own +x axis (ROS FLU: x forward) a
+  // fixed 0.2 m out at the compute anchor's height, so the pair differs by nothing but that axis
+  // and reads Donna's recorded heading directly off the node the replay poses - -32.9 degrees in
+  // the scene frame at the hero instant, which is her recorded yaw. Additive: a viewer that does
+  // not know the key is unaffected, and no card can ever point at it.
   const TORSO_IMU_Z = 0.15; // upper torso, below the shoulder joints at 0.2035
   const TORSO_COMPUTE_Z = 0.04; // lower torso, just above the hip joints at 0
+  const TORSO_FWD_X = 0.2; // long enough that joint noise cannot rotate the bearing
+  // WHY THE HEAD ANCHOR IS NOT THE HEADTILT JOINT ORIGIN. That origin is the tilt PIVOT: it sits on
+  // the neck bracket, below and behind the housing, and a leader line drawn to it lands on the servo
+  // horn between the shoulders. On the anatomy step that reads as a label pointing at the top of the
+  // torso rather than at the head, which is the one thing the card is about. These three numbers are
+  // the centre of the head link's own merged CAD, measured in the HeadTilt node's local frame off
+  // the built rig: the geometry spans x -0.062..0.065, y -0.025..0.105, z -0.0535..0.0195, so the
+  // centre is 0.040 m up the link and 0.017 m back. It is a point INSIDE the housing that carries
+  // the cameras, it rides both head joints exactly as the pivot did, and it claims no part the CAD
+  // does not have. Every consumer is a rendering hint (the overlay's leader, the tour's aim point),
+  // so a 43 mm move costs nothing anywhere else.
+  const HEAD_CENTRE = [0, 0.04, -0.017];
   const anchorOut = {
     head: new THREE.Vector3(),
     imu: new THREE.Vector3(),
     servos: new THREE.Vector3(),
     compute: new THREE.Vector3(),
+    bodyForward: new THREE.Vector3(),
   };
   const vAnchor = new THREE.Vector3();
   let anchorMap = null;
@@ -1676,7 +1770,9 @@ export function buildScene(THREE, mount) {
       head: () => {
         const bot = donnaBot();
         const node = bot && jointNode(bot, 'HeadTilt');
-        return node ? nodePoint(node, anchorOut.head, 0, 0, 0) : anchorOut.head;
+        return node
+          ? nodePoint(node, anchorOut.head, HEAD_CENTRE[0], HEAD_CENTRE[1], HEAD_CENTRE[2])
+          : anchorOut.head;
       },
       imu: () => {
         const bot = donnaBot();
@@ -1695,7 +1791,25 @@ export function buildScene(THREE, mount) {
         const bot = donnaBot();
         return bot ? nodePoint(bot.torso, anchorOut.compute, 0, 0, TORSO_COMPUTE_Z) : anchorOut.compute;
       },
+      bodyForward: () => {
+        const bot = donnaBot();
+        return bot
+          ? nodePoint(bot.torso, anchorOut.bodyForward, TORSO_FWD_X, 0, TORSO_COMPUTE_Z)
+          : anchorOut.bodyForward;
+      },
     };
+    // Wrapped ONCE, here, to stamp the read: a leader or a camera beat asking where a part is, this
+    // frame, is this file's only evidence that an anatomy overlay is live on this instance, and
+    // stepTags() stands the name tags down on it. Wrapping here keeps the five readers above about
+    // geometry and costs one assignment per call, allocating nothing on any frame. Each wrapper
+    // returns the same Vector3 its closure owns, so the aliasing contract callers live under holds.
+    for (const key of Object.keys(anchorMap)) {
+      const read = anchorMap[key];
+      anchorMap[key] = () => {
+        anchorReadAt = nowMs();
+        return read();
+      };
+    }
     return anchorMap;
   }
 

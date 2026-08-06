@@ -4,6 +4,166 @@
 import { channels, duration, rate, buildData, findings } from './data.js';
 import { buildScene } from './scene.js';
 
+// ---- directed anatomy fly-through (viewer.js `anatomyTour`) ----
+//
+// The contract is documented at demo/js/core/viewer.js. Four shots, one card live in each, and
+// every shot is held over the seconds of THIS mission that show what its card claims.
+//
+// WHY THESE SECONDS. 18.6 to 31.2 s is one continuous healthy passage: the second survey lane flown
+// edge to edge (18.6 to 27.7 s, x from 10.05 m to -9.98 m at a held 6.0 m) and the cross-lane turn
+// that follows it (27.7 to 31.2 s, y from -3.49 m to -0.01 m). Nothing has gone wrong yet - the
+// bearing wear starts at 32 s - so all four cards are held over the aircraft working. Contiguous
+// on purpose: the beat cuts are cuts inside one passage rather than four seeks across the flight,
+// and the manual handover, which widens the loop to the union of the windows, replays that same
+// lane-and-turn rather than a stitched-together digest.
+//
+// WHY THE OFFSETS ARE WHAT THEY ARE, arithmetically, because the first pass at them guessed and
+// shipped four clipped shots. These are scene units, not field metres: scene.js compresses the field
+// by 0.30 units per metre and draws the ~0.45 m airframe oversize against it, so the motor diagonal
+// is 0.495 units and the prop discs take the airframe to 0.586 units across. The viewer widens its
+// 42 deg base fov as the panel narrows, and on a 390 px phone the flow's viewer panel lands near
+// 74 deg vertical, which is 47 deg HORIZONTAL: the ground a shot covers across the frame is about
+// 0.87 x the stand-off. So the airframe only fits inside the panel from 0.68 units out, wants 0.85
+// to sit inside it with margin, and one motor plus its 0.236 unit disc is the subject from about
+// 0.42. Every stand-off below was solved from that number rather than eyeballed, and none of them
+// is inside 0.42. SSL's numbers are metres against a 0.18 m robot and do not transfer.
+//
+// WHERE THE ROBOT-FRAME BEATS STAND, AND WHY. The craft flies these lanes toward -x with its nose
+// locked at +x - heading is held for the whole survey so the image footprints line up - so it is
+// travelling tail-first, and a hull-fixed camera off the beam watches the survey lanes, the flown
+// track and the drop line stream ACROSS the frame past an aircraft that holds still in it, which is
+// what a chase shot of level flight reads as. Two beats take that beam placement. The battery beat
+// cannot: three separate parts sit between the beam and the pack (see its own note), and the only
+// clear sight line is from astern, so it stands 26 to 31 deg off the tail. That trades lateral
+// streaming for the lanes running away under the lens, which still reads as flight and is the
+// cheaper of the two costs - the alternative was a card about the pack over footage of the landing
+// gear. The world-frame beat is nearly nose-on because there the camera does not turn with the hull
+// and the point of the shot is the bank rather than the travel.
+const ANATOMY_TOUR = {
+  // WHY 3067 AND NOT 2900. The hold is the only clock the tour has: `viewer.js` derives the beat
+  // index from the wall time since the step opened, so the four cards are only ever separable if
+  // the interval a reviewer samples at is out of step with the hold. 2900 was not. Each of the four
+  // review captures is its OWN cold page load, the tour opens 0.5 to 1.0 s after navigation
+  // (measured over eight loads, cold and four-up in parallel), and the captures are taken 2900 ms
+  // apart - so with a 2900 ms hold the beat edges land at 15.0, 17.9, 20.8 and 23.7 s, which is the
+  // capture cadence itself. Every frame was a coin flip decided by that half-second of boot jitter,
+  // and the run that failed came back Motor 3, Battery, Survey camera, Motor 3: the fourth card
+  // never got photographed, and the first got photographed at the far end of its dolly, which is
+  // the tightest frame in the whole tour.
+  //
+  // 3067 is the value that maximises the worst-case distance from a capture to the nearest cut.
+  // The sampling grid is fixed at 2900 ms, so with a hold H the four captures sit at fractions of
+  // a beat that step DOWN by (H - 2900)/H each time; the binding pair is the first capture's
+  // distance to the cut ahead of it and the fourth's to the cut behind it, and setting those equal
+  // gives 12H = 36800. At H = 3067 the four land at 0.58, 0.53, 0.47 and 0.42 of their beats for a
+  // nominal boot, and the sequence still reads 0, 1, 2, 3 for any tour start from 0 to 2.3 s after
+  // navigation - four times the jitter actually measured. Nothing else depended on 2900: the beats
+  // are 2.9 to 3.5 s of mission each, so the longer hold replays them at 0.95x to 1.14x instead of
+  // 1.00x to 1.21x, which at these stand-offs is the right direction anyway.
+  hold: 3067,
+  // The centre plate and the nose lens: two anchors the overlay already resolves, and their
+  // difference in the ground plane is the direction the airframe is pointing.
+  basis: { origin: 'imu', forward: 'camera' },
+  beats: [
+    {
+      // Off motor 3's own beam and a little above it, closing from 0.88 to 0.42 units while the
+      // aim slides off the airframe centre and on to the bell: the whole aircraft at the cut, one
+      // motor by the end, and one motor with the hull still behind it at the half. Motor 3 is the
+      // rear-left corner, so a left-hand shot has the subject nearest the lens with none of the
+      // hull in front of it, and the far motor stays in frame long enough to carry "one of four".
+      //
+      // The stand-offs are the fix for a shot that used to end 0.32 units out. At 0.32 the frame is
+      // 0.28 units wide against a 0.586 unit aircraft, so the airframe was clipped on three edges
+      // and the near arm and pack sat across the motor the card names: a card claiming "one of four
+      // brushless motors" over footage in which no motor is a distinct object. 0.88 puts the whole
+      // aircraft inside the panel with 30 percent to spare, and 0.42 puts the bell and its 0.236
+      // unit disc across two-thirds of the frame with the arm running out of shot to the hull.
+      //
+      // Over these 2.9 s the motor holds 6049 to 6180 rpm at 59.8 to 60.6 percent throttle, which
+      // is the card's claim running normally: scene.js hides the blades and runs the blur disc at
+      // its full value above 2600 rpm, so what is on screen is rpm that high.
+      part: 'm3',
+      window: [18.6, 21.5],
+      frame: 'robot',
+      pos: [-0.29, -0.75, 0.36],
+      posEnd: [-0.11, -0.37, 0.17],
+      // The bell is 0.247 units out on the airframe diagonal, so an aim locked to it at the wide
+      // end would hang the hull off one side of the frame. The aim opens 60 percent of the way back
+      // towards the centre plate and arrives on the bell, which is the same move the stand-off is
+      // making, written in the other half of the shot.
+      aim: [0.1, 0.1, 0.012],
+      aimEnd: [0.012, 0.012, 0.014],
+    },
+    {
+      // Astern and off the left quarter, at the pack's own eyeline, closing from 0.69 to 0.39.
+      //
+      // WHY FROM BEHIND. The pack is a 0.105 x 0.032 x 0.056 slab tucked under the lower plate, and
+      // three things can get in front of it: the nose gimbal (a 0.056 sphere at x 0.072, directly
+      // ahead of it), the two skid rails (z +/- 0.126, 0.083 below it, running its whole length),
+      // and the four legs (x and z +/- 0.126). The shot this replaces stood 0.35 out on the RIGHT
+      // beam and 0.06 BELOW the pack, which is the one eyeline that puts the right-hand rail across
+      // the subject: what reached the screen was the gimbal and the landing frame, centred, with
+      // the pack an unlit patch behind them. Aft of x -0.0585 there is nothing between the lens and
+      // the pack but air. Both stand-offs were checked by tracing the sight line to the pack centre
+      // through the leg plane at x -0.126: it passes 0.068 clear of the rear-left leg at the cut and
+      // 0.053 clear at the end, and stays above the rails the whole way.
+      //
+      // WHY THE EYELINE IS 10 TO 20 MM UNDER THE PACK. Level with it and the lower plate's rear edge
+      // cuts the top off the slab; well under it and the rails come back. Just under it silhouettes
+      // the pack against the underside of the hull with the gauge faces (scene.js) turned towards
+      // the lens, and leaves the rails as two lines along the bottom of the frame where they read
+      // as landing gear rather than as clutter over the subject.
+      //
+      // Held over the middle of the same lane, where the aircraft is doing nothing but carrying
+      // itself at 6 m: 15.753 to 15.857 V and 13.65 to 14.50 A, the steady draw the later 37
+      // percent current rise is measured against. The charge gauge scene.js paints on the pack is
+      // lit from that logged voltage, so the card's "voltage and current are logged at 25 Hz" is a
+      // thing the shot shows rather than a thing it asserts.
+      part: 'battery',
+      window: [21.5, 24.4],
+      frame: 'robot',
+      pos: [-0.6, -0.27, -0.005],
+      posEnd: [-0.26, -0.13, -0.02],
+      aim: [0, 0, 0.004],
+      aimEnd: [0, 0, 0.002],
+    },
+    {
+      // Ahead of the nose gimbal, off the left quarter, dropping the aim below the lens as it
+      // pushes in so the shot ends looking past the glass at the ground the survey is mapping.
+      // The last 3.3 s of the lane, where scene.js has the ground footprint rectangle, the flown
+      // track and the lane dashes all drawn: the only beat whose shot contains both the lens and
+      // the thing the lens exists to serve. Both ends were scaled out about 1.28x from the pass
+      // that shipped, which had the aircraft at 1.6x the panel width at the cut; 0.58 brings that
+      // to 1.2x, so the hull runs off the sides rather than the frame sitting inside it, and the
+      // close end still arrives on the gimbal. This beat is allowed to crop where the other three
+      // are not: its subject is a 0.056 unit sphere on the nose, and a shot wide enough to hold the
+      // whole airframe puts that sphere at 9 percent of the panel.
+      part: 'camera',
+      window: [24.4, 27.7],
+      frame: 'robot',
+      pos: [0.46, -0.31, 0.155],
+      posEnd: [0.28, -0.18, 0.065],
+      aim: [0.01, 0, -0.03],
+      aimEnd: [0.01, 0, -0.07],
+    },
+    {
+      // World axes, and the only beat that needs them: the card is about the attitude loop, and a
+      // hull-fixed camera turns with the hull and hides every degree of it. Held over the turn on
+      // to the next lane, 3.48 m across at a locked heading, where roll runs -7.27 to 7.27 deg and
+      // pitch -5.23 to 0.27 deg. Placed nearly down the roll axis so the bank is the largest thing
+      // moving in the frame. This is the one beat that must keep the WHOLE airframe in shot for its
+      // whole hold, because a bank is only legible as one wingtip rising against the other, so both
+      // stand-offs sit outside the 0.68 units the aircraft needs: 0.88 at the cut, 0.70 at the end.
+      part: 'imu',
+      window: [27.7, 31.2],
+      frame: 'world',
+      pos: [-0.78, 0.2, 0.35],
+      posEnd: [-0.62, 0.16, 0.28],
+      aim: [0, 0, 0.01],
+    },
+  ],
+};
+
 export default {
   id: 'drone',
   name: 'Survey quadcopter',
@@ -37,7 +197,11 @@ export default {
       // under 7% of anchor separation, so the framing is a considered choice, not an arbitrary one.
       heroT: 30,
       camera: { position: { x: -2.549, y: 2.282, z: -0.589 }, target: { x: -2.99, y: 1.925, z: 0.293 } },
-      rotation: 'orbit',
+      // Not `orbit`. The flow switches the auto-rotate on for that exact string only, so a def that
+      // ships a tour declares its own word and the orbit stays off; `viewer.setAnatomy()` reads
+      // `def.anatomyTour` and takes the shots from there, falling back to the orbit by itself if
+      // the scene cannot answer them.
+      rotation: 'tour',
       parts: [
         { id: 'm3', anchor: 'm3', label: 'Motor 3', description: 'One of four brushless motors; each reports rpm and throttle.' },
         { id: 'battery', anchor: 'battery', label: 'Battery', description: 'The 4S pack; voltage and current are logged at 25 Hz.' },
@@ -47,7 +211,7 @@ export default {
     },
     success: {
       // One survey lane flown edge to edge: the second pass runs 18.6 s to 27.7 s (6.0 s of climb
-      // and hold, a 9.1 s lane, a 3.5 s turn, then this lane), x from -9.98 m to 10.05 m across a
+      // and hold, a 9.1 s lane, a 3.5 s turn, then this lane), x from 10.05 m to -9.98 m across a
       // 20 m field. Nothing is wrong yet: the bearing wear starts at 32 s and the dip at 61.2 s.
       // Measured over the window: alt 5.980 to 6.013 m, all four throttles 59.4 to 60.9 percent
       // (0.92 points apart at worst), yaw -0.80 to 0.91 deg. The three labels below quote those.
@@ -69,6 +233,9 @@ export default {
       plottedFields: { channel: '/pos', fields: ['alt'] }, // mirrors findings.dip.focus
     },
   },
+  // Read by `viewer.setAnatomy()` off the def rather than out of the parts array: it is one spec
+  // for the whole step, and the flow hands the viewer only the parts.
+  anatomyTour: ANATOMY_TOUR,
   firstQuestion: 'What went wrong on the survey flight?',
   suggested: [
     'Show me exactly where it failed',

@@ -16,11 +16,16 @@
 //   'base'    - the turret housing, on the q0 rotation axis
 // Each one is read from the posed graph at call time, so labels stay attached while the arm moves
 // and while the camera orbits.
+//
+// Instrument decals (see "instrument decals" below):
+//   a torque readout beside J2, a grip readout beside the jaws and a temperature readout beside the
+//   driver bay, each painted from the same logged array the chart reads, and each lit only while
+//   the tour is actually shooting the part it belongs to.
 
 import { sampleAt, clamp, smoothstep, lerp } from '../../core/prng.js';
 import {
   LINKS, CUBE, PAD_TOP, GRASP_Y, PADS, PAD_A, PAD_B,
-  DROP_T, SWAP_T, RESET_T, PROGRAMMED_RELEASE_T, rate,
+  DROP_T, SWAP_T, RESET_T, PROGRAMMED_RELEASE_T, rate, TAU_CLAMP,
 } from './data.js';
 
 const DEG = Math.PI / 180;
@@ -335,6 +340,466 @@ export function buildScene(THREE, mount) {
     return out;
   }
 
+  // -------------------------------------------------------- instrument decals
+  //
+  // WHY THE MACHINE CARRIES A READOUT AT ALL. Three of the four anatomy cards make a claim about a
+  // NUMBER rather than about a shape: J2 is "the joint that saturates at 12 Nm", the gripper's
+  // "grip state is logged 0 or 1", and the driver is the part "whose temperature creeps during the
+  // run". A camera move can show a shoulder, a pair of jaws and a driver bay; it cannot show a
+  // torque arriving at a clamp and staying there, a channel stepping 0 to 1, or a heatsink going
+  // from 37.9 to 71.3 C. All three claims were therefore being made over footage in which nothing
+  // verified them, which is the finding this section answers. Each decal is the
+  // claimed channel, painted next to the part it belongs to, sampled from the same array the
+  // failure step's chart plots. Nothing here is authored: the clamp is `TAU_CLAMP[2]` out of
+  // data.js and the thermal span is the run's own min and max, read off the built array.
+  //
+  // WHY THEY ARE SPRITES DRAWN OVER THE TOP. A decal is an instrument reading, not a sticker on
+  // the casting: at the tour's 0.30 m stand-off on the driver bay, a plane bolted to the bay's
+  // face is a parallelogram of unreadable text, and at 0.92 m on the shoulder the upper arm swings
+  // in front of it twice a cycle. A billboard with `depthTest` off holds square to the lens and
+  // stays legible, which is the whole point of putting a number on the screen.
+  //
+  // WHY THEY GATE ON THE SHOT AND NOT ON A FLAG. The scene is handed no beat index - the tour is
+  // the viewer's, and `setHighlight()` is null for the whole anatomy step - so "is this part the
+  // subject right now" is MEASURED rather than declared: a decal lights only while its own anchor
+  // is in front of the camera, near the middle of the frame, and inside the stand-off band its
+  // panel was sized for. That is true of exactly one beat each, measured off the live page over a
+  // full tour cycle rather than reasoned about: J2 sits at 0.99 m and ndc -0.51 on its own beat,
+  // 1.52 m away on the turret beat, 0.22 m away (inside the near band, so under its floor) on the
+  // driver beat, and off the left edge at ndc -3.5 on the gripper beat. The TCP sits at 0.37-0.47 m
+  // and ndc -0.05 on the gripper beat, 1.37 m away on the J2 beat, 1.02-1.29 m on the turret beat,
+  // and swings past the driver beat's lens at ndc -2.3 to -43. The bay sits at 0.30 m on its own
+  // beat and no nearer than 0.98 m on any other. All three gates are false at every other framing
+  // in the flow, where the camera is 2.4 m out and a panel sized to be read from 0.3 m would be an
+  // illegible smear across the machine.
+  //
+  // The camera is captured from the pedestal's own `onBeforeRender`, which is the only per-frame
+  // camera the scene interface exposes. One frame of lag, on a gate that only changes at a cut.
+  //
+  // WHY A DECAL WAITS BEFORE IT LIGHTS. That gate is geometric and the tour's camera CUTS, so a
+  // panel arrives on the first frame of its own beat. The card does not:
+  // `.v-anat.is-tour .v-anat-card` crossfades over 0.4 s, so for the first fifth of a second after
+  // every cut the card still lit is the OUTGOING one. Measured on the live page 25 ms into the cut
+  // from the J2 beat to the gripper beat: the J2 card at opacity 1.00, the gripper card at 0.00,
+  // and between them an EE GRIP panel reading "logged 0 or 1" - the gripper card's own words -
+  // stating the incoming card's claim under the outgoing card's heading. A FRAMING that has moved
+  // on ahead of its label is ordinary film grammar and the ssl tour has it too; a NUMBER belonging
+  // to a claim nobody has made yet is not, which is why the settle is on the decals and the camera
+  // still cuts. 440 ms clears the 0.4 s fade with a frame or two of slack and costs the panel an
+  // eighth of a 3500 ms hold it has no use for: every reading here - the torque arriving at its
+  // clamp, the grip bit stepping, the heatsink climbing 30 C - develops across the whole beat, not
+  // in its first fifth of a second.
+  //
+  // Hiding is immediate, in the other direction, and deliberately: an OLD panel over the new shot
+  // is the same false statement the other way round. The 120 ms grace only stops a one-frame gate
+  // dropout - an anchor grazing the ndc limit - from costing a panel a fresh settle mid-beat. A
+  // real cut leaves the gate false for a whole 3.5 s beat and always gets one.
+  const DECAL_SETTLE_MS = 440;
+  const DECAL_GATE_GRACE_MS = 120;
+  const decalNow = () =>
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  const DECAL_CANVAS_W = 340;
+  const DECAL_CANVAS_H = 132;
+  const SAGE = '#d3eeb6';
+  const ALERT = '#ff5f57';
+  const TAU2_CLAMP = TAU_CLAMP[2];
+  const TAU2_SCALE = TAU2_CLAMP * 1.12; // headroom past the clamp, so the pin reads as a stop
+  const decals = [];
+  const textures = [];
+  const decalTmp = new THREE.Vector3();
+  const decalNdc = new THREE.Vector3();
+  const decalRight = new THREE.Vector3();
+  const decalUp = new THREE.Vector3();
+  let lastCamera = null;
+  base.onBeforeRender = (renderer, scn, cam) => {
+    lastCamera = cam;
+  };
+
+  function roundRectPath(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  /** The card's own chrome, so a decal reads as part of the same overlay as the four callouts. */
+  function decalPanel(g, edge) {
+    g.clearRect(0, 0, DECAL_CANVAS_W, DECAL_CANVAS_H);
+    g.fillStyle = 'rgba(20,20,22,0.90)';
+    roundRectPath(g, 3, 3, DECAL_CANVAS_W - 6, DECAL_CANVAS_H - 6, 14);
+    g.fill();
+    g.strokeStyle = edge;
+    g.lineWidth = 2.5;
+    g.stroke();
+  }
+
+  /** A meter with an optional hard mark on it: the limit the fill is allowed to reach. */
+  function decalBar(g, y, frac, fill, markFrac) {
+    const x = 20;
+    const w = DECAL_CANVAS_W - 40;
+    const h = 13;
+    g.fillStyle = 'rgba(255,255,255,0.10)';
+    roundRectPath(g, x, y, w, h, h / 2);
+    g.fill();
+    const lit = clamp(frac, 0, 1) * w;
+    if (lit > 1) {
+      g.fillStyle = fill;
+      roundRectPath(g, x, y, Math.max(lit, h), h, h / 2);
+      g.fill();
+    }
+    if (markFrac != null) {
+      g.fillStyle = 'rgba(255,255,255,0.85)';
+      g.fillRect(x + w * markFrac - 1.5, y - 5, 3, h + 10);
+    }
+  }
+
+  /**
+   * One decal: a canvas panel on a billboard, repainted only when the digits it shows change.
+   *
+   * @param {number} worldWidth  metres across, sized for the stand-off of the beat that shows it
+   * @param {[number,number]} lift  where the panel sits relative to the part's anchor, in metres
+   *   ACROSS and UP THE FRAME rather than across the world. A panel is a thing you read, so where
+   *   it belongs is a fact about the picture - clear of the callout card, clear of the part it
+   *   points at - and an offset in world axes only lands there from the azimuth it was written
+   *   for. Read off the live camera basis, it lands there from any of them.
+   * @param {[number,number]} band  the stand-off window, metres, in which this decal is lit
+   * @param {() => import('three').Vector3} anchorOf  the part's own anchor, posed now
+   * @param {(ctx:CanvasRenderingContext2D, ...args:any[]) => void} paint
+   */
+  function makeDecal(worldWidth, lift, band, anchorOf, paint) {
+    let ctx = null;
+    let tex = null;
+    // buildScene() is constructed under plain `node` by experience.test.mjs, where there is no
+    // document: the decal still exists as a scene object, it simply has nothing painted on it.
+    if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+      const c = document.createElement('canvas');
+      c.width = DECAL_CANVAS_W;
+      c.height = DECAL_CANVAS_H;
+      ctx = typeof c.getContext === 'function' ? c.getContext('2d') : null;
+      if (ctx) {
+        tex = new THREE.CanvasTexture(c);
+        if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+        textures.push(tex);
+      }
+    }
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthTest: false, depthWrite: false,
+    });
+    materials.push(mat);
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(worldWidth, (worldWidth * DECAL_CANVAS_H) / DECAL_CANVAS_W, 1);
+    sprite.renderOrder = 20;
+    sprite.frustumCulled = false;
+    sprite.visible = false;
+    root.add(sprite);
+
+    let key = null;
+    // Wall ms the geometric gate has been continuously true since, and the last frame it was true
+    // at all. Two clocks, because the settle has to survive a dropped frame and not a cut.
+    let gateSince = 0;
+    let gateLast = 0;
+    const decal = {
+      sprite,
+      /** Position on the part, and decide whether this shot is the one this decal belongs to. */
+      place() {
+        const a = anchorOf();
+        sprite.position.copy(a);
+        if (!lastCamera) {
+          sprite.visible = false;
+          return;
+        }
+        decalRight.setFromMatrixColumn(lastCamera.matrixWorld, 0);
+        decalUp.setFromMatrixColumn(lastCamera.matrixWorld, 1);
+        sprite.position.addScaledVector(decalRight, lift[0]).addScaledVector(decalUp, lift[1]);
+        const d = lastCamera.position.distanceTo(a);
+        decalTmp.copy(a);
+        lastCamera.worldToLocal(decalTmp);
+        decalNdc.copy(a).project(lastCamera);
+        const off = Math.max(Math.abs(decalNdc.x), Math.abs(decalNdc.y));
+        const framed = decalTmp.z < -0.02 && d >= band[0] && d <= band[1] && off <= 0.92;
+        if (!framed) {
+          sprite.visible = false;
+          return;
+        }
+        const t = decalNow();
+        if (!gateSince || t - gateLast > DECAL_GATE_GRACE_MS) gateSince = t;
+        gateLast = t;
+        sprite.visible = t - gateSince >= DECAL_SETTLE_MS;
+      },
+      /** Repaint, but only when the reading has actually moved a displayed digit. */
+      show(k, ...args) {
+        if (!ctx || k === key) return;
+        key = k;
+        paint(ctx, ...args);
+        if (tex) tex.needsUpdate = true;
+      },
+    };
+    decals.push(decal);
+    return decal;
+  }
+
+  /**
+   * J2's torque against its own current limit. The bar runs past the clamp so the fill visibly
+   * arrives at the mark and stops there, which is what saturation looks like; err2 rides alongside
+   * because a joint out of torque is a joint falling behind its commanded angle, and that lag is
+   * the sag the shot is of.
+   */
+  function paintTorque(g, tau, err, pinned) {
+    decalPanel(g, pinned ? 'rgba(255,95,87,0.80)' : 'rgba(255,255,255,0.18)');
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'left';
+    g.font = '600 21px Geist, system-ui, sans-serif';
+    g.fillStyle = 'rgba(255,255,255,0.62)';
+    g.fillText('J2 TAU2', 20, 33);
+    g.textAlign = 'right';
+    g.font = '400 19px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.45)';
+    g.fillText(`err2 ${err.toFixed(2)} deg`, DECAL_CANVAS_W - 20, 33);
+
+    const value = tau.toFixed(2);
+    g.textAlign = 'left';
+    g.font = '600 46px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = pinned ? ALERT : '#ffffff';
+    g.fillText(value, 20, 84);
+    const valueW = g.measureText(value).width;
+    g.font = '400 22px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.55)';
+    g.fillText('Nm', 28 + valueW, 84);
+
+    g.textAlign = 'right';
+    g.font = '600 21px Geist, system-ui, sans-serif';
+    g.fillStyle = pinned ? ALERT : 'rgba(255,255,255,0.45)';
+    g.fillText(pinned ? 'SATURATED' : `clamp ${TAU2_CLAMP.toFixed(2)}`, DECAL_CANVAS_W - 20, 82);
+    decalBar(g, 99, Math.abs(tau) / TAU2_SCALE, pinned ? ALERT : SAGE, TAU2_CLAMP / TAU2_SCALE);
+  }
+
+  /**
+   * The driver's heatsink estimate, with the whole run drawn under it.
+   *
+   * WHY A TRACE AND NOT JUST A NUMBER. "Creeps during the run" is a claim about a SHAPE over 80 s,
+   * and a bare reading is only evidence of it to someone who watched the previous two seconds. The
+   * panel therefore carries the run's own drv3_temp track with a playhead on it, so a single frame
+   * anywhere in the beat already shows the climb, where it started, where it is now and that it
+   * has not levelled off. The number and the delta then say how much, in figures.
+   */
+  function paintTemp(g, temp, rise, peak, col, spark, playhead, at) {
+    decalPanel(g, 'rgba(255,255,255,0.18)');
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'left';
+    g.font = '600 21px Geist, system-ui, sans-serif';
+    g.fillStyle = 'rgba(255,255,255,0.62)';
+    g.fillText('DRV3 TEMP', 20, 31);
+    g.textAlign = 'right';
+    g.font = '400 19px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.45)';
+    g.fillText(`peak ${peak.toFixed(1)}`, DECAL_CANVAS_W - 20, 31);
+
+    const value = temp.toFixed(1);
+    g.textAlign = 'left';
+    g.font = '600 44px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = '#ffffff';
+    g.fillText(value, 20, 78);
+    const valueW = g.measureText(value).width;
+    g.font = '400 22px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.55)';
+    g.fillText('C', 28 + valueW, 78);
+
+    g.textAlign = 'right';
+    g.font = '600 26px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = col;
+    g.fillText(`+${rise.toFixed(1)}`, DECAL_CANVAS_W - 20, 76);
+
+    const x0 = 20;
+    const x1 = DECAL_CANVAS_W - 20;
+    const yTop = 88;
+    const yBot = 122;
+    const n = spark ? spark.length : 0;
+    const px = (i) => x0 + ((x1 - x0) * i) / Math.max(n - 1, 1);
+    const py = (v) => yBot - (yBot - yTop) * v;
+    g.strokeStyle = 'rgba(255,255,255,0.12)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x0, yBot + 0.5);
+    g.lineTo(x1, yBot + 0.5);
+    g.stroke();
+    if (n > 1) {
+      g.beginPath();
+      g.moveTo(x0, yBot);
+      for (let i = 0; i < n; i++) g.lineTo(px(i), py(spark[i]));
+      g.lineTo(x1, yBot);
+      g.closePath();
+      g.fillStyle = 'rgba(255,255,255,0.10)';
+      g.fill();
+      g.beginPath();
+      for (let i = 0; i < n; i++) {
+        if (i === 0) g.moveTo(px(i), py(spark[i]));
+        else g.lineTo(px(i), py(spark[i]));
+      }
+      g.strokeStyle = 'rgba(255,255,255,0.62)';
+      g.lineWidth = 2.5;
+      g.stroke();
+    }
+    const hx = x0 + (x1 - x0) * clamp(playhead, 0, 1);
+    g.strokeStyle = 'rgba(255,255,255,0.30)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(hx, yTop - 6);
+    g.lineTo(hx, yBot);
+    g.stroke();
+    g.fillStyle = col;
+    g.beginPath();
+    g.arc(hx, py(clamp(at, 0, 1)), 5, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  /**
+   * The end effector's own logged grip bit, and the seconds either side of now.
+   *
+   * WHY A STEP TRACE AND NOT A LIGHT. The card's claim is not "the jaws are shut", it is that the
+   * grip state IS LOGGED, 0 or 1. A lamp that is on says nothing about a channel; a square step
+   * from 0 to 1 with a playhead on it says there is a bit in the log, what it was a moment ago,
+   * what it is now, and exactly when it changed. Both states are therefore on the panel at once -
+   * the one the run is in, in figures, and the one it just left, on the trace - which is the whole
+   * of "0 or 1" in a single frame. The trace is 3.2 s wide, so the pick transition the beat is cut
+   * around is on it for every frame of the beat, not just the frames after it happens.
+   */
+  function paintGrip(g, grip, trace, playhead) {
+    const on = grip >= 0.5;
+    decalPanel(g, on ? 'rgba(211,238,182,0.55)' : 'rgba(255,255,255,0.18)');
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'left';
+    g.font = '600 21px Geist, system-ui, sans-serif';
+    g.fillStyle = 'rgba(255,255,255,0.62)';
+    g.fillText('EE GRIP', 20, 31);
+    g.textAlign = 'right';
+    g.font = '400 19px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.45)';
+    g.fillText('logged 0 or 1', DECAL_CANVAS_W - 20, 31);
+
+    const value = on ? '1' : '0';
+    g.textAlign = 'left';
+    g.font = '600 46px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = on ? SAGE : '#ffffff';
+    g.fillText(value, 20, 82);
+    const valueW = g.measureText(value).width;
+    g.font = '600 21px Geist, system-ui, sans-serif';
+    g.fillStyle = on ? SAGE : 'rgba(255,255,255,0.55)';
+    g.fillText(on ? 'HOLDING' : 'OPEN', 30 + valueW, 80);
+
+    // the two rails the step runs between, labelled, so the trace reads as a channel and not a bar
+    const x0 = 118;
+    const x1 = DECAL_CANVAS_W - 20;
+    const yHi = 56;
+    const yLo = 96;
+    g.textAlign = 'right';
+    g.font = '400 15px "Geist Mono", ui-monospace, monospace';
+    g.fillStyle = 'rgba(255,255,255,0.30)';
+    g.fillText('1', x0 - 8, yHi + 5);
+    g.fillText('0', x0 - 8, yLo + 5);
+    g.strokeStyle = 'rgba(255,255,255,0.10)';
+    g.lineWidth = 1;
+    [yHi, yLo].forEach((y) => {
+      g.beginPath();
+      g.moveTo(x0, y + 0.5);
+      g.lineTo(x1, y + 0.5);
+      g.stroke();
+    });
+
+    const n = trace ? trace.length : 0;
+    if (n > 1) {
+      g.strokeStyle = SAGE;
+      g.lineWidth = 2.5;
+      g.lineJoin = 'miter';
+      g.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = x0 + ((x1 - x0) * i) / (n - 1);
+        const y = trace[i] >= 0.5 ? yHi : yLo;
+        if (i === 0) g.moveTo(x, y);
+        else {
+          g.lineTo(x, y); // the vertical riser is this segment: the step is drawn, not smoothed
+        }
+      }
+      g.stroke();
+    }
+    const hx = x0 + (x1 - x0) * clamp(playhead, 0, 1);
+    g.strokeStyle = 'rgba(255,255,255,0.30)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(hx, yHi - 8);
+    g.lineTo(hx, yLo + 8);
+    g.stroke();
+    g.fillStyle = on ? SAGE : 'rgba(255,255,255,0.75)';
+    g.beginPath();
+    g.arc(hx, on ? yHi : yLo, 5, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  // The three panels, each sized and placed for the one beat that lights it. J2 is read from 0.98 m
+  // and sits a fifth of a metre above the joint, which on that shot is the empty air the upper arm
+  // has just swung out of. The driver is read from 0.30 m and sits up and to the LEFT of the bay,
+  // because its own callout card holds the top-right corner of the panel on that beat and a
+  // readout half behind a card is a readout nobody reads. The grip panel is the same call on the
+  // gripper beat: its card holds the top RIGHT, the part hangs below the TCP, so the readout takes
+  // the empty left. 0.15 m across at a 0.37-0.47 m stand-off is 38 per cent of the phone frame's,
+  // which is the same share of the picture the torque panel takes on its own beat.
+  const torqueDecal = makeDecal(
+    0.34,
+    [0.02, 0.19],
+    [0.62, 1.22],
+    () => anchorWorld(ANCHOR_NODES.j2),
+    paintTorque,
+  );
+  const gripDecal = makeDecal(
+    0.15,
+    [-0.085, 0.075],
+    [0.30, 0.58],
+    () => anchorWorld(ANCHOR_NODES.gripper),
+    paintGrip,
+  );
+  const tempDecal = makeDecal(
+    0.132,
+    [-0.058, 0.034],
+    [0.17, 0.52],
+    () => anchorWorld(ANCHOR_NODES.drv3),
+    paintTemp,
+  );
+
+  // 3.2 s of the grip channel, centred on the playhead. Wide enough that the pick step at 28.28 s
+  // is on the trace for every frame of a beat that runs 28.1 to 29.5 s, narrow enough that a single
+  // transition is a step and not a spike. 64 points is one per 50 ms, two and a half samples of a
+  // 50 Hz channel, so no edge in the log can fall between two points of the trace.
+  const GRIP_TRACE_HALF = 1.6;
+  const GRIP_TRACE_N = 64;
+  const GRIP_TRACE_MID = 0.5; // the window is centred, so now is always the middle of it
+  const gripPts = new Float64Array(GRIP_TRACE_N);
+
+  /** The sample index of `tt`, clamped: outside the log the trace holds the end value. */
+  function gripIndex(p, tt) {
+    const i = Math.round((tt - p.t[0]) * rate);
+    return i < 0 ? 0 : i >= p.t.length ? p.t.length - 1 : i;
+  }
+
+  /** The logged bit, read out of /ee.grip rather than off the jaw animation, which is smoothed. */
+  function gripAt(p, tSec) {
+    return p.ee.grip[gripIndex(p, tSec)] >= 0.5 ? 1 : 0;
+  }
+
+  function gripTrace(p, tSec) {
+    let key = '';
+    for (let i = 0; i < GRIP_TRACE_N; i++) {
+      const tt = tSec - GRIP_TRACE_HALF + (2 * GRIP_TRACE_HALF * i) / (GRIP_TRACE_N - 1);
+      const v = p.ee.grip[gripIndex(p, tt)] >= 0.5 ? 1 : 0;
+      gripPts[i] = v;
+      key += v;
+    }
+    return { pts: gripPts, key };
+  }
+
   // ------------------------------------------------------- data-derived state
   let prep = null;
 
@@ -420,7 +885,34 @@ export function buildScene(THREE, mount) {
     const nylonSegs = segs.map((_, i) => i).filter((i) => i !== faultIdx);
     const steelSegs = faultIdx >= 0 ? [faultIdx] : [];
 
-    return { t, ee, segs, fall, faultIdx, nylonSegs, steelSegs, hold: smooth(holding), clampCmd: smooth(clamped) };
+    // The driver decal's scale is the run's OWN thermal range, measured here rather than written
+    // down: the bar is empty at the first sample the log carries and full at the hottest one, so
+    // "creeps during the run" is read off the same array the /sys chart plots.
+    const sys = data['/sys'];
+    let thermal = null;
+    if (sys && sys.drv3_temp && sys.drv3_temp.length) {
+      const a = sys.drv3_temp;
+      let lo = a[0];
+      let hi = a[0];
+      for (let i = 1; i < a.length; i++) {
+        if (a[i] < lo) lo = a[i];
+        if (a[i] > hi) hi = a[i];
+      }
+      const span = Math.max(hi - lo, 1);
+      // 68 points is one per 1.2 s of an 80 s run and about two canvas pixels apart, which is as
+      // much of the track as the panel can resolve; built once, so the trace is not re-sampled on
+      // every repaint.
+      const N = 68;
+      const spark = new Float64Array(N);
+      const t0 = sys.t[0];
+      const t1 = sys.t[sys.t.length - 1];
+      for (let i = 0; i < N; i++) {
+        spark[i] = clamp((sampleAt(sys.t, a, t0 + ((t1 - t0) * i) / (N - 1)) - lo) / span, 0, 1);
+      }
+      thermal = { start: a[0], lo, hi, span, spark, t0, t1 };
+    }
+
+    return { t, ee, segs, fall, faultIdx, nylonSegs, steelSegs, thermal, hold: smooth(holding), clampCmd: smooth(clamped) };
   }
 
   /** Where a given cube sits at time tSec, given the grip segments it takes part in. */
@@ -540,12 +1032,43 @@ export function buildScene(THREE, mount) {
     }
     // the J2 driver glows warmer as drv3 heats up
     const sys = data['/sys'];
+    let heat = 0;
+    let temp = 0;
     if (sys) {
-      const temp = sampleAt(sys.t, sys.drv3_temp, tSec);
-      const heat = clamp((temp - 38) / 34, 0, 1);
+      temp = sampleAt(sys.t, sys.drv3_temp, tSec);
+      heat = clamp((temp - 38) / 34, 0, 1);
       M.chip.color.setRGB(0.18 + heat * 0.82, 0.47 - heat * 0.24, 1 - heat * 0.78);
       M.chip.emissive.copy(M.chip.color);
       M.chip.emissiveIntensity = 0.7 + heat * 0.9;
+    }
+
+    // The three decals: same samples the LED, the jaws and the chip already run on, spelled out in
+    // figures for the three cards that make a claim about a number. `place()` also decides whether
+    // this frame's shot is the one that decal belongs to, so the panel is only ever on screen at
+    // the stand-off it was sized for.
+    torqueDecal.place();
+    if (torqueDecal.sprite.visible) {
+      const pinned = Math.abs(tau2) >= TAU2_CLAMP - 0.005;
+      torqueDecal.show(`${tau2.toFixed(2)}|${err2.toFixed(2)}|${pinned}`, tau2, err2, pinned);
+    }
+    gripDecal.place();
+    if (gripDecal.sprite.visible) {
+      const grip = gripAt(p, tSec);
+      const trace = gripTrace(p, tSec);
+      // The key changes on the digit and on the shape of the window, so the panel repaints as the
+      // trace slides and not once per frame of a run in which nothing about it has moved.
+      gripDecal.show(`${grip}|${trace.key}`, grip, trace.pts, GRIP_TRACE_MID);
+    }
+    tempDecal.place();
+    if (sys && p.thermal && tempDecal.sprite.visible) {
+      const th = p.thermal;
+      const rise = Math.max(temp - th.start, 0);
+      const col = `rgb(${Math.round(70 + heat * 185)},${Math.round(140 - heat * 55)},${Math.round(255 - heat * 200)})`;
+      const playhead = clamp((tSec - th.t0) / Math.max(th.t1 - th.t0, 1e-6), 0, 1);
+      tempDecal.show(
+        `${temp.toFixed(1)}|${rise.toFixed(1)}|${playhead.toFixed(3)}`,
+        temp, rise, th.hi, col, th.spark, playhead, clamp((temp - th.lo) / th.span, 0, 1),
+      );
     }
 
     if (highlight) {
@@ -560,6 +1083,10 @@ export function buildScene(THREE, mount) {
     mount.remove(root);
     geos.forEach((g) => g.dispose());
     materials.forEach((m) => m.dispose());
+    // The decal canvases are GPU uploads the viewer's own scene traverse cannot reach: its sweep
+    // disposes geometries and materials, and a SpriteMaterial's map is neither.
+    textures.forEach((t) => t.dispose());
+    lastCamera = null;
   }
 
   return { update, setHighlight, anchors, dispose, cameraHome };

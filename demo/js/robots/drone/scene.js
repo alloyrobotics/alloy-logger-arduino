@@ -59,7 +59,9 @@ export function buildScene(THREE, mount) {
   const carbonMat = M(new THREE.MeshStandardMaterial({ color: COL.carbon, roughness: 0.52, metalness: 0.45 }));
   const shellMat = M(new THREE.MeshStandardMaterial({ color: COL.shell, roughness: 0.36, metalness: 0.55 }));
   const metalMat = M(new THREE.MeshStandardMaterial({ color: COL.metal, roughness: 0.28, metalness: 0.85 }));
-  const battMat = M(new THREE.MeshStandardMaterial({ color: 0x101318, roughness: 0.62, metalness: 0.25 }));
+  // Slate shrink-wrap, not near-black: see the pack block below. The carbon plate it hangs under is
+  // 0x15171b, so the wrap has to sit clear of it on luminance or the pack is a shadow.
+  const battMat = M(new THREE.MeshStandardMaterial({ color: 0x232b36, roughness: 0.5, metalness: 0.18 }));
   const accentMat = M(
     new THREE.MeshStandardMaterial({ color: COL.blue, roughness: 0.3, metalness: 0.3, emissive: COL.blue, emissiveIntensity: 0.45 })
   );
@@ -235,10 +237,59 @@ export function buildScene(THREE, mount) {
   stripe.position.set(0.012, 0.0855, 0);
   body.add(stripe);
 
-  const batt = new THREE.Mesh(G(new THREE.BoxGeometry(0.105, 0.032, 0.056)), battMat);
-  batt.position.set(-0.006, -0.034, 0);
-  batt.castShadow = true;
+  // ---------- the 4S pack ----------
+  //
+  // WHY THIS IS MORE THAN A BOX. The anatomy tour holds a card on this part that says "the 4S pack;
+  // voltage and current are logged at 25 Hz", and what used to be under that card was a 0x101318
+  // slab flush against a 0x15171b carbon plate: two near-blacks with 3 counts of luminance between
+  // them, in a scene lit for a matte airframe. Correctly framed it was still not identifiable as a
+  // battery, so the card was making a claim the footage could not carry. Three things fix that, and
+  // all three are things a real pack has:
+  //
+  //   the wrap   a slate shrink-wrap instead of near-black, and a 4 mm standoff from the plate, so
+  //              the pack is a separate module under the hull rather than part of its shadow.
+  //   the cells  three seams across the wrap. Four compartments IS what 4S means, and it is the
+  //              cheapest possible way to make the slab read as cells rather than as ballast.
+  //   the gauge  four segments on each long face, lit from the LOGGED pack voltage - the same
+  //              `/bat` v the chat quotes and the failure step plots, sampled here every frame.
+  //
+  // The gauge is a readout, not invented hardware, and it is deliberately the only part of the
+  // aircraft that carries data it did not get from geometry. It maps pack volts to a per-cell 3.2
+  // to 4.2 V scale, which is the ordinary usable band for a lithium polymer cell and covers this
+  // flight end to end: 16.805 V (4.20 per cell, full) at arming, 15.75 to 15.86 V (3.94 to 3.96,
+  // about three-quarters) across the anatomy tour's battery beat, and 13.010 V (3.25, nearly flat)
+  // at the failsafe touchdown. It stays BLUE at every level. A gauge that turned red as the pack
+  // ran down would be asserting a battery fault, and the mission's answer is the opposite one: the
+  // pack is healthy and it is reporting the motor.
+  const batt = new THREE.Group();
+  batt.position.set(-0.006, -0.038, 0);
   body.add(batt);
+
+  const wrap = new THREE.Mesh(G(new THREE.BoxGeometry(0.105, 0.032, 0.056)), battMat);
+  wrap.castShadow = true;
+  batt.add(wrap);
+
+  // three seams at the quarter points of the 0.105 length: four cells, in a row, end to end
+  const seamGeo = G(new THREE.BoxGeometry(0.0018, 0.0326, 0.0566));
+  for (let i = 1; i <= 3; i++) {
+    const seam = new THREE.Mesh(seamGeo, carbonMat);
+    seam.position.x = -0.0525 + (0.105 * i) / 4;
+    batt.add(seam);
+  }
+
+  // Four segments a side, on both long faces, so the gauge is readable from either quarter. One
+  // material per segment index, shared by the two faces: the pair is always at the same level.
+  const gaugeGeo = G(new THREE.BoxGeometry(0.0205, 0.0075, 0.0022));
+  const gaugeMats = [];
+  for (let i = 0; i < 4; i++) {
+    const gm = M(new THREE.MeshBasicMaterial({ color: COL.blue, transparent: true, opacity: 0.22 }));
+    gaugeMats.push(gm);
+    [-1, 1].forEach((side) => {
+      const seg = new THREE.Mesh(gaugeGeo, gm);
+      seg.position.set(-0.0393 + i * 0.0262, 0.0045, side * 0.0285);
+      batt.add(seg);
+    });
+  }
 
   // survey camera on a nose gimbal
   const gimbal = new THREE.Mesh(G(new THREE.SphereGeometry(0.028, 18, 14)), shellMat);
@@ -378,6 +429,7 @@ export function buildScene(THREE, mount) {
     const pos = data && data['/pos'];
     const att = data && data['/att'];
     const mot = data && data['/motors'];
+    const bat = data && data['/bat'];
     if (!pos || !att || !mot) return;
     buildTrack(data);
 
@@ -415,6 +467,21 @@ export function buildScene(THREE, mount) {
       const cone = 0.965 + 0.035 * fast;
       p.disc.scale.set(cone, cone, 1);
     });
+
+    // Pack charge, off the logged voltage. `/bat` is its own 25 Hz channel against the 50 Hz flight
+    // loop, which is what the anatomy card says, and it is read here through the same `sampleAt`
+    // the pose and the props use: no smoothing, no separate clock, so the gauge and the chart on
+    // the failure step are reading one array. Four segments, each worth a quarter of the 3.2 to
+    // 4.2 V per-cell band: segments under the level are full, the one the level falls inside is lit
+    // in proportion, and the ones above it stay as faint outlines so the gauge still reads as four.
+    if (bat) {
+      const cell = sampleAt(bat.t, bat.v, tSec) / 4;
+      const fill = Math.max(0, Math.min((cell - 3.2) / 1.0, 1));
+      for (let i = 0; i < gaugeMats.length; i++) {
+        const seg = Math.max(0, Math.min(fill * gaugeMats.length - i, 1));
+        gaugeMats[i].opacity = 0.22 + 0.68 * seg;
+      }
+    }
 
     if (trailGeo) {
       const k = Math.max(2, Math.min(trailVerts, Math.round((tSec / duration) * trailVerts) + 1));
