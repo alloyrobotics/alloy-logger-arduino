@@ -2,7 +2,7 @@
 
 import * as THREE from '../../../vendor/three.module.js';
 import { ROBOTS_BY_ID } from '../index.js';
-import { applyGuided as applySslSideModule } from '../ssl/role-openers.js';
+import { applyRoleOpeners as applySslSideModule } from '../ssl/role-openers.js';
 import { applyExperience as applyDonnaExperience } from '../donna/experience.js';
 
 const MISSIONS = ['arm6', 'drone', 'ssl', 'donna'];

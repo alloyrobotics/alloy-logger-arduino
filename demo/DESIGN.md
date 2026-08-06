@@ -308,7 +308,51 @@ the plot area; one in the padded axis gutters is ignored. The seek path raises a
 click would also fire for gutter clicks the chart itself dropped. Nothing in `chart.js` listens to
 it and seek behaviour is unchanged by it.
 
-`chat.js` — `createChat(mount, robotDef, { onEvidence, onSettled })`; renders history, streams
+Fields are grouped by UNIT and each group gets its own y-range; group 0 owns the left axis. Two
+label modes follow from that. The instrument view (full chrome) prints a numeric axis for group 1
+on the right. `setDirectLabels(true)` — the mode the flow's failure step and every inline evidence
+block use — replaces the field chips with end-of-trace pills, and in that mode a second numeric
+axis is NOT drawn: the right gutter is the pills', and the second group's unit rides on the pills
+that name its traces instead. Both gutters and the x-tick COUNT are measured per frame off the real
+label text against the real plot width, so a narrowed plot drops x stamps rather than printing them
+through each other. Missions with two units on one finding today: donna (m/s^2 + deg), battle
+(heat + HP).
+
+`embeds.js`: `createEvidenceEmbeds({ def, timeline, park, scroller, icon })`. **ROUND 3.** The
+inline evidence block, and the single-context virtualization behind it. An evidence-bearing answer
+carries, inside its own bubble: an annotated chart of the finding's channels zoomed onto its window
+and seekable; one short causal paragraph; and the 3D replay of those same seconds, live.
+
+- `attach(row, findings)` mounts up to two blocks into a settled `.msg.bot` row; `play(finding)`
+  scrolls to the newest block citing it and hands it the context.
+- **One WebGL context per screen, never one per message.** The shared viewer element is physically
+  MOVED into whichever block is nearest the reader's centre; reparenting a canvas does not disturb
+  its context. Every other block shows a POSTER captured off that same renderer at handover
+  (`viewer.capturePoster()`, which renders and reads the drawing buffer in one task because the
+  renderer keeps no buffer between frames). No poster yet, or a lost context, falls back to the
+  mission's line art plus a "replay here" tap target.
+- `#viewer-mount` survives as the PARK the viewer lives in when no block owns it: a laid-out
+  off-screen box, not a hidden one, because a renderer measured against `display:none` comes up
+  0 x 0.
+- The shared viewer is BUILT ONE FRAME AFTER THE SCREEN MOUNTS, parked, not on the frame a block
+  first asks for it. The opener is asked at 420 ms and then types itself out, so the first block is
+  seconds away; deferring the build put context creation, the scene and three.js's first shader
+  compile on the one frame the reader arrives at the evidence. Warming it against the park makes
+  activation a reparent plus a resize. It also stops "the demo screen is up" from depending on how
+  long an answer takes to type, which is what the navigation-race and lazy-path probes read a canvas
+  under `#viewer-mount` as proof of. Still exactly one context: this changes WHEN it is allocated,
+  never how many.
+- Charts are per block and their paint pumps follow VISIBILITY (`chart.setRunning`), so a
+  transcript of thirty answers does not wake the tab at display rate for thirty plots.
+- The causal paragraph prefers `finding.note`, then `def.evidenceNotes[id]` (how the size-gated
+  missions supply theirs from a lazy side module), then a derived sentence naming the plotted
+  fields, channel and window. Long notes are clamped to whole leading sentences; the splitter will
+  not cut inside a number, because half a measurement beside a chart is a wrong number.
+- Teardown order is load-bearing: the viewer is returned to the park BEFORE any block element is
+  removed, because OrbitControls resolves the node holding its document-level `keydown` through
+  `domElement.getRootNode()` at dispose time, and a detached canvas leaks it.
+
+`chat.js`: `createChat(mount, robotDef, { onEvidence, onEvidenceBlock, onSettled })`; renders history, streams
 answers (typewriter, ~3 chars per frame, instant-finish on click), parses the markdown subset,
 renders evidence chips (`Geist Mono`, `▸ 51.7 s · Fall` style). Matching: lowercase the user input,
 score each script entry by matcher hits, best score wins, tie → first; zero hits → canned fallback
@@ -324,19 +368,33 @@ and never after `dispose()`. It exists because the signup popup's quiet timer mu
 visitor's action has ENDED: the SSE `done` frame is too early (the typewriter is still running) and
 `onEvidence` only ever covers evidence-bearing answers.
 
-**`onEvidence(finding)` in app.js is the money interaction, in this exact order:**
-1. viewer scrubber flashes the finding marker; timeline `setLoop(finding.window, {speed: finding.slowmo ? 0.4 : 1})` and `seek(window[0])`, `play()`.
-2. chart switches to `finding.focus` channel/fields and calls `focus(finding)`.
-3. `viewer.setHighlight(finding.highlight)` pulses the part.
-4. A dismissible "evidence banner" over the viewer: `● {title} · looping {a}–{b} s · tap to exit`.
-Dismissing (or asking the next question) clears loop + highlight + zoom back to full domain.
+`onEvidenceBlock(row, findings, entry)` is the round-3 hook: the host mounts the inline evidence
+block into the settled answer and returns truthy, and `chat.js` then drops the trailing chip row
+entirely. A chip was a POINTER at evidence living somewhere else, and there is nowhere else now.
+Inline `{{ev:id}}` chips inside the prose stay: they are the answer's citation, and clicking one
+scrolls to the block and hands it the context. A host that returns falsy (or throws) keeps the old
+chip row, which is what makes the fallback path honest.
+
+**`onEvidence(finding)` in app.js is still the money interaction, and it is still the same
+sequence - it just happens INSIDE the message that cited the finding rather than in panels beside
+it.** `embeds.play(finding)` scrolls the block to the reader, hands it the shared context, flashes
+its marker, loops `finding.window` (`speed: finding.slowmo ? 0.4 : 1`) on the ONE mission timeline,
+aims its chart at `finding.focus`, and pulses `finding.highlight` in the replay. Seeking any block's
+chart moves the mission clock, which moves the live replay: a block is a window onto one mission,
+not a private copy of it.
 
 `ingest.js` — the faux connect sequence between picker and demo: a mono terminal card streaming
 plausible lines (`alloy.begin("robots/sbr")`, `POST /v1/chunk 202 (14.2 KB)`, `mesh table
 alloy.fleet.balance +3894 rows`, `mission finalized → sbr-01.mcap`), ~2.5 s total, then auto-advance.
 Lines derive counts from the robot's actual channel row counts. Skippable via "skip".
 
-## Screens (hash-routed: `#/`, `#/connect/:id`, `#/demo/:id`)
+## Screens (hash-routed: `#/`, `#/connect/:id[/robot|mission|failure]`, `#/demo/:id`)
+
+**ROUND 3 route surgery.** The connect flow is THREE steps: robot, mission, failure. The fourth
+(`/choose`, the three debug-comparison cards) is deleted, and its CTA moved onto the failure step:
+"Ask Alloy" hands straight to `#/demo/:id`. `#/connect/:id/choose` is redirected there rather than
+404ed, because real sessions have that hash in their history. The retired comparison-card copy,
+styles and DOM helpers are deleted with the step.
 
 1. **Picker** `#/`: header (AlloyLogger wordmark linking to `/`, "Live demo" chip), headline
    "Replay a mission.", sub "Pick a robot. Ask it why it failed." Seven cards (`repeat(7)`
@@ -361,10 +419,15 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
    `.ctx-stage` must never clip, since the entrance starts outside it.
    `js/core/ingest.js` (the faux ingest terminal this replaced) is retained in the tree but is no
    longer routed to by anything.
-3. **Demo** `#/demo/:id`: desktop = chat left (420 px), right column = viewer (~58 vh) over chart.
-   Mobile (<900 px) = viewer top (~42 vh, sticky), chart collapsible beneath it, chat fills the rest,
-   input pinned to bottom. Header: back arrow to picker, robot name + device, the two CTAs as
-   compact buttons.
+3. **Demo** `#/demo/:id`: **CHAT FIRST, and chat only (round 3).** One full-height scrolling
+   transcript, centred at a reading measure (820 px), composer pinned to the bottom, at every
+   viewport. The persistent 46 dvh replay stage and the telemetry pane that used to sit beside it
+   are GONE, and so is the `chat -> proof -> follow-up` layout machine that arranged them: an
+   answer carries its own chart, causal line and live 3D replay (`core/embeds.js`), and a follow-up
+   question is just another message. `#screen-demo` still carries `data-mode="chat"` as one
+   constant value, because `chat.js` hangs the wall's answer typography off it and analytics
+   reports it; nothing branches on it. Header: back arrow to the mission library, robot name +
+   device, the two acquisition CTAs on desktop, hidden on a phone where the header is one line.
 
 The `?robot=<id>` query param on any load deep-links straight to `#/demo/<id>`.
 
@@ -484,9 +547,13 @@ is on screen before the first question and does not depend on the model complyin
 `dribbler-overheat` are synthesized overlays; `vision-confidence` is the log's own data, the shared
 league vision losing an opponent robot, and calling it planted would be a false statement in the
 visitor's favour AND against the league's infrastructure. Every disclosure surface says three plus
-one, and `ssl-script.test.mjs` fails any surface that pairs "four" with "planted"/"synthetic". The
-picker footer counts SYNTHETIC MISSIONS on the page (five, once the battle round shipped), not
-faults, and the fault overlays it names really are planted.
+one, and `ssl-script.test.mjs` fails any surface that pairs "four" with "planted"/"synthetic".
+
+**ROUND 3 removed the picker footer** (UX wall, "ML-footer"), which was the fifth surface and the
+only one that counted synthetic MISSIONS rather than faults. The disclosure it carried is not lost:
+the card tagline, `context.provenance` and `def.chatProvenance` each state it on the way into the
+mission, which is where a visitor actually reads it, and the three script tests now pin the footer
+as ABSENT so it cannot come back in a weaker form.
 
 **Battle disclosure surfaces.** The battle mission is fully synthetic and needs no de-identification,
 but it carries the same disclosure discipline: `context.provenance` ("A scripted, rules-faithful

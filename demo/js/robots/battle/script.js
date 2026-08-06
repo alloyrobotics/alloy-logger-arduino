@@ -34,24 +34,20 @@ import { buildScene } from './scene.js';
 const T_HERO_MATCH_S = 45.0;
 const T_HERO_PREVIEW_S = 40.5;
 
-/**
- * The guided flow's beat copy, behind a dynamic import because only the demo screen reads it;
- * `guided.js` says why and carries the merge. A rejection leaves `choreo` unset, which is the full
- * non-guided layout and not a broken scene, so it is swallowed and never reaches the loading card.
- */
-let guidedPromise = null;
-function loadGuided() {
-  if (!guidedPromise) {
-    guidedPromise = import('./guided.js').then(
+/** The marketing opener stays lazy with the round payload. */
+let rolePromise = null;
+function loadRoleOpeners() {
+  if (!rolePromise) {
+    rolePromise = import('./guided.js').then(
       (mod) => {
-        if (mod && mod.applyGuided) mod.applyGuided(def);
+        if (mod && mod.applyRoleOpeners) mod.applyRoleOpeners(def);
       },
       (err) => {
-        console.warn('[battle] guided beats unavailable; the full layout opens instead', err);
+        console.warn('[battle] role opener unavailable; the engineer answer remains active', err);
       },
     );
   }
-  return guidedPromise;
+  return rolePromise;
 }
 
 const def = {
@@ -154,7 +150,7 @@ const def = {
   previewData,
   // Round module AND guided beats in one promise, so the demo route's single await still covers
   // everything that screen reads. Both halves stay deduplicated by their own caches.
-  loadSceneData: () => loadRoundData().then((d) => loadGuided().then(() => d)),
+  loadSceneData: () => loadRoundData().then((d) => loadRoleOpeners().then(() => d)),
   isSceneDataLoaded,
   getSceneData,
   // Def-owned loading-card copy: this mission is simulated and has no ball, and the shared card

@@ -164,7 +164,11 @@ section('4. frozen disclosure and picker surfaces');
   }
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
   ok(html.includes('id="robot-grid"'), 'global mission library mount is present');
-  ok(html.includes(FOOTER), 'global footer is frozen');
+  // ROUND 3 removed the mission-library footer (UX wall, "ML-footer"). Every claim it made about
+  // this mission is asserted above against `context.provenance` and `chatProvenance`, which are
+  // the surfaces a donna visitor is shown; the frozen string is now pinned as ABSENT so it cannot
+  // return in a weaker form.
+  ok(!html.includes(FOOTER) && !/class="pick-foot"/.test(html), 'the global picker footer is gone');
   const registry = await readFile(path.join(HERE, '..', 'index.js'), 'utf8');
   ok(/donna:\s*`[^`]*data-figure="donna"[^`]*data-figure="jack"[^`]*data-figure="rory"[^`]*`/s.test(registry), 'Donna picker fallback icon carries three labelled figure groups');
 }

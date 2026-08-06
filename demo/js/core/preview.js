@@ -40,7 +40,22 @@ const ORBIT_MS = PICKER_ORBIT_MS; // one revolution
 const DIST_SCALE = 0.9; // fallback distance, relative to the robot's own cameraHome distance
 const ENV_CULL = 1.5; // hide scenery bigger than this many cameraHome distances
 const ENV_RADIUS = 0.28; // and scenery whose centre sits further than this from the machine
-const SUBJECT_FILL = 0.78; // share of the card's height the machine should occupy
+/**
+ * Share of the card's height the machine should occupy, at the azimuth that binds.
+ *
+ * RAISED FROM 0.78 (2026-08-06 UX wall, "ML-fill"): the robot inside each square tile read as a
+ * detail photographed from across the room. The solve in stage3d.js frames the subject's BOUNDING
+ * BOX, and a bounding box is bigger than the machine inside it: the binding corner is empty space
+ * on every rig here (the arm's box corners are above the shoulder and behind the base, the drone's
+ * are outside its prop discs, a humanoid's are outside its shoulders). Asking for slightly more
+ * than the whole frame therefore spends the box's own slack rather than cropping the machine, and
+ * the corner that binds is only reached at one azimuth in the revolution.
+ *
+ * This is the mission-agnostic control: all four cards take it, soloed match scenes take it times
+ * SOLO_FILL_GAIN. Verified across the orbit at four phases per card, at 390 and 1440 px, for no
+ * clipping.
+ */
+const SUBJECT_FILL = 1.12;
 const ASPECT_REF = 1.0; // the art panels are squares now: fit must hold at 1:1
 const FOV = 34; // tighter than the viewer's 42: the card art panel is wide and short
 const MIN_FRAME_MS = 1000 / 30 - 2;

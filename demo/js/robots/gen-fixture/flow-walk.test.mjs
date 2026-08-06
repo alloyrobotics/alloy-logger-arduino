@@ -1,4 +1,11 @@
-// flow-walk.test.mjs - the approved four-step flow through chat, proof and follow-up.
+// flow-walk.test.mjs - the approved three-step flow into the chat surface.
+//
+// ROUND 3 changed both halves of this walk. The connect flow lost its fourth step (the three
+// debug-comparison cards): the failure step now hands straight to the demo. And the demo screen
+// lost its layout modes: chat, proof and follow-up collapsed into ONE transcript, because an
+// evidence-bearing answer now carries its own annotated chart, its causal line and its live 3D
+// replay INSIDE the message (core/embeds.js). So the assertions that used to be about which panel
+// was on screen are now about what is inside the answer.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -144,7 +151,7 @@ async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') 
         const style = getComputedStyle(el);
         return !el.hidden && style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
       }).length,
-      alertBanner: visible('.v-banner[data-sev="alert"]'),
+      banner: visible('#flow-viewer-mount .v-banner'),
       context: visible('#flow-context'),
       chart: !!document.querySelector('#flow-chart-mount .chart-canvas'),
       loop: window.__flow.timeline.loopWindow,
@@ -152,7 +159,7 @@ async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') 
   });
   H.ok(state.intro === expectedCopy.missionIntro, `${mission} mission intro matches the selected role variant`);
   H.ok(state.evidenceClass === 0, `${mission} success step has no evidence-on failure state`);
-  H.ok(!state.alertBanner, `${mission} success step has no alert finding banner`);
+  H.ok(!state.banner, `${mission} success step has no overlay chip or finding banner`);
   H.ok(
     state.context === (mission !== 'ssl'),
     `${mission} success step ${mission === 'ssl' ? 'removes' : 'keeps'} its contextual-label block`,
@@ -207,19 +214,25 @@ async function assertFailureStep(page, mission, expectedCopy, mobileLabel = '') 
   if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} failure step`);
 }
 
-async function assertChooseStep(page, mission, expectedCopy, mobileLabel = '') {
-  H.ok(await go(page, `#/connect/${mission}/choose`, 'flow'), `${mission} choose route is reachable`);
-  H.ok(await waitStep(page, mission, 'choose'), `${mission} choose step renders`);
-  H.ok((await primaryCount(page)) === 1, `${mission} choose step has one primary CTA`);
-  const cards = await page.evaluate(() =>
-    [...document.querySelectorAll('#flow-debug .flow-debug-card')].map((card) => ({
-      title: (card.querySelector('h2').textContent || '').trim(),
-      desc: (card.querySelector('p').textContent || '').trim(),
-      time: (card.querySelector('strong').textContent || '').trim(),
-    })),
+/**
+ * The retired fourth step. It is asserted as GONE rather than deleted from this walk, because a
+ * hash that used to exist and now silently 404s to the picker is a worse regression than the step
+ * itself was: real sessions have it in their history.
+ */
+async function assertChooseRetired(page, mission) {
+  H.ok(
+    !(await page.evaluate(() => !!document.getElementById('flow-debug'))),
+    `${mission} flow has no debug-comparison step markup`,
   );
-  H.ok(JSON.stringify(cards) === JSON.stringify(expectedCopy.debugCards), `${mission} debug cards match the selected role variant`);
-  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} choose step`);
+  await page.evaluate((id) => { location.hash = `#/connect/${id}/choose`; }, mission);
+  const landed = await waitForArg(
+    page,
+    (id) => document.body.dataset.screen === 'demo' && location.hash === `#/demo/${id}` && !window.__flow,
+    mission,
+    30000,
+    `${mission} choose redirect`,
+  );
+  H.ok(landed, `${mission} retired choose hash redirects into the demo`);
 }
 
 async function finishAnswer(page, userCount, timeout = 30000) {
@@ -249,57 +262,116 @@ async function finishAnswer(page, userCount, timeout = 30000) {
 
 async function completeDemo(page, mission, expectedCopy, mobileLabel = '') {
   await page.click('#screen-flow:not([hidden]) #flow-cta');
-  const demoMounted = await waitFor(page, () => document.body.dataset.screen === 'demo' && !!window.__demo, 30000, `${mission} chat mode`);
-  H.ok(demoMounted, `${mission} choose CTA opens the demo`);
+  const demoMounted = await waitFor(page, () => document.body.dataset.screen === 'demo' && !!window.__demo, 40000, `${mission} demo`);
+  H.ok(demoMounted, `${mission} failure CTA opens the demo directly`);
   if (!demoMounted) return false;
   const entry = await page.evaluate(() => {
     window.__flowProofTimeline = window.__demo.timeline;
-    return { mode: document.getElementById('screen-demo').dataset.mode, timeline: !!window.__demo.timeline };
+    return {
+      mode: document.getElementById('screen-demo').dataset.mode,
+      timeline: !!window.__demo.timeline,
+      fixedPanes: !!document.getElementById('chart-panel') || !!document.querySelector('.right-col'),
+    };
   });
-  H.ok(entry.mode === 'chat' && entry.timeline, `${mission} enters chat-first mode with one timeline`);
-  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} chat mode`);
+  H.ok(entry.mode === 'chat' && entry.timeline, `${mission} enters the chat surface with one timeline`);
+  H.ok(!entry.fixedPanes, `${mission} demo screen has no fixed viewer or chart pane left`);
+  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} chat surface`);
 
   H.ok(await finishAnswer(page, 1), `${mission} first answer settles`);
   H.ok(
-    await waitFor(page, () => document.getElementById('screen-demo').dataset.mode === 'proof', 10000, `${mission} proof mode`),
-    `${mission} evidence opens proof mode`,
+    await waitFor(page, () => document.querySelectorAll('.ev-embed').length === 1, 20000, `${mission} inline evidence block`),
+    `${mission} first answer carries its evidence inside the message`,
   );
-  const proof = await page.evaluate(() => ({
-    question: (document.querySelector('.msg.user .bubble').textContent || '').trim(),
-    placeholder: document.querySelector('.chat-input').getAttribute('placeholder'),
-    sameTimeline: window.__demo.timeline === window.__flowProofTimeline,
-    loop: window.__demo.timeline.loopWindow,
-  }));
-  H.ok(proof.question === expectedCopy.firstQuestion, `${mission} chat asks the selected role's first question ("${proof.question}")`);
-  H.ok(proof.placeholder === expectedCopy.followUp, `${mission} proof composer carries the selected role's follow-up`);
-  H.ok(proof.sameTimeline, `${mission} chat and proof modes share the same TimelineStore instance`);
-  H.ok(Array.isArray(proof.loop), `${mission} proof mode keeps an evidence loop active`);
-  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} proof mode`);
+  // The block takes the shared context on a queued frame, so the assertions below wait for the
+  // handover rather than racing it.
+  await waitFor(
+    page,
+    () => !!document.querySelector('.ev-embed .chart-canvas') && !!document.querySelector('.ev-embed.is-live .v-canvas'),
+    20000,
+    `${mission} live inline block`,
+  );
+  const block = await page.evaluate(() => {
+    const b = document.querySelector('.ev-embed');
+    const row = b.closest('.msg.bot');
+    return {
+      question: (document.querySelector('.msg.user .bubble').textContent || '').trim(),
+      placeholder: document.querySelector('.chat-input').getAttribute('placeholder'),
+      sameTimeline: window.__demo.timeline === window.__flowProofTimeline,
+      loop: window.__demo.timeline.loopWindow,
+      insideAnswer: !!row && row.contains(b),
+      chart: !!b.querySelector('.chart-canvas'),
+      note: (b.querySelector('.ev-embed-note').textContent || '').trim().length,
+      replay: !!b.querySelector('.v-canvas'),
+      live: b.classList.contains('is-live'),
+      contexts: document.querySelectorAll('canvas.v-canvas').length,
+      chipRow: !!b.closest('.msg.bot').querySelector('.ev-row'),
+    };
+  });
+  H.ok(block.question === expectedCopy.firstQuestion, `${mission} chat asks the selected role's first question ("${block.question}")`);
+  H.ok(block.placeholder === expectedCopy.followUp, `${mission} composer carries the selected role's follow-up`);
+  H.ok(block.sameTimeline, `${mission} the block and the transcript share the same TimelineStore instance`);
+  H.ok(Array.isArray(block.loop), `${mission} the live block holds its finding's loop on the shared clock`);
+  H.ok(block.insideAnswer, `${mission} the evidence block is a child of the answer that cited it`);
+  H.ok(block.chart && block.replay && block.live, `${mission} the block plots the finding and holds the live replay`);
+  H.ok(block.note > 40, `${mission} the block states the causal line (${block.note} chars)`);
+  H.ok(block.contexts === 1, `${mission} exactly one WebGL replay exists on the page (${block.contexts})`);
+  H.ok(!block.chipRow, `${mission} the trailing evidence-chip row is gone: the block replaced it`);
+  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} settled answer`);
 
   await page.fill('.chat-input', expectedCopy.followUp);
   await page.click('.chat-form button[type="submit"]');
-  H.ok(
-    await waitFor(page, () => document.getElementById('screen-demo').dataset.mode === 'followup', 10000, `${mission} follow-up mode`),
-    `${mission} typed follow-up opens full-screen chat again`,
-  );
   H.ok(await finishAnswer(page, 2), `${mission} follow-up answer settles`);
+  const after = await page.evaluate(() => ({
+    mode: document.getElementById('screen-demo').dataset.mode,
+    answers: document.querySelectorAll('.msg.bot .bot-body').length,
+    composer: !!document.querySelector('.chat-form') && getComputedStyle(document.querySelector('.chat-form')).display !== 'none',
+    primaries: document.querySelectorAll('#screen-demo [data-primary]:not(:disabled)').length,
+    contexts: document.querySelectorAll('canvas.v-canvas').length,
+  }));
+  H.ok(after.mode === 'chat', `${mission} a follow-up does not switch the screen into another mode`);
+  H.ok(after.answers >= 2, `${mission} the follow-up lands in the same transcript (${after.answers} answers)`);
+  H.ok(after.composer, `${mission} the composer stays available after the follow-up`);
+  H.ok(after.primaries === 0, `${mission} no Show why button competes with the evidence in the answer`);
+  H.ok(after.contexts === 1, `${mission} the transcript still holds exactly one WebGL replay (${after.contexts})`);
+  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} after the follow-up`);
+}
+
+/**
+ * The same walk with no WebGL at all. The block is still the answer's evidence, minus the third
+ * panel: the chart and the causal line carry it, and the replay slot falls back to the mission's
+ * own line art rather than an empty box.
+ */
+async function completeDemoNoWebgl(page, mission, expectedCopy, mobileLabel = '') {
+  await page.click('#screen-flow:not([hidden]) #flow-cta');
+  const demoMounted = await waitFor(page, () => document.body.dataset.screen === 'demo' && !!window.__demo, 40000, `${mission} demo`);
+  H.ok(demoMounted, `${mission} failure CTA opens the demo directly without WebGL`);
+  if (!demoMounted) return false;
+  H.ok(await finishAnswer(page, 1), `${mission} first answer settles without WebGL`);
   H.ok(
-    await waitFor(page, () => !!document.querySelector('.guide-cta[data-primary]:not(:disabled)'), 10000, 'Show why'),
-    `${mission} follow-up answer carries one Show why action`,
+    await waitFor(page, () => document.querySelectorAll('.ev-embed').length === 1, 20000, `${mission} inline block`),
+    `${mission} the answer still carries an evidence block without WebGL`,
   );
-  const actions = await page.evaluate(() => document.querySelectorAll('.guide-cta[data-primary]:not(:disabled)').length);
-  H.ok(actions === 1, `${mission} follow-up exposes exactly one primary Show why action (${actions})`);
-  await page.click('.guide-cta[data-primary]:not(:disabled)');
+  // The plot is part of the answer, so it is waited for rather than sampled: reading the block in
+  // the same tick the figure appears used to catch the frame before the canvas was in it.
+  await waitFor(page, () => !!document.querySelector('.ev-embed .chart-canvas'), 20000, `${mission} inline chart`);
+  const block = await page.evaluate(() => {
+    const b = document.querySelector('.ev-embed');
+    const art = b.querySelector('.ev-embed-art');
+    return {
+      chart: !!b.querySelector('.chart-canvas'),
+      note: (b.querySelector('.ev-embed-note').textContent || '').trim().length,
+      replay: !!b.querySelector('.v-canvas'),
+      art: !!art && !art.hidden && !!art.querySelector('svg'),
+      live: b.classList.contains('is-live'),
+    };
+  });
   H.ok(
-    await waitFor(
-      page,
-      () => document.getElementById('screen-demo').dataset.mode === 'proof' && Array.isArray(window.__demo.timeline.loopWindow),
-      10000,
-      `${mission} proof return`,
-    ),
-    `${mission} Show why returns to proof with loopWindow set`,
+    block.chart && block.note > 40,
+    `${mission} the chart and the causal line still carry the evidence (chart=${block.chart} note=${block.note})`,
   );
-  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} returned proof`);
+  H.ok(!block.replay && !block.live, `${mission} no replay is claimed where no context can exist`);
+  H.ok(block.art, `${mission} the replay slot falls back to the mission's line art`);
+  if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} settled answer`);
 }
 
 async function assertClean(tape, label) {
@@ -332,8 +404,8 @@ async function fullWalk(viewport, label) {
   await page.click('#flow-cta');
   await assertMissionStep(page, 'ssl', copy, label === 'mobile' ? 'mobile' : '');
   await assertFailureStep(page, 'ssl', copy, label === 'mobile' ? 'mobile' : '');
-  await assertChooseStep(page, 'ssl', copy, label === 'mobile' ? 'mobile' : '');
   await completeDemo(page, 'ssl', copy, label === 'mobile' ? 'mobile' : '');
+  await assertChooseRetired(page, 'ssl');
   await assertClean(tape, `${label} full walk`);
   await ctx.close();
 }
@@ -351,7 +423,6 @@ for (const role of ROLES) {
     H.ok(await go(page, `#/connect/${mission}/mission`, 'flow'), `${role}/${mission} mission route opens`);
     await assertMissionStep(page, mission, copy);
     await assertFailureStep(page, mission, copy);
-    await assertChooseStep(page, mission, copy);
     await completeDemo(page, mission, copy);
   }
   await assertClean(tape, `${role} variant matrix`);
@@ -401,7 +472,6 @@ H.section('reduced motion walk');
   }));
   H.ok(!paused.playing && paused.playVisible, 'reduced motion pauses the success loop and exposes its play affordance');
   await assertFailureStep(page, 'arm6', getFlowCopy('arm6', 'hobbyist'));
-  await assertChooseStep(page, 'arm6', getFlowCopy('arm6', 'hobbyist'));
   await completeDemo(page, 'arm6', getFlowCopy('arm6', 'hobbyist'));
   await assertClean(tape, 'reduced motion walk');
   await ctx.close();
@@ -421,8 +491,7 @@ H.section('no WebGL walk');
   await page.click('#flow-cta');
   await assertMissionStep(page, 'arm6', getFlowCopy('arm6', 'hobbyist'), 'no-WebGL mobile');
   await assertFailureStep(page, 'arm6', getFlowCopy('arm6', 'hobbyist'), 'no-WebGL mobile');
-  await assertChooseStep(page, 'arm6', getFlowCopy('arm6', 'hobbyist'), 'no-WebGL mobile');
-  await completeDemo(page, 'arm6', getFlowCopy('arm6', 'hobbyist'), 'no-WebGL mobile');
+  await completeDemoNoWebgl(page, 'arm6', getFlowCopy('arm6', 'hobbyist'), 'no-WebGL mobile');
   await assertClean(tape, 'no-WebGL walk');
   await ctx.close();
 }

@@ -41,10 +41,17 @@ page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
 
-/** Tap the current four-step flow CTA until the demo screen owns the chart. */
+/**
+ * Tap the connect flow's CTA until the demo screen is up.
+ *
+ * Driven off the STEP rather than off a fixed number of taps: round 3 dropped the fourth step, and
+ * a loop that assumed four raced the last one - it clicked, the flow screen started hiding, and the
+ * next iteration tried to click a button that was on its way out.
+ */
 async function settleFlow() {
   if (!(await page.evaluate(() => !!window.__flow))) return true;
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
+    if (await page.evaluate(() => document.body.dataset.screen === 'demo')) return true;
     const ready = await waitFor(
       page,
       () =>
@@ -55,12 +62,32 @@ async function settleFlow() {
     );
     if (!ready) return false;
     if (await page.evaluate(() => document.body.dataset.screen === 'demo')) return true;
+    const before = await page.evaluate(() => (window.__flow ? window.__flow.step : null));
     await page.click('#screen-flow:not([hidden]) #flow-cta:not(:disabled)');
+    await page
+      .waitForFunction(
+        (prev) => document.body.dataset.screen === 'demo' || (window.__flow && window.__flow.step !== prev),
+        before,
+        { timeout: 30000 },
+      )
+      .catch(() => {});
   }
   return await waitFor(page, () => document.body.dataset.screen === 'demo', 30000, 'the demo handoff');
 }
 
-/** Open a robot's demo screen with its chart panel expanded, and wait for the first paint. */
+/**
+ * Open a robot's demo screen and get hold of its chart.
+ *
+ * ROUND 3 moved the chart INSIDE the answer that cites it, so there is no chart until an
+ * evidence-bearing answer has settled and hydrated its inline block. Getting one is therefore:
+ * reach the demo, let the opener finish typing, wait for the block. `window.__demo.chart` resolves
+ * to the live block's chart, which is what this file has always been probing.
+ *
+ * The block's chart runs in MINIMAL chrome (no channel chips, no field chips, no crosshair
+ * readout), because inside an answer it is an annotation rather than an instrument. This file is
+ * about the presence-mask contract, which is the same code in either dress, so it turns the full
+ * chrome back on for the probe.
+ */
 async function openChart(robot, channel, fields) {
   await page.evaluate((id) => {
     location.hash = id === 'ssl' ? `#/connect/${id}/robot` : `#/demo/${id}`;
@@ -69,30 +96,30 @@ async function openChart(robot, channel, fields) {
     const flowUp = await waitFor(page, () => !!window.__flow, 25000, 'the SSL flow');
     if (!flowUp || !(await settleFlow())) return false;
   }
+  const mounted = await waitFor(
+    page,
+    () => !!window.__demo && document.body.dataset.screen === 'demo',
+    25000,
+    `the ${robot} demo screen`,
+  );
+  if (!mounted) return false;
+  // The opener types itself out; skipping it is what the reader's own click does.
+  const typing = await waitFor(page, () => window.__demo && window.__demo.chat.streaming, 30000, `the ${robot} opener`);
+  if (typing) await page.evaluate(() => window.__demo.chat.finishStreaming());
   const up = await waitFor(
     page,
-    () => !!window.__demo && !!document.querySelector('.chart-canvas') && document.body.dataset.screen === 'demo',
-    25000,
-    `the ${robot} chart`,
+    () => !!window.__demo && !!window.__demo.chart && !!document.querySelector('.ev-embed .chart-canvas'),
+    30000,
+    `the ${robot} inline evidence chart`,
   );
   if (!up) return false;
-  if (robot === 'ssl') {
-    const typing = await waitFor(page, () => window.__demo && window.__demo.chat.streaming, 30000, 'the SSL opener');
-    if (typing) await page.evaluate(() => window.__demo.chat.finishStreaming());
-    const proof = await waitFor(
-      page,
-      () => document.getElementById('screen-demo').dataset.mode === 'proof',
-      30000,
-      'the SSL proof layout',
-    );
-    if (!proof) return false;
-  }
   await page.evaluate(
     ([ch, fs]) => {
       const d = window.__demo;
       d.timeline.pause();
       d.timeline.seek(0);
-      d.setChartOpen(true);
+      d.chart.setMinimalChrome(false);
+      d.chart.setDirectLabels(false);
       if (ch) d.chart.setChannel(ch, fs);
       d.chart.resetZoom();
     },

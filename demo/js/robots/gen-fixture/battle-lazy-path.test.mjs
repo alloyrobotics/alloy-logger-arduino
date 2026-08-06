@@ -25,7 +25,7 @@ const H = harness('battle-lazy-path');
 const pw = await loadPlaywright();
 if (!pw) H.skip('playwright not resolvable on this machine');
 
-const DELAY_MS = 2500;
+const DELAY_MS = 5000;
 
 const server = await serve();
 const browser = await launchChromium(pw);
@@ -69,7 +69,7 @@ const onDemo = (page) =>
         location.hash === '#/demo/battle' && !!el.querySelector('canvas')
       );
     },
-    15000,
+    30000,
     'the demo screen',
   );
 

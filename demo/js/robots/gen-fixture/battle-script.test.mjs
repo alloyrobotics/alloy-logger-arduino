@@ -223,17 +223,11 @@ section('5. disclosure surfaces');
   const chat = await readFile(path.join(HERE, '..', '..', 'core', 'chat.js'), 'utf8');
   ok(/robotDef\.chatProvenance/.test(chat), 'chat.js renders the line from the def rather than from a model answer');
 
+  // ROUND 3 removed the mission-library footer (UX wall, "ML-footer"), so this mission's synthetic
+  // disclosure no longer has a fourth surface to count itself on. The three that carry it for a
+  // visitor who actually opens this mission are asserted above and are unchanged.
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
-  ok(
-    html.includes('Two synthetic missions'),
-    'the picker footer counts the two synthetic missions still in the public roster',
-  );
-  ok(
-    html.includes(
-      "Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.",
-    ),
-    'the picker footer sentence is the authored copy, verbatim',
-  );
+  ok(!/class="pick-foot"/.test(html), 'the mission-library footer is gone from the picker');
 
   // "recorded" and "real match" may appear ONLY inside a sentence that denies them. This is the
   // whole disclosure argument in one assertion: a sentence like "recorded during the 2019 event"

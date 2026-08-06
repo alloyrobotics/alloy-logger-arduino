@@ -48,17 +48,10 @@ const QUIET_MS = 6000;
  */
 const BEAT_GRACE_MS = 15000;
 /**
- * The same belt and braces on a GUIDED mission, where the beat is announced by core/guide.js at
- * the end of a three-tap walk the visitor paces themselves.
- *
- * 15 s is the right floor for a mission whose whole choreography is one 420 ms opener; on a guided
- * mission it expires somewhere inside beat 1, and the evidence chip sitting in that first answer
- * would then be able to arm the popup over a walk that has not shown the visitor the replay yet.
- * The spec's rule is explicit: the popup arms after the 3D beat, on a user interaction. So the
- * grace here is only a floor under a choreography that has broken outright, and it is long enough
- * that a visitor reading at any human pace reaches the handover first.
+ * Experience missions can spend longer decoding their replay before the opener settles. Keep a
+ * longer fallback grace so a delayed inline block does not arm the popup before its aha beat.
  */
-const GUIDED_BEAT_GRACE_MS = 120000;
+const EXPERIENCE_BEAT_GRACE_MS = 120000;
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([tabindex="-1"]), [tabindex="0"]';
@@ -476,7 +469,7 @@ export function createSignupPopup(host, ctx = {}) {
  *   popup: { open:(t?:string)=>boolean, close:(r?:string)=>void, shown:boolean },
  *   isDemoRoute?: () => boolean,
  *   isStreaming?: () => boolean,
- *   guided?: boolean,
+ *   experience?: boolean,
  * }} ctx
  * @returns {{ chatSettled:()=>void, dispose:()=>void, state:string, holds:string[] }}
  */
@@ -485,8 +478,8 @@ export function createSignupTriggers(ctx = {}) {
   const popup = ctx.popup || null;
   const isDemoRoute = typeof ctx.isDemoRoute === 'function' ? ctx.isDemoRoute : () => true;
   const isStreaming = typeof ctx.isStreaming === 'function' ? ctx.isStreaming : () => false;
-  /** Whether core/guide.js is walking this mission, which moves who announces the beat and when. */
-  const guided = !!ctx.guided;
+  /** Whether this route carries the heavier mission experience and gets the longer grace. */
+  const experience = !!ctx.experience;
 
   /** 'idle' | 'armed' | 'timerPending' | 'shown'. Reset by dispose(); `everShown` is not. */
   let state = 'idle';
@@ -665,68 +658,79 @@ export function createSignupTriggers(ctx = {}) {
   }
 
   // ---------------------------------------------------------------- arming signals
-  const viewerMount = host.querySelector ? host.querySelector('#viewer-mount') : null;
-  const canvas = viewerMount ? viewerMount.querySelector('.v-canvas') : null;
-  const scrub = viewerMount ? viewerMount.querySelector('.v-scrub') : null;
-  const chartCanvas = host.querySelector ? host.querySelector('#chart-mount .chart-canvas') : null;
   const chatMount = host.querySelector ? host.querySelector('#chat-mount') : null;
   const input = chatMount ? chatMount.querySelector('.chat-input') : null;
 
-  // The three surfaces below no longer ARM. They are still tracked, because a hold and a bump are
-  // about not interrupting the visitor, and that is true whether or not the machine started here:
-  // pointers held down keep the dialog off the screen, and any activity restarts the quiet window.
-  //
-  // The render surface only. #viewer-mount also holds the scrubber, the transport buttons and the
-  // evidence banner, which have their own semantics.
-  on(canvas, 'pointerdown', (e) => {
-    pointers.add(e.pointerId);
-    syncPointer();
-    bump();
-  });
-  on(
-    canvas,
-    'touchstart',
-    (e) => {
-      touches = e.touches ? e.touches.length : 1;
-      syncPointer();
-      bump();
-    },
-    { passive: true },
-  );
-  // OrbitControls zoom. A wheel has no end event, so every notch simply restarts the window.
-  on(canvas, 'wheel', () => bump(), { passive: true });
+  /**
+   * ROUND 3 CHANGED BOTH THE WIRING AND THE MEANING HERE.
+   *
+   * The wiring: there is no fixed `#viewer-mount .v-canvas`, `.v-scrub` or `#chart-mount
+   * .chart-canvas` to snapshot at build time any more. Every replay surface and every chart is
+   * created later, inside an answer, and the live 3D canvas MOVES from message to message. A node
+   * captured once would be the wrong node within a minute, so all of it is delegated off the chat
+   * mount, which is the one element that outlives the panel it contains.
+   *
+   * The meaning: these gestures now ARM the popup instead of only bumping it. When the replay was
+   * a pane beside the conversation, dragging it was ambiguous - a visitor could be spinning a robot
+   * without having read a word. Inside the answer it is not ambiguous: the only way to reach a
+   * replay is to have scrolled to the answer that cites it, and scrubbing its chart is reading the
+   * evidence. That is the engagement this dialog exists to catch.
+   */
+  function embedGesture(e, trigger) {
+    if (!e.isTrusted) return false;
+    const t = e.target && e.target.closest ? e.target.closest('.ev-embed') : null;
+    if (!t) return false;
+    arm(trigger);
+    return true;
+  }
 
-  // The scrubber's own controls, including its finding markers. NOT wheel over `.v-scrub`: that
-  // does nothing today, so it would fire on ordinary page scrolling.
-  on(scrub, 'pointerdown', (e) => {
+  on(chatMount, 'pointerdown', (e) => {
+    // The pointer hold is unconditional: a finger down anywhere in the transcript should keep the
+    // dialog off the screen whether or not it landed on something that arms.
     pointers.add(e.pointerId);
     syncPointer();
     bump();
+    embedGesture(e, 'replay-drag');
   });
   on(
-    scrub,
+    chatMount,
     'touchstart',
     (e) => {
       touches = e.touches ? e.touches.length : 1;
       syncPointer();
       bump();
+      embedGesture(e, 'replay-drag');
     },
     { passive: true },
   );
-  on(scrub, 'keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') bump();
+  // OrbitControls zoom over an inline replay. A wheel has no end event, so a notch restarts the
+  // window; it does not arm, because a wheel over the transcript is usually just scrolling.
+  on(chatMount, 'wheel', () => bump(), { passive: true });
+  on(chatMount, 'keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (!e.target || !e.target.closest || !e.target.closest('.v-scrub')) return;
+    bump();
+    embedGesture(e, 'replay-scrub');
   });
 
   // `chart:seek`, not `click`: the chart only treats a click as a seek when it lands inside the
   // plot area, and drops one in the padded axis gutters (chart.js onClick). chart.js raises this
-  // event on the one path that really seeks.
-  on(chartCanvas, 'chart:seek', () => bump());
+  // event on the one path that really seeks, and raises it as a BUBBLING event precisely so it can
+  // be caught here rather than on a canvas this machine would have to have found first.
+  // `chart:seek` is a CustomEvent chart.js raises itself, so `isTrusted` is false on it by
+  // construction and the trusted-gesture test above cannot be applied. The guard it replaces is the
+  // one chart.js already applies: the event is only raised from the click path that really seeks,
+  // never for a click in the padded axis gutters that the chart dropped.
+  on(chatMount, 'chart:seek', (e) => {
+    bump();
+    const inBlock = e.target && e.target.closest ? e.target.closest('.ev-embed') : null;
+    if (inBlock) arm('chart-seek');
+  });
 
-  // The beat, from chat.js on a non-guided mission and from core/guide.js's handover on a guided
-  // one. Delegated on the mount rather than the panel: the chat element is rebuilt with the demo,
-  // the mount is not.
+  // Delegated on the mount rather than the panel: the chat element is rebuilt with the demo, the
+  // mount is not.
   on(chatMount, 'chat:autobeat', () => beatFinished());
-  graceTimer = window.setTimeout(beatFinished, guided ? GUIDED_BEAT_GRACE_MS : BEAT_GRACE_MS);
+  graceTimer = window.setTimeout(beatFinished, experience ? EXPERIENCE_BEAT_GRACE_MS : BEAT_GRACE_MS);
 
   // THE arming signals: a chip the visitor clicked, a suggestion they chose, a question they
   // typed. Evidence chips and suggestion chips are created as answers stream, so this is

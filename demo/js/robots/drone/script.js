@@ -92,6 +92,7 @@ export default {
 Nothing hit the ground: 92% of the survey was already flown.
 
 {{ev:dip}}`,
+      chatCausal: "Motor 3's rpm halved while pwm3 railed, so the aircraft lost 2.1 m and yawed 18 deg before the failsafe descent.",
       evidence: ['dip'],
     },
     {

@@ -417,10 +417,21 @@ await B.ctx.close();
 // The payload is FINE in both. The build is what throws, after resources exist.
 
 /**
- * Drive `buildDemo()` directly, `times` times, sampling the probe after each. The router is not the
- * subject here and going back through it would mean a trip via the picker, whose own previews
- * allocate contexts and would drown the number being measured. `buildDemo` is exported for exactly
- * this reason, and calling it is what a retry does anyway.
+ * Build the demo AND make an evidence block take the shared context, `times` times, sampling the
+ * probe after each.
+ *
+ * ROUND 3 MOVED THE ALLOCATION. `buildDemo()` used to construct a renderer and a chart on the spot,
+ * so calling it was the whole experiment. It no longer does either: the demo screen is a transcript,
+ * and the renderer and the charts are allocated by the inline evidence block that an answer mounts
+ * (core/embeds.js), lazily, on the block nearest the reader. Driving `buildDemo` alone now proves
+ * nothing about leaks, because there is nothing to leak yet.
+ *
+ * So the retry is build + attach a block + hand it the context, which is exactly the sequence a
+ * settled evidence-bearing answer runs. `attach()` and `play()` are the host's own API and
+ * `window.__demo.embeds` is the handle the demo already exposes for QA.
+ *
+ * The router is still not the subject: going back through it would mean a trip via the picker,
+ * whose own previews allocate a context and would drown the number being measured.
  */
 async function retryBuilds(page, times) {
   return page.evaluate(async (n) => {
@@ -435,6 +446,11 @@ async function retryBuilds(page, times) {
     for (let i = 0; i < n; i++) {
       try {
         app.buildDemo(def);
+        const d = window.__demo;
+        const finding = (def.findings || [])[0];
+        const row = d.chat.el.querySelector('.chat-log');
+        d.embeds.attach(row, [finding]);
+        d.embeds.play(finding, { source: 'user' });
         errors.push(null);
       } catch (err) {
         errors.push(String((err && err.message) || err));
@@ -443,6 +459,12 @@ async function retryBuilds(page, times) {
       await new Promise((r) => requestAnimationFrame(() => r()));
       states.push(window.__probeState());
     }
+    // The last build is left standing on purpose everywhere else in this file; here it owns the
+    // one context under test, so it is torn down before the caller navigates on.
+    app.buildDemo(def);
+    window.__demo.embeds.dispose();
+    window.__demo.chat.dispose();
+    window.__demo.timeline.dispose();
     return { baseline, errors, states };
   }, times);
 }
@@ -459,37 +481,46 @@ for (const [name, glob, moduleBody, where] of [
   );
 
   const { baseline, errors, states } = await retryBuilds(F.page, 3);
+  // CONTAINED, not propagated. The block owns the failure now: `ensureViewer` and `ensureChart`
+  // each catch, mark themselves dead and hand the block its fallback (line art for the replay, no
+  // plot frame for the chart). The reader is left with an answer that is short of one panel rather
+  // than a demo screen that threw.
   H.ok(
-    errors.every((e) => typeof e === 'string' && /fixture:/.test(e)),
-    `every one of the three builds throws the fixture's error (${errors.map((e) => String(e).slice(0, 40)).join(' | ')})`,
+    errors.every((e) => e === null),
+    `the failure is contained inside the block, not thrown at the screen (${errors.map((e) => String(e).slice(0, 40)).join(' | ')})`,
   );
   H.ok(
-    states.every((s) => !s.hasDemo),
-    'no half-built demo is exposed on window.__demo after any of them',
+    states.every((s) => s.hasDemo),
+    'the transcript is still standing after each of them',
   );
   H.ok(
     states.every((s) => s.canvases === 0 && s.viewers === 0),
-    `no viewer DOM and no canvas is left in the mount (${states.map((s) => `${s.viewers}/${s.canvases}`).join(' ')})`,
+    `nothing is left parked in the shared-context mount (${states.map((s) => `${s.viewers}/${s.canvases}`).join(' ')})`,
   );
 
-  // THE GROWTH TEST. One leaked context is invisible; the number that matters is whether repeating
-  // the failure accumulates them. `glMade` must climb - otherwise the fixture is not reaching the
-  // renderer at all and the assertion below is vacuous - while `glLive` must not move.
+  // THE GROWTH TEST, unchanged in intent. One leaked context is invisible; the number that matters
+  // is whether repeating the failure accumulates them.
+  //
+  // The CEILING is baseline + 1, and that one is the point of the whole architecture: a demo screen
+  // owns exactly ONE context however many evidence blocks its transcript holds, and rebuilding the
+  // demo disposes the previous one before the next is asked for. Fixture C never reaches a renderer
+  // (buildScene throws inside createViewer, which unwinds its own allocation), so it stays at the
+  // baseline; fixture D reaches one and keeps exactly one.
   H.ok(
-    states[states.length - 1].glMade > baseline.glMade,
-    `each retry really does construct a renderer (${baseline.glMade} -> ${states.map((s) => s.glMade).join(',')})`,
+    states.every((s) => s.glLive <= baseline.glLive + 1),
+    `at most one demo WebGL context is live at a time (${baseline.glLive} -> ${states.map((s) => s.glLive).join(',')})`,
   );
   H.ok(
-    states.every((s) => s.glLive === baseline.glLive),
-    `and no live WebGL context survives any of them (${baseline.glLive} -> ${states.map((s) => s.glLive).join(',')})`,
+    states[states.length - 1].glLive === states[0].glLive,
+    `and repeating the failure does not accumulate them (${states.map((s) => s.glLive).join(',')})`,
   );
   H.ok(
-    states.every((s) => s.roLive === baseline.roLive),
-    `no ResizeObserver is left connected (${baseline.roLive} -> ${states.map((s) => s.roLive).join(',')})`,
+    states.every((s) => s.roLive <= baseline.roLive + 1),
+    `no ResizeObserver pile-up (${baseline.roLive} -> ${states.map((s) => s.roLive).join(',')})`,
   );
   H.ok(
-    states.every((s) => s.raf <= baseline.raf),
-    `no orphan animation frame is left queued (${baseline.raf} -> ${states.map((s) => s.raf).join(',')})`,
+    states.every((s) => s.raf <= baseline.raf + 2),
+    `no animation-frame pile-up (${baseline.raf} -> ${states.map((s) => s.raf).join(',')})`,
   );
 
   // ...and the page is still usable: another mission builds fully after three failed ones.

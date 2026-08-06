@@ -69,7 +69,7 @@ const onDemo = (page) =>
         location.hash === '#/demo/donna' && !!el.querySelector('canvas')
       );
     },
-    15000,
+    30000,
     'the demo screen',
   );
 

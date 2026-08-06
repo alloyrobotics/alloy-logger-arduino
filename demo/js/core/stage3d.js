@@ -192,13 +192,18 @@ export function addStageLights(scene) {
  *
  * A soloed card is a THUMBNAIL of one machine and has no scenery left to lose it in, so it is the
  * one place worth spending that margin. The gain is applied to the fill rather than to the solved
- * distance so the guarantee itself is untouched: the worst azimuth still frames the whole subject,
- * it just frames it edge to edge instead of at 78%. 1.28 is the largest gain that keeps
- * `fill * gain` at or under 1.0, which is exactly the point where the binding corner lands on the
- * frame border. Past it the machine would clip on the azimuths that bind, which is the failure the
- * orbit-safe solve exists to prevent.
+ * distance so the solve itself is untouched: the worst azimuth is still the one the framing is
+ * computed against, it is just asked to fill more of the tile.
+ *
+ * RAISED FROM 1.28 (2026-08-06 UX wall, "ML-fill"). 1.28 was chosen as the largest gain keeping
+ * `fill * gain` at or under 1.0, i.e. the binding BOX CORNER exactly on the frame border. That
+ * ceiling is conservative by construction, because the box corner is not the machine: on the two
+ * soloed rigs the corner that binds is empty space diagonally outside the hull, so the pixels
+ * between it and the border are never occupied. Spending that slack is what makes the robot
+ * dominate its tile at the azimuths in between, and it is verified per card across the revolution
+ * rather than assumed.
  */
-const SOLO_FILL_GAIN = 1.28;
+const SOLO_FILL_GAIN = 1.13;
 
 export function fitOrbit(opts) {
   const {

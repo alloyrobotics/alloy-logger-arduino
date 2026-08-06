@@ -282,7 +282,7 @@ try {
       if (id === 'ssl' || id === 'donna') {
         H.ok(robot.expectedPresent && robot.visible, `${id} discloses provenance on step 1 before the failure step`);
         H.ok(robot.text === expected, `${id} robot step renders context.provenance verbatim`);
-        H.ok(['robot', 'mission', 'failure', 'choose'].indexOf(robot.step) < 2, `${id} provenance first appears before step 3 failure`);
+        H.ok(['robot', 'mission', 'failure'].indexOf(robot.step) < 2, `${id} provenance first appears before step 3 failure`);
       } else {
         H.ok(robot.visible === robot.expectedPresent, `${id} robot provenance presence matches the definition (${robot.expectedPresent})`);
         H.ok(!robot.expectedPresent || robot.text === expected, `${id} robot provenance copy matches the definition when present`);
@@ -376,7 +376,7 @@ try {
     await ctx.close();
   }
 
-  H.section('chat, proof and follow-up keep one honest primary action');
+  H.section('the chat surface keeps one honest primary action');
   {
     const ctx = await newContext(browser);
     const page = await ctx.newPage();
@@ -389,36 +389,58 @@ try {
       }),
     );
     await page.goto(`${server.origin}/demo/#/demo/arm6`, { waitUntil: 'domcontentloaded', timeout: 70000 });
+    // ROUND 3: chat / proof / follow-up collapsed into ONE surface. There is no mode to enter, no
+    // layout to switch and no "Show why" button, because the evidence is already inside the answer
+    // that cites it. What this section still guards is the thing the modes existed to protect: at
+    // no point does the screen offer the reader two competing primary actions.
     H.ok(
-      await waitFor(page, () => document.body.dataset.screen === 'demo' && window.__demo?.mode === 'chat', 15000, 'arm6 chat mode'),
-      'demo enters chat mode',
+      await waitFor(page, () => document.body.dataset.screen === 'demo' && !!window.__demo, 15000, 'arm6 demo'),
+      'the demo opens as a transcript',
     );
-    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 0, 'chat mode hides every header acquisition CTA');
+    H.ok(
+      await page.evaluate(() => document.getElementById('screen-demo').dataset.mode === 'chat'),
+      'the demo screen carries the one constant mode value',
+    );
+    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 2, 'the header keeps both acquisition CTAs on desktop');
+    await page.setViewportSize({ width: 390, height: 844 });
+    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 0, 'and hides them on a phone, where the header is one line');
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     H.ok(await finishStreaming(page), 'the first answer settles');
     H.ok(
-      await waitFor(page, () => document.getElementById('screen-demo').dataset.mode === 'proof', 10000, 'arm6 proof mode'),
-      'the first answer opens proof mode',
+      await waitFor(page, () => document.querySelectorAll('.ev-embed').length === 1, 15000, 'the inline evidence block'),
+      'the first answer carries its evidence inside itself',
     );
-    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 2, 'proof mode shows both header CTAs on desktop');
-    await page.setViewportSize({ width: 390, height: 844 });
-    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 0, 'proof mode hides header CTAs on mobile');
-    await page.setViewportSize({ width: 1440, height: 900 });
+    const parts = await page.evaluate(() => {
+      const b = document.querySelector('.ev-embed');
+      return {
+        chart: !!b.querySelector('.chart-canvas'),
+        note: (b.querySelector('.ev-embed-note').textContent || '').trim().length,
+        replay: !!b.querySelector('.v-canvas'),
+        live: b.classList.contains('is-live'),
+      };
+    });
+    H.ok(parts.chart, 'the block plots the finding');
+    H.ok(parts.note > 40, `the block states the causal line (${parts.note} chars)`);
+    H.ok(parts.replay && parts.live, 'and holds the live replay');
+    H.ok(
+      (await visibleCount(page, '#screen-demo .chat-form')) === 1,
+      'the composer stays available: a follow-up is just another message',
+    );
 
     await page.fill('.chat-input', 'Show me the evidence again.');
     await page.click('.chat-form button[type="submit"]');
-    H.ok(
-      await waitFor(page, () => document.getElementById('screen-demo').dataset.mode === 'followup', 10000, 'arm6 follow-up mode'),
-      'a typed question opens follow-up mode',
-    );
-    H.ok((await visibleCount(page, '#screen-demo .demo-ctas [data-cta]')) === 0, 'follow-up mode hides every header acquisition CTA');
     H.ok(await finishStreaming(page), 'the follow-up answer settles');
     H.ok(
-      await waitFor(page, () => document.getElementById('screen-demo').classList.contains('show-why-pending'), 10000, 'Show why pending state'),
-      'the pending Show why state is explicit',
+      await page.evaluate(() => document.querySelectorAll('.msg.bot .bot-body').length >= 2),
+      'the follow-up lands in the same transcript',
     );
-    H.ok((await visibleCount(page, '#screen-demo .chat-form')) === 0, 'the composer is hidden while Show why is pending');
-    const primaryActions = await visibleCount(page, '#screen-demo:not([hidden]) .guide-cta[data-primary]:not(:disabled)');
-    H.ok(primaryActions === 1, `exactly one enabled [data-primary] action exists while Show why is pending (${primaryActions})`);
+    const primaryActions = await visibleCount(page, '#screen-demo:not([hidden]) [data-primary]:not(:disabled)');
+    H.ok(primaryActions === 0, `no separate primary action competes with the evidence in the answer (${primaryActions})`);
+    H.ok(
+      await page.evaluate(() => document.querySelectorAll('.ev-embed').length === 1),
+      'an answer with no evidence mounts no block',
+    );
     H.ok(errors.pageErrors.length === 0, `CTA hierarchy walk has no page errors (${errors.pageErrors.join(' | ')})`);
     H.ok(errors.consoleErrors.length === 0, `CTA hierarchy walk has no console errors (${errors.consoleErrors.join(' | ')})`);
     await ctx.close();

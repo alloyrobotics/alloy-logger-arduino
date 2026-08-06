@@ -1,4 +1,4 @@
-// ssl/experience.js - the four-step flow's mission experience for this mission, and the anatomy
+// ssl/experience.js - the three-step flow's mission experience for this mission, and the anatomy
 // overlay's anchor factory.
 //
 // WHY IT IS HERE AND NOT IN script.js. This mission is the one on the page with a lazy boundary,
@@ -6,9 +6,9 @@
 // gzip ceiling that currently has double-digit bytes of headroom. The experience block is copy and
 // the anchor table is numbers, and neither is read until the flow's step screens exist, which is
 // after the match payload has landed. So both ride the side module that already loads with it:
-// `role-openers.js` imports this file and `applyGuided()` calls `applyExperience()` on the def.
+// `role-openers.js` imports this file and `applyRoleOpeners()` calls `applyExperience()` on the def.
 // `script.js` carries exactly two eager tokens for the whole feature - `hasExperience: true`, so
-// the router can send this mission down the four-step flow before the payload exists, and a
+// the router can send this mission down the three-step flow before the payload exists, and a
 // `buildScene` wrapper that reads `def.sceneAnchors` at call time rather than at build time.
 //
 // That wrapper is the part worth understanding. The flow's first step mounts a viewer BEFORE the
@@ -372,7 +372,7 @@ export function sceneAnchors(THREE, mount) {
 }
 
 /**
- * Merge the experience onto the def. Called by `role-openers.js`'s `applyGuided()`, which the def's
+ * Merge the experience onto the def. Called by `role-openers.js`'s `applyRoleOpeners()`, which the def's
  * `loadSceneData()` runs once the match payload is in hand.
  *
  * @param {object} def the ssl RobotDefinition

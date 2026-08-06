@@ -169,8 +169,6 @@ input { font: inherit; color: inherit; }
 .rcard-name { font-size: 16px; font-weight: 400; letter-spacing: -0.015em; }
 .rcard-tag { margin-top: 8px; font-size: 12.5px; line-height: 1.45; color: var(--tx-mute); }
 .pick-open { margin-top: auto; }
-.pick-foot { flex: 0 0 auto; padding: 0 24px 18px; }
-.pick-foot .note { max-width: 980px; margin: 0 auto; text-align: center; color: var(--tx-mute); font-size: 11px; }
 
 @media (max-width: 899px) {
   .pick-wrap { padding: 0 18px; }
@@ -181,7 +179,6 @@ input { font: inherit; color: inherit; }
   .rcard-name { font-size: 15px; }
   .rcard-tag { font-size: 11.5px; }
   .pick-open { min-height: 54px; }
-  .pick-foot { padding: 0 18px 12px; }
 }
 
 /* ==================================================================== 2. connect */
@@ -865,7 +862,7 @@ input { font: inherit; color: inherit; }
   .mk.mk-live .mk-ard-out::after, .mk.mk-live .mk-inbox-wall::after { animation: none; }
 }
 
-/* ==================================================================== 2e. four-step flow */
+/* ==================================================================== 2e. three-step flow */
 #screen-flow { height: 100dvh; display: flex; flex-direction: column; }
 .flow-head { flex: 0 0 auto; }
 #screen-flow[data-flow-mission="ssl"][data-flow-step="failure"] .flow-head { display: none; }
@@ -887,8 +884,6 @@ input { font: inherit; color: inherit; }
 .flow-viewer-mount { position: absolute; inset: 0; }
 #screen-flow .v-shud { display: none !important; }
 #screen-flow .viewer.has-shud .v-anat { padding-top: 14px !important; }
-#screen-flow .viewer.has-shud.has-banner .v-anat { padding-top: 56px !important; }
-#screen-flow .viewer.has-shud .v-banner { top: 12px !important; }
 .flow-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: var(--tx-mute); }
 .flow-fallback svg { width: min(44%, 320px); height: auto; overflow: visible; }
 .flow-fallback svg .acc { stroke: var(--acc, var(--blue-hi)); }
@@ -909,13 +904,6 @@ input { font: inherit; color: inherit; }
 .flow-context-row span { display: block; margin-top: 4px; color: var(--tx-mute); font-size: 12px; }
 .flow-chart-frame { grid-area: chart; min-width: 0; min-height: 0; border: 1px solid var(--line-hi); border-radius: 12px; overflow: hidden; }
 .flow-chart-mount { width: 100%; height: 100%; display: flex; }
-.flow-debug { grid-area: debug; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.flow-debug-card { min-height: 192px; display: flex; flex-direction: column; padding: 18px; background: var(--card); border: 1px solid var(--line-hi); border-radius: 12px; }
-.flow-debug-card.is-choice { border-color: var(--blue-hi); background: rgba(2,93,254,.16); }
-.flow-debug-card h2 { font-size: 17px; font-weight: 400; }
-.flow-debug-card p { margin-top: 28px; color: var(--tx-mute); font-size: 12px; }
-.flow-debug-card strong { margin-top: auto; font-size: 40px; line-height: 1; font-weight: 400; }
-.flow-debug-card.is-choice strong { color: var(--sage); }
 .flow-cta { grid-area: cta; margin-top: 0; }
 
 .flow[data-step="robot"] { grid-template-columns: minmax(210px, 1fr) minmax(380px, 1.45fr) minmax(210px, 1fr); grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto; grid-template-areas: "title title title" "part1 viewer part2" "part3 viewer part4" "cta cta cta"; }
@@ -924,7 +912,7 @@ input { font: inherit; color: inherit; }
 .flow[data-step="robot"] .flow-part-2 { grid-area: part2; }
 .flow[data-step="robot"] .flow-part-3 { grid-area: part3; }
 .flow[data-step="robot"] .flow-part-4 { grid-area: part4; }
-.flow[data-step="robot"] .flow-intro, .flow[data-step="robot"] .flow-context, .flow[data-step="robot"] .flow-chart-frame, .flow[data-step="robot"] .flow-debug { display: none; }
+.flow[data-step="robot"] .flow-intro, .flow[data-step="robot"] .flow-context, .flow[data-step="robot"] .flow-chart-frame { display: none; }
 .flow[data-step="robot"] .flow-viewer-frame .v-hud { display: none; }
 .flow.has-viewer-anatomy[data-step="robot"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "title" "viewer" "cta"; }
 .flow.has-viewer-anatomy.has-provenance[data-step="robot"] { grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "title" "viewer" "provenance" "cta"; }
@@ -960,15 +948,13 @@ input { font: inherit; color: inherit; }
 }
 .flow[data-step="mission"] .flow-intro { padding: 10px 12px; border: 1px solid var(--line-hi); border-radius: 9px; background: rgba(17,17,17,.9); }
 .flow[data-step="mission"] .flow-viewer-frame .v-hud { display: none; }
-.flow[data-step="mission"] .flow-anatomy, .flow[data-step="mission"] .flow-chart-frame, .flow[data-step="mission"] .flow-debug { display: none; }
+.flow[data-step="mission"] .flow-anatomy, .flow[data-step="mission"] .flow-chart-frame { display: none; }
 #screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] .flow-context { display: none; }
 .flow[data-step="failure"] { grid-template-columns: minmax(300px, .75fr) minmax(0, 1.65fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro chart" "viewer chart" "cta cta"; }
 .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title title" "intro chart" "viewer chart" "provenance provenance" "cta cta"; }
 .flow[data-step="failure"] .flow-intro { padding: 0 4px; align-self: start; }
 .flow[data-step="failure"] .flow-viewer-frame .v-hud { display: none; }
-.flow[data-step="failure"] .flow-anatomy, .flow[data-step="failure"] .flow-context, .flow[data-step="failure"] .flow-debug { display: none; }
-.flow[data-step="choose"] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title" "debug" "." "cta"; }
-.flow[data-step="choose"] .flow-intro, .flow[data-step="choose"] .flow-anatomy, .flow[data-step="choose"] .flow-viewer-frame, .flow[data-step="choose"] .flow-context, .flow[data-step="choose"] .flow-chart-frame { display: none; }
+.flow[data-step="failure"] .flow-anatomy, .flow[data-step="failure"] .flow-context { display: none; }
 
 @media (max-width: 899px) {
   .flow-body { padding: 24px 18px 18px; }
@@ -996,11 +982,6 @@ input { font: inherit; color: inherit; }
   .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(240px, 1.3fr) minmax(190px, .7fr) auto auto; grid-template-areas: "title" "intro" "viewer" "chart" "provenance" "cta"; }
   .flow[data-step="failure"] .flow-intro { font-size: 14px; }
   .flow-provenance { font-size: 10px; line-height: 1.45; }
-  .flow[data-step="choose"] { grid-template-rows: auto auto minmax(0, 1fr) auto; }
-  .flow-debug { grid-template-columns: 1fr; gap: 10px; }
-  .flow-debug-card { min-height: 86px; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 6px 14px; }
-  .flow-debug-card p { margin-top: 0; }
-  .flow-debug-card strong { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 32px; }
 }
 
 /* ==================================================================== 3. demo */
@@ -1019,15 +1000,20 @@ input { font: inherit; color: inherit; }
 .demo-more { margin-right: 2px; }
 .demo-ctas .lbl-sm { display: none; }
 
-.demo-main {
-  flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 420px minmax(0, 1fr);
+.demo-main { flex: 1; min-height: 0; display: flex; position: relative; }
+.chat-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+#screen-demo #chat-mount { width: 100%; max-width: 820px; margin: 0 auto; }
+
+/* The park for the ONE shared WebGL context (js/core/embeds.js). Laid out, sized and off-screen
+   rather than hidden: a renderer measured against a display:none host reports 0 x 0 and comes back
+   as a 1 px canvas, so the first evidence block to borrow it would inherit a postage stamp and
+   grow from there. Off the left edge, inert, and never scrolled to. */
+.stage-park {
+  position: absolute; left: -12000px; top: 0; width: 620px; height: 400px;
+  pointer-events: none; opacity: 0;
 }
-.chat-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
-.right-col { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1.45fr) minmax(0, 1fr); }
 
 /* ---- viewer ---- */
-.viewer-panel { position: relative; min-height: 0; }
 .viewer { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .v-stage { flex: 1; min-height: 0; position: relative; }
 .v-canvas { display: block; width: 100%; height: 100%; }
@@ -1105,9 +1091,6 @@ input { font: inherit; color: inherit; }
 .v-bx:hover { color: var(--tx); }
 
 /* ---- chart ---- */
-.chart-panel { min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
-.chart-toggle { display: none; }
-.chart-mount { flex: 1; min-height: 0; display: flex; }
 .chart { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 10px 12px 8px; }
 .chart-bar { display: flex; align-items: center; gap: 8px; }
 .chan-chips { display: flex; gap: 6px; overflow-x: auto; flex: 1; scrollbar-width: none; }
@@ -1302,107 +1285,79 @@ input { font: inherit; color: inherit; }
 }
 .chat-send:hover { background: var(--blue-hi); }
 
-/* ============================================ 3b. the guided walk (js/core/guide.js)
-   `data-guide` on #screen-demo is the WHOLE progressive reveal, and its value is the furthest the
-   layout has been opened: chat -> chart -> stage, after which the attribute is REMOVED and nothing
-   in this block applies any more (the settled demo is byte-for-byte the layout every other mission
-   has always had).
+/* ====================================== 3c. the inline evidence block (js/core/embeds.js)
+   Round 3 collapsed chat / proof / follow-up into ONE surface. There is no layout mode left: the
+   demo screen is a full-height transcript, and the evidence a message cites is rendered inside the
+   message. `data-mode="chat"` survives as a single constant value because chat.js keys the wall's
+   answer typography off it and because analytics reports it; nothing branches on it any more.
 
-   It ships in the MARKUP as "chat" and app.js deletes it before the screen is shown for any
-   mission that is not guided. That direction matters: the hidden state has to be the one the
-   browser lays out on the very first frame, because a panel hidden by JS after a forced layout
-   gets its reveal transition on ENTRY instead of on the beat it belongs to.
+   A block is a chart, a causal line and a replay slot. Only ONE slot holds the shared WebGL
+   viewer at a time (the one nearest the reader's centre); the rest show a poster captured off that
+   same renderer at handover, or the mission's line art if no poster exists yet. */
+/* Header acquisition links no longer move with a layout mode, because there is no layout mode: the
+   demo screen is one settled surface from the first frame, so the header behaves the same the whole
+   way through. Desktop keeps both; the phone rules further down keep the header to one line. */
 
-   The panels are `display:none` rather than moved or faded, which is also what keeps the reveal
-   honest: there is no invisible canvas soaking up frames behind the chat, and both viewer.js and
-   chart.js already re-measure off a ResizeObserver, so each one sizes itself the moment its beat
-   puts it in the layout. */
+.ev-embed {
+  margin: 16px 0 4px;
+  border: 1px solid var(--line-hi);
+  border-radius: 14px;
+  background: var(--canvas);
+  overflow: hidden;
+}
+.ev-embed-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  font-size: 12.5px; color: var(--tx);
+}
+.ev-embed-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: 0 0 auto; }
+.ev-embed[data-sev="alert"] .ev-embed-dot { background: var(--alert); }
+.ev-embed[data-sev="info"] .ev-embed-dot { background: var(--sage); }
+.ev-embed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-embed-win { flex: 0 0 auto; font-size: 10.5px; color: var(--tx-mute); }
 
-/* beat 1: chat only, one column, and a reading measure - a 1440px-wide line of analyst prose is
-   not a chat panel, it is a wall */
-#screen-demo[data-guide="chat"] .demo-main { grid-template-columns: minmax(0, 1fr); }
-#screen-demo[data-guide="chat"] .right-col { display: none; }
-#screen-demo[data-guide="chat"] .chat-col { border-right: 0; }
-#screen-demo[data-guide="chat"] #chat-mount { width: 100%; max-width: 760px; margin: 0 auto; }
+/* The chart is the ANNOTATION layer: minimal chrome, direct labels, the finding window shaded, and
+   the whole plot seekable. Its height is fixed rather than fluid because a transcript scrolls and
+   a percentage of an unbounded log means nothing. */
+.ev-embed-chart { display: flex; height: 168px; border-bottom: 1px solid var(--line); }
+.ev-embed-chart .chart { padding: 8px 10px 4px; }
 
-/* beat 2: the plot arrives and has the right column to itself; the stage is still to come */
-#screen-demo[data-guide="chart"] .right-col { grid-template-rows: minmax(0, 1fr); }
-#screen-demo[data-guide="chart"] .viewer-panel { display: none; }
-
-@keyframes guideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
-#screen-demo[data-guide="chart"] .chart-panel,
-#screen-demo[data-guide="stage"] .viewer-panel { animation: guideIn .4s cubic-bezier(.16,1,.3,1) both; }
-
-/* While a beat is open the CTA is the ONLY live control in the panel. The composer and the
-   suggestion chips come back at the handover, with the full layout; until then this is a walk, and
-   an input box on screen is an invitation to leave it.
-
-   The evidence chips are a different case and are left rendered but inert: they are the answer's
-   CITATION and beat 1 would be dishonest without them, but clicking one before the chart and the
-   stage exist would seek a replay nobody can see AND mint `evidence_user_clicked`, which is the
-   aha metric. It is not an aha if there was nothing on screen to see. */
-#screen-demo[data-guide] .sugg,
-#screen-demo[data-guide] .chat-form { display: none; }
-#screen-demo[data-guide] .chat-foot { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
-/* Inert AND drawn as inert. `pointer-events:none` also suppresses `:hover`, so a chip at full
-   strength gave a desktop visitor no feedback and a phone visitor a tap that did nothing - on the
-   first chip the product ever shows them, two beats before the coach line says "tap the chip to
-   watch it". Dimmed and with the pointer left alone, it reads as a citation that is not live yet. */
-#screen-demo[data-guide] .chat-log .ev-chip {
-  pointer-events: none;
-  opacity: .5;
-  cursor: default;
+.ev-embed-note {
+  margin: 0; padding: 12px 14px;
+  font-size: 13px; line-height: 1.5; color: var(--tx-body);
+  border-bottom: 1px solid var(--line);
 }
 
-/* The one control a beat leaves behind. It stays in the transcript once used, disabled and
-   outlined, because it reads as a step the visitor chose rather than a button that vanished. */
-.msg.guide-act { align-items: flex-start; }
-.guide-cta {
-  display: inline-flex; align-items: center; gap: 9px;
-  font-size: 13.5px; font-weight: 500; letter-spacing: -0.005em;
-  color: #fff; background: var(--blue); border: 1px solid transparent;
-  border-radius: 60px; padding: 9px 17px; text-align: left;
-  transition: background .15s, transform .15s, color .15s, border-color .15s;
+/* The replay slot. `position: relative` is load-bearing: `.viewer` is `position:absolute; inset:0`
+   and is MOVED into whichever slot is live. */
+.ev-embed-3d { position: relative; aspect-ratio: 16 / 10; background: var(--canvas); }
+.ev-embed-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ev-embed-art {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--tx-mute);
 }
-.guide-cta::after { content: '\203A'; font-size: 15px; line-height: 1; opacity: .8; }
-.guide-cta:hover { background: var(--blue-hi); transform: translateY(-1px); }
-.guide-cta:disabled {
-  background: none; border-color: var(--line); color: var(--tx-mute);
-  cursor: default; transform: none;
+.ev-embed-art svg { width: min(42%, 200px); height: auto; }
+.ev-embed-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 3; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--tx); background: rgba(17,17,17,0.86); backdrop-filter: blur(8px);
+  border: 1px solid var(--line-hi); border-radius: 60px; padding: 7px 16px;
 }
+.ev-embed-play:hover { border-color: var(--blue-hi); color: var(--blue-hi); }
+.ev-embed.is-live { border-color: rgba(47,120,255,0.45); }
 
-/* ============================================== 3c. demo internal modes */
-/* The onboarding wall owns the primary action. Header acquisition links stay out of chat and
-   follow-up, and the pending Show why row temporarily replaces the composer as the only action. */
-#screen-demo[data-mode="chat"] .demo-ctas [data-cta],
-#screen-demo[data-mode="followup"] .demo-ctas [data-cta],
-#screen-demo[data-mode="followup"].show-why-pending .chat-form { display: none; }
-#screen-demo[data-mode="chat"] .demo-main,
-#screen-demo[data-mode="followup"] .demo-main { grid-template-columns: minmax(0, 1fr); }
-#screen-demo[data-mode="chat"] .right-col,
-#screen-demo[data-mode="followup"] .right-col { display: none; }
-#screen-demo[data-mode="chat"] .chat-col,
-#screen-demo[data-mode="followup"] .chat-col { border-right: 0; }
-#screen-demo[data-mode="chat"] #chat-mount,
-#screen-demo[data-mode="followup"] #chat-mount { width: 100%; max-width: 760px; margin: 0 auto; }
-#screen-demo[data-mode="proof"] .demo-main { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(320px, .75fr); grid-template-rows: minmax(0, 1fr) auto; }
-#screen-demo[data-mode="proof"] .right-col { display: contents; }
-#screen-demo[data-mode="proof"] .viewer-panel { grid-column: 1; grid-row: 1 / span 2; }
-#screen-demo[data-mode="proof"] .chart-panel { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line); }
-#screen-demo[data-mode="proof"] .chat-col { grid-column: 2; grid-row: 2; min-height: 94px; border-left: 1px solid var(--line); border-right: 0; }
-#screen-demo[data-mode="proof"] .chat-log, #screen-demo[data-mode="proof"] .sugg { display: none; }
-#screen-demo[data-mode="proof"] .chat-foot { padding-top: 12px; }
+/* The scrubber and the OrbitControls surface both want the pointer. In a fixed pane that was free;
+   inside a scrolling transcript it has to be declared, or a vertical drag started on the replay
+   both spins the camera and scrolls the page. */
+.ev-embed-3d .v-canvas, .ev-embed-3d .v-scrub { touch-action: none; }
+.ev-embed-3d .v-hud { padding: 8px 12px 10px; }
 
 @media (max-width: 899px) {
-  #screen-demo[data-mode="chat"] .chat-col,
-  #screen-demo[data-mode="followup"] .chat-col { order: 1; min-height: 0; }
-  #screen-demo[data-mode="proof"] .demo-main { display: flex; flex-direction: column; }
-  #screen-demo[data-mode="proof"] .right-col { display: contents; }
-  #screen-demo[data-mode="proof"] .viewer-panel { order: 1; flex: 1 1 48dvh; min-height: 36dvh; }
-  #screen-demo[data-mode="proof"] .chart-panel { order: 2; flex: 0 0 28dvh; border-left: 0; }
-  #screen-demo[data-mode="proof"] .chart-panel .chart-mount { height: 28dvh; flex-basis: 28dvh; border-top: 1px solid var(--line); }
-  #screen-demo[data-mode="proof"] .chart-toggle { display: none; }
-  #screen-demo[data-mode="proof"] .chat-col { order: 3; flex: 0 0 auto; min-height: 82px; border-left: 0; border-top: 1px solid var(--line); }
+  .ev-embed { margin: 14px -4px 4px; border-radius: 12px; }
+  .ev-embed-chart { height: 148px; }
+  .ev-embed-3d { aspect-ratio: 4 / 3; }
+  .ev-embed-note { font-size: 12.5px; padding: 11px 12px; }
 }
 
 /* ================================================================= signup popup */
@@ -1569,12 +1524,6 @@ input { font: inherit; color: inherit; }
     -webkit-line-clamp: 4; line-clamp: 4;
   }
   .rcard-go { font-size: 10.5px; }
-  /* Keeps the 18px side gutter every other block on this screen uses (`.pick-wrap`). Zeroing it
-     here let the note set its lines edge to edge on a 390px phone: the first character of a wrapped
-     line touches x=0 and the last touches the frame border, which reads as text running off the
-     screen rather than as a caption. Only the vertical padding was ever meant to change. */
-  .pick-foot { padding: 20px 18px 30px; }
-
   /* compact pill instead of a full-width card: fit-content, title only, whole pill dismisses */
   .v-banner {
     left: 8px; right: auto; top: 8px; width: fit-content; max-width: calc(100% - 16px);
@@ -1583,39 +1532,13 @@ input { font: inherit; color: inherit; }
   .v-bx { font-size: 10px; padding: 1px 7px; }
 
   .demo-main { display: flex; flex-direction: column; }
-  /* the flagship answer was being read four lines at a time through a letterbox: the chat column
-     gets a floor, and the viewer/chart give the space back when the chart is open */
-  /* The 3D stage holds a CONSTANT share of the screen (it never grows when the chart
-     collapses); the chart trades space with the CHAT, so closing telemetry gives the
-     conversation the room back. min-height on the chat lets the stage give way a little
-     on short screens instead of crushing the answer into a letterbox. */
-  .chat-col { border-right: 0; order: 3; flex: 1 1 0; min-height: 200px; }
-  .right-col { display: contents; }
-  .viewer-panel { order: 1; flex: 0 1 46dvh; min-height: 34dvh; position: sticky; top: 0; z-index: 4; background: var(--canvas); }
-  .chart-panel { order: 2; flex: 0 0 auto; }
+  .chat-col { flex: 1 1 0; min-height: 0; }
 
-  /* the HUD overlays the stage on a phone instead of taking layout height out of it, so the 3D
-     view actually gets the ~42 vh the build contract asks for (it was rendering at 26.6 vh) */
+  /* The HUD overlays the replay rather than taking layout height out of it, so an embed's 16:10
+     slot really is 16:10 of picture. Same rule the fixed pane used to carry. */
   .viewer { display: block; }
   .v-stage { position: absolute; inset: 0; }
   .v-hud { position: absolute; left: 0; right: 0; bottom: 0; }
-
-  .chart-toggle {
-    display: flex; align-items: center; justify-content: space-between; width: 100%;
-    font-family: 'Geist Mono', monospace; font-size: 11px; color: var(--tx-mute);
-    padding: 9px 14px; letter-spacing: 0.07em; text-transform: uppercase;
-  }
-  .chart-toggle svg { transition: transform .2s ease; }
-  .chart-panel.open .chart-toggle svg { transform: rotate(180deg); }
-  /* flex-basis wins over height on a column flex item, so the grow factor has to go to 0 too,
-     otherwise the collapsed chart still contributes its content height and shoves the chat
-     (and its input) off the bottom of the screen. */
-  .chart-panel .chart-mount { flex: 0 0 0px; height: 0; overflow: hidden; }
-  .chart-panel.open .chart-mount { flex: 0 0 19dvh; height: 19dvh; border-top: 1px solid var(--line); }
-  /* The guided walk reveals the panels STACKED, in beat order: the chart lands above the chat with
-     the 3D stage still to come, so on that one beat it gets the height the viewer is about to take
-     back. 19 dvh is the height of a plot sharing a phone with a 46 dvh 3D stage; here it is not. */
-  #screen-demo[data-guide="chart"] .chart-panel.open .chart-mount { flex: 0 0 38dvh; height: 38dvh; }
   /* one scrollable row of field chips instead of three stacked rows eating the plot */
   .field-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 5px 0 4px; }
   .field-chips::-webkit-scrollbar { display: none; }
@@ -1675,10 +1598,6 @@ input { font: inherit; color: inherit; }
     <div id="robot-grid" role="radiogroup" aria-label="Mission library"></div>
     <button class="pick-open" id="picker-open" type="button"><span>Open a mission</span><span aria-hidden="true">→</span></button>
   </div>
-
-  <div class="pick-foot">
-    <p class="note">Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.</p>
-  </div>
 </section>
 
 <!-- ============================================================ 2. CONNECT  #/connect/:id -->
@@ -1698,7 +1617,7 @@ input { font: inherit; color: inherit; }
     <a class="flow-id" href="#/missions" aria-label="Back to all missions">
       <i class="flow-dot"></i><h2 id="flow-name">Mission</h2>
     </a>
-    <span class="flow-progress mono" id="flow-progress">1 / 4</span>
+    <span class="flow-progress mono" id="flow-progress">1 / 3</span>
   </header>
   <div class="flow-body">
     <main class="flow" id="flow-mount">
@@ -1716,7 +1635,6 @@ input { font: inherit; color: inherit; }
       <section class="flow-chart-frame" aria-label="Focused telemetry">
         <div class="flow-chart-mount" id="flow-chart-mount"></div>
       </section>
-      <div class="flow-debug" id="flow-debug"></div>
       <p class="flow-provenance" id="flow-provenance" hidden></p>
       <button class="flow-cta" id="flow-cta" type="button"><span></span><span aria-hidden="true">→</span></button>
     </main>
@@ -1724,11 +1642,18 @@ input { font: inherit; color: inherit; }
 </section>
 
 <!-- ============================================================ 4. DEMO  #/demo/:id -->
-<!-- `data-guide="chat"` is the GUIDED entry state, and it is authored here rather than set by JS on
-     purpose: js/core/guide.js walks sbr, ssl and battle one beat at a time, and the chart and the
-     3D stage must be out of the layout in this section's first painted frame. app.js deletes the
-     attribute before the screen is shown for every mission that is not guided, and again at the
-     walk's handover, which is the moment the layout below becomes the one every mission shares. -->
+<!-- CHAT FIRST, and chat only. The persistent 46 dvh replay stage and the telemetry pane that used
+     to live to the right of this transcript are gone: an answer now carries its own chart, its own
+     causal line and its own live 3D replay inside the bubble (js/core/embeds.js). Everything the
+     old `data-mode` state machine existed to arrange - chat, proof, follow-up - collapses into this
+     one surface, and a follow-up question is just another message.
+
+     `#viewer-mount` survives as the PARK for the one shared WebGL context. It is a real, laid-out,
+     off-screen box rather than a hidden one, because a renderer measured against a display:none
+     host comes up 0 x 0 and the first evidence block to take the context would inherit a 1 px
+     canvas. It holds the viewer whenever no block is live, and every block borrows the same
+     element. -->
+
 <section id="screen-demo" hidden>
   <header class="topbar demo-head">
     <a class="back" href="#/missions" aria-label="Back to all missions">
@@ -1749,16 +1674,7 @@ input { font: inherit; color: inherit; }
     <div class="chat-col">
       <div id="chat-mount" style="flex:1;min-height:0;min-width:0;display:flex;"></div>
     </div>
-    <div class="right-col">
-      <section class="viewer-panel" id="viewer-mount" aria-label="3D mission replay"></section>
-      <section class="chart-panel" id="chart-panel" aria-label="Telemetry chart">
-        <button class="chart-toggle mono" id="chart-toggle" type="button" aria-expanded="false" aria-controls="chart-mount">
-          <span>telemetry</span>
-          <svg width="11" height="7" viewBox="0 0 11 7" fill="none" aria-hidden="true"><path d="M1 1.5L5.5 6l4.5-4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <div class="chart-mount" id="chart-mount"></div>
-      </section>
-    </div>
+    <div class="stage-park" id="viewer-mount" aria-hidden="true"></div>
   </div>
 </section>
 

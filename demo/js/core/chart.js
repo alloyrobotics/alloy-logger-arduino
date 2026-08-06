@@ -442,6 +442,29 @@ export function createChart(mount, robotDef, timeline) {
     return unit ? `${fmt(v)} ${unit}` : fmt(v);
   }
 
+  /** The `rows + 1` tick labels one unit group will actually print. */
+  function labelsFor(g, rows) {
+    const out = [];
+    for (let i = 0; i <= rows; i++) out.push(tick(g.lo + ((g.hi - g.lo) * i) / rows, g.unit));
+    return out;
+  }
+
+  /**
+   * The text of one direct-label pill.
+   *
+   * A pill normally names its field and nothing else, because the only labelled axis is the one it
+   * is plotted against. When a second unit group is on the plot its numeric axis is dropped (see
+   * draw()), so those traces carry their unit here instead of nowhere.
+   */
+  function pillText(key, gOf, leftGroup) {
+    const fd = fieldDef(key) || {};
+    const label = fd.label || key;
+    if (!directLabels) return label;
+    const g = gOf.get(key);
+    if (!g || g === leftGroup || !g.unit) return label;
+    return `${label} ${g.unit}`;
+  }
+
   function draw() {
     if (!w || !h) return;
     const ch = data[channel];
@@ -457,14 +480,25 @@ export function createChart(mount, robotDef, timeline) {
     // short panels (mobile, collapsed chart) cannot fit 5 labels without them colliding
     const rows = plotH < 150 ? 2 : plotH < 230 ? 3 : 4;
 
-    // gutters sized off the widest label each axis will actually print
-    const labelsFor = (g) => {
-      const out = [];
-      for (let i = 0; i <= rows; i++) out.push(tick(g.lo + ((g.hi - g.lo) * i) / rows, g.unit));
-      return out;
-    };
-    const leftLabels = labelsFor(groups[0]);
-    const rightLabels = groups.length > 1 ? labelsFor(groups[1]) : null;
+    /**
+     * TWO UNITS, ONE RIGHT-HAND GUTTER.
+     *
+     * The right axis and the direct-label pills both want the same strip of canvas, and on a phone
+     * there is only one of it. An inline evidence chart 341 px wide spends ~82 px on the left tick
+     * gutter and ~104 px on the pills; a second numeric axis needs another ~70 px it does not have,
+     * so it lands UNDER the pills and both become unreadable (donna: "-18.34 deg" printed through
+     * "rollDeg"). Widening instead is worse: the plot itself drops under 110 px and the trace the
+     * chart exists to show becomes the smallest thing in it.
+     *
+     * So when the pills are on, the second group's numeric axis is dropped and its UNIT rides on
+     * the pills that name its traces. Nothing becomes unattributable: the left ticks carry the
+     * left group's unit as they always have, and a trace on any other scale now says its own unit
+     * beside its own name, which is the one thing a reader must not have to guess when two units
+     * share a plot. The instrument view (full chrome, no pills) keeps both numeric axes.
+     */
+    const pillUnits = directLabels && groups.length > 1;
+    const rightLabels = groups.length > 1 && !pillUnits ? labelsFor(groups[1], rows) : null;
+    const leftLabels = labelsFor(groups[0], rows);
     const widest = (list) => list.reduce((m, s) => Math.max(m, ctx.measureText(s).width), 0);
     padL = Math.min(Math.max(PAD.l, Math.ceil(widest(leftLabels)) + 12), Math.floor(w * 0.34));
     const axisPadR = rightLabels
@@ -472,10 +506,7 @@ export function createChart(mount, robotDef, timeline) {
       : PAD.r;
     const directPadR = directLabels
       ? Math.ceil(
-          fields.reduce((max, key) => {
-            const fd = fieldDef(key) || {};
-            return Math.max(max, ctx.measureText(fd.label || key).width);
-          }, 0),
+          fields.reduce((max, key) => Math.max(max, ctx.measureText(pillText(key, gOf, groups[0])).width), 0),
         ) + 32
       : PAD.r;
     padR = Math.min(Math.max(axisPadR, directPadR), Math.floor(w * 0.46));
@@ -527,7 +558,15 @@ export function createChart(mount, robotDef, timeline) {
     // x labels
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    const cols = w < 420 ? 3 : 6;
+    // The tick COUNT has to come off the plot's real width, not the canvas's. Once a right-hand
+    // gutter takes 40% of a 341 px canvas, four "145.2s" stamps have 155 px to sit in and print
+    // straight through each other. So the widest stamp this domain will draw is measured and the
+    // plot is given as many gaps as fit, never more than the old fixed budget.
+    const decimals = domain[1] - domain[0] < 12 ? 1 : 0;
+    const stamp = (t) => `${t.toFixed(decimals)}s`;
+    const stampW = Math.max(ctx.measureText(stamp(domain[0])).width, ctx.measureText(stamp(domain[1])).width);
+    const fits = Math.floor((plotW + 14) / (stampW + 14)); // n stamps and n-1 gaps of 14 px
+    const cols = Math.max(1, Math.min(w < 420 ? 3 : 6, fits - 1));
     for (let i = 0; i <= cols; i++) {
       const t = domain[0] + ((domain[1] - domain[0]) * i) / cols;
       const x = Math.round(x2px(t)) + 0.5;
@@ -539,7 +578,7 @@ export function createChart(mount, robotDef, timeline) {
       ctx.fillStyle = 'rgba(255,255,255,0.40)';
       // keep the first/last labels inside the canvas instead of centering them off the edge
       ctx.textAlign = i === 0 ? 'left' : i === cols ? 'right' : 'center';
-      ctx.fillText(t.toFixed(domain[1] - domain[0] < 12 ? 1 : 0) + 's', x, PAD.t + plotH + 6);
+      ctx.fillText(stamp(t), x, PAD.t + plotH + 6);
     }
     ctx.textAlign = 'center';
 
@@ -607,9 +646,8 @@ export function createChart(mount, robotDef, timeline) {
           let end = i1;
           while (end >= i0 && (!has(mask, end) || !Number.isFinite(arr[end]))) end--;
           if (end >= i0) {
-            const fd = fieldDef(key) || {};
             directLabelRows.push({
-              text: fd.label || key,
+              text: pillText(key, gOf, groups[0]),
               color: SERIES_COLORS[si % SERIES_COLORS.length],
               x: x2px(ch.t[end]),
               y: yv(arr[end]),
@@ -766,6 +804,31 @@ export function createChart(mount, robotDef, timeline) {
     paintRaf = requestAnimationFrame(pump);
   }
 
+  /**
+   * Suspend or resume the paint pump.
+   *
+   * One chart used to be one screen, so a perpetual rAF was one rAF. A chat transcript can hold a
+   * chart per evidence-bearing answer, and thirty scrolled-past charts waking the tab at display
+   * rate to redraw pixels nobody can see is the cost that would sink the inline surface. The embed
+   * host suspends a chart the moment it leaves the viewport and resumes it on the way back in; the
+   * canvas keeps its last painted frame while suspended, so resuming is a repaint, not a rebuild.
+   *
+   * @param {boolean} on
+   */
+  function setRunning(on) {
+    if (disposed) return;
+    if (on) {
+      if (paintRaf) return;
+      dirty = true;
+      lastT = -1;
+      pump();
+      return;
+    }
+    if (!paintRaf) return;
+    cancelAnimationFrame(paintRaf);
+    paintRaf = 0;
+  }
+
   // ---------- interaction ----------
   function onMove(e) {
     const r = canvas.getBoundingClientRect();
@@ -832,7 +895,10 @@ export function createChart(mount, robotDef, timeline) {
     // gutters, which the guard above drops. signup.js listens for this instead of a bare canvas
     // click so it cannot arm off a click the chart itself ignored. Seek behaviour is unchanged:
     // this is a notification after the fact and nothing in this module listens to it.
-    canvas.dispatchEvent(new CustomEvent('chart:seek'));
+    // Bubbles, because the charts that matter now live INSIDE chat answers: signup.js can no
+    // longer snapshot one fixed canvas at build time, so it delegates from the chat mount and
+    // needs the event to reach it.
+    canvas.dispatchEvent(new CustomEvent('chart:seek', { bubbles: true }));
   }
 
   canvas.addEventListener('pointermove', onMove);
@@ -857,6 +923,10 @@ export function createChart(mount, robotDef, timeline) {
     setDirectLabels,
     setMinimalChrome,
     setChannel,
+    setRunning,
+    get running() {
+      return !!paintRaf;
+    },
     get domain() {
       return [domain[0], domain[1]];
     },

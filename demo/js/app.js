@@ -1,7 +1,13 @@
 // app.js - boot, hash router, robot registry wiring, screen construction and the onEvidence
 // orchestration that is the whole point of this demo.
 //
-// Routes: #/start · #/missions · #/connect/:id[/robot|mission|failure|choose] · #/demo/:id
+// Routes: #/start · #/missions · #/connect/:id[/robot|mission|failure] · #/demo/:id
+//
+// ROUND 3. The fourth connect step (`/choose`, the three debug-comparison cards) is gone: the
+// failure step hands straight to the demo, and the old hash redirects there. The demo screen is
+// chat and nothing else - an answer carries its own chart, causal line and live 3D replay inside
+// the message (core/embeds.js), so the fixed viewer stage and telemetry pane, and the chat/proof/
+// follow-up mode machine that arranged them, no longer exist.
 //
 // `#/` is not a screen. It is the DOOR, and where it opens depends on whether this visitor has
 // already answered the one question the demo asks: a first-timer gets the role fork, someone who
@@ -21,15 +27,14 @@ import { createTimeline } from './core/timeline.js';
 import { createViewer } from './core/viewer.js';
 import { createChart } from './core/chart.js';
 import { createChat } from './core/chat.js';
+import { createEvidenceEmbeds } from './core/embeds.js';
 import { createIngest } from './core/ingest.js';
 import { createPickerPreviews } from './core/preview.js';
 import { BRIEF_SEEN_PREFIX, createContext, GENERIC_ICON, briefSeen } from './core/context.js';
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
-import { createGuide, hasChoreo } from './core/guide.js';
 import { createStart } from './core/start.js';
 import { consumeFlowHandoff, createFlow, hasFlowExperience } from './core/flow.js';
-import { webglAvailable } from './core/stage3d.js';
-import { adoptRole, getRoleId, hasRole, hasExperience, isGuidedMission, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { adoptRole, getRoleId, hasRole, hasExperience, missionFor, DEFAULT_MISSION } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
@@ -318,7 +323,7 @@ function buildFlow(def, step) {
     );
     window.__flow = flowApi;
   }
-  screens.flow.querySelector('#flow-progress').textContent = `${['robot', 'mission', 'failure', 'choose'].indexOf(step) + 1} / 4`;
+  screens.flow.querySelector('#flow-progress').textContent = `${['robot', 'mission', 'failure'].indexOf(step) + 1} / 3`;
   flowApi.showStep(step);
 }
 
@@ -421,63 +426,18 @@ function teardownDemo() {
     signupTriggers = null;
     delete window.__signup;
   }
-  screens.demo.classList.remove('show-why-pending');
   if (!demo) return;
-  // #chart-toggle is a persistent node: its handler closes over this demo's chart/viewer/timeline,
-  // so leaving it attached pins the whole torn-down three.js scene graph in memory.
-  const toggle = screens.demo.querySelector('#chart-toggle');
-  if (toggle) toggle.onclick = null;
-  // First: a beat still in flight must not be able to write into a panel that is about to be
-  // disposed, and its continuation runs off the chat typewriter this is about to tear down.
-  if (demo.guide) demo.guide.dispose();
+  // EMBEDS FIRST, and this order is the whole teardown. The blocks own the one WebGL context, a
+  // chart per block and the activation observers, and every one of those elements lives inside a
+  // chat row: disposing the chat first would detach the rows out from under a renderer that is
+  // still holding a canvas in one of them, and the context would ride the detached tree until the
+  // collector got to it. The clock goes last, because both of the others are subscribed to it.
+  demo.embeds.dispose();
   demo.chat.dispose();
-  demo.chart.dispose();
-  demo.viewer.dispose();
   demo.timeline.dispose();
   demo = null;
   delete screens.demo.dataset.mode;
-  screens.demo.classList.remove('show-why-pending');
   delete window.__demo;
-}
-
-/**
- * The demo viewer's no-WebGL stand-in. Chat and the chart are 2D and still deliver the whole
- * diagnosis; this fills the viewer panel with the mission's own line art plus one quiet line, and
- * implements the members buildDemo actually calls (setHighlight, flashMarker, showBanner,
- * hideBanner, dispose) as no-ops so evidence orchestration needs no branching. An evidence loop
- * stays escapable without the banner: a chart click outside the loop window seeks past it, and
- * timeline.seek clears the loop on the way through, so the visitor is never trapped.
- */
-function createViewerFallback(mount, def) {
-  const el = document.createElement('div');
-  el.className = 'viewer v-fallback';
-  el.innerHTML = `
-    <div class="v-stage">
-      <svg viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        ${ROBOT_ICONS[def.id] || GENERIC_ICON}
-      </svg>
-      <p class="v-fallback-note mono">3D replay needs WebGL. The charts and the analyst still cover the whole mission.</p>
-    </div>`;
-  mount.appendChild(el);
-  const noop = () => {};
-  return {
-    el,
-    scene: null,
-    camera: null,
-    renderer: null,
-    controls: null,
-    sceneApi: null,
-    highlight: null,
-    setHighlight: noop,
-    resetView: noop,
-    flashMarker: noop,
-    showBanner: noop,
-    hideBanner: noop,
-    dispose() {
-      el.remove();
-    },
-  };
 }
 
 /**
@@ -506,15 +466,12 @@ function buildDemo(def) {
     // reached. The signup triggers first, and unconditionally: they are installed near the end of
     // the build, they own window level listeners and a pending quiet timer, and a build that threw
     // after installing them would otherwise leave a torn-down demo able to open the popup over
-    // whatever screen the failure lands on. The toggle handler because it is a PERSISTENT node
-    // closing over components about to die.
+    // whatever screen the failure lands on.
     if (signupTriggers) {
       signupTriggers.dispose();
       signupTriggers = null;
       delete window.__signup;
     }
-    const toggle = screens.demo.querySelector('#chart-toggle');
-    if (toggle) toggle.onclick = null;
     while (built.length) {
       const component = built.pop();
       try {
@@ -532,11 +489,8 @@ function buildDemo(def) {
 /**
  * The round-1 opener beat: after 420 ms, ask the scripted first question on the visitor's behalf.
  *
- * Lifted out of buildDemoInner so the one line that decides a mission's flow reads as a choice
- * between two named things. UNCHANGED for every mission that takes it - the delay, the identity
- * guard and the untracked timer id are all exactly what shipped. A guided mission never gets here:
- * core/guide.js replaces this beat outright, and firing it as well would put a second opener under
- * the walk's own first answer.
+ * Lifted out of buildDemoInner so the delay and identity guard stay isolated from construction.
+ * Every mission uses this one opener path.
  *
  * @param {object} chat the chat instance this timer is allowed to drive
  * @param {string|null} [question] role-specific opener handed off by the completed flow
@@ -553,34 +507,6 @@ function openerBeat(chat, question = null, fallbackQuestion = null) {
       else chat.askFirstQuestion();
     } else chat.askFirstQuestion();
   }, 420);
-}
-
-/**
- * The round-1 flow, for a mission that was SUPPOSED to be guided and is not.
- *
- * The guided brief is decluttered on the strength of one promise: `context.mission` and
- * `context.fault` are not dropped, they are moved into beat 1 in the analyst's own voice. When the
- * beats never arrive - a lazy side-module that 404s, a stale asset, a throw building the walk - that
- * promise is broken on both screens at once, and the visitor gets a two-line brief followed by an
- * unnarrated three-panel demo: worse than either flow on its own. So the paragraphs the brief gave
- * up are handed back here, as a note above the opener, before the round-1 timer runs.
- *
- * Non-guided missions never reach this: their brief still renders both paragraphs itself.
- *
- * @param {object} chat @param {object} def
- */
-function fallbackOpener(chat, def) {
-  try {
-    const c = def.context || {};
-    const line = [c.mission, c.fault]
-      .filter((s) => typeof s === 'string' && s.trim())
-      .join(' ')
-      .trim();
-    if (line) chat.addNote(line);
-  } catch (err) {
-    console.warn(`[demo] ${def.id}: mission context note failed`, err);
-  }
-  openerBeat(chat);
 }
 
 function buildDemoInner(def, built) {
@@ -601,267 +527,138 @@ function buildDemoInner(def, built) {
   const host = screens.demo;
 
   /**
-   * Which of the two demo flows this mission gets, decided ONCE, here, and nowhere else.
-   *
-   * A guided mission (a def that ships `choreo` and that a role is routed into: sbr, ssl, battle)
-   * enters CHAT ONLY and is walked through by core/guide.js. Every other mission keeps round 1
-   * exactly: full layout on entry, the 420 ms opener, the auto-played chip.
-   *
-   * The attribute is written BEFORE the viewer and the chart are constructed, and the template
-   * markup already ships `data-guide="chat"` on this section, so a guided mission's panels are
-   * out of the layout in the first frame it is shown rather than being hidden by JS after the
-   * browser has laid them out. Non-guided drops the attribute here, before any paint - the screen
-   * is still `hidden` at this point on a cold load and the whole build is one synchronous task, so
-   * there is no frame in which the wrong layout exists either way.
+   * `data-mode` used to be a three-state layout machine (chat -> proof -> follow-up) that moved a
+   * fixed 3D stage and a telemetry pane in and out of a grid. Round 3 deleted all three panes and
+   * the machine with them: the evidence lives inside the answer that cites it, so there is nothing
+   * left to arrange. The attribute survives as ONE constant value because chat.js hangs the wall's
+   * answer typography off it; nothing branches on it any more.
    */
   const modeEnabled = flowEnabled(def);
   const flowHandoff = modeEnabled ? consumeFlowHandoff(def.id) : null;
-  let guided = !modeEnabled && isGuidedMission(def.id) && hasChoreo(def);
-  if (guided) host.dataset.guide = 'chat';
-  else delete host.dataset.guide;
-  if (modeEnabled) host.dataset.mode = 'chat';
-  else delete host.dataset.mode;
+  host.dataset.mode = 'chat';
 
   host.querySelector('#demo-name').textContent = def.name;
   host.querySelector('#demo-device').textContent = def.device;
 
-  const viewerMount = host.querySelector('#viewer-mount');
-  const chartMount = host.querySelector('#chart-mount');
+  // The PARK for the one shared WebGL context, not a panel. It keeps the id `#viewer-mount`
+  // deliberately: it is still the single place a demo-screen renderer is ever mounted, and the
+  // leak and teardown probes that count canvases under that id are asking exactly the right
+  // question about the new architecture too.
+  const park = host.querySelector('#viewer-mount');
   const chatMount = host.querySelector('#chat-mount');
-  viewerMount.innerHTML = '';
-  chartMount.innerHTML = '';
+  park.innerHTML = '';
   chatMount.innerHTML = '';
 
   const timeline = own(createTimeline(def.duration));
-  // Without WebGL the demo still answers: chat and the chart carry the mission, and the viewer
-  // panel holds the mission's line art instead of a renderer that cannot be constructed. The
-  // fallback implements the viewer surface as no-ops so evidence orchestration stays one code path.
-  const viewer = own(
-    webglAvailable() ? createViewer(viewerMount, def, timeline) : createViewerFallback(viewerMount, def)
-  );
-  const chart = own(createChart(chartMount, def, timeline));
-
-  let evidenceActive = null;
-  let evidenceFull = false; // the active finding spans the whole mission, so it is not looping
-  let mode = modeEnabled ? 'chat' : 'legacy';
-  let firstAnswerSettled = false;
-  let proofFinding = null;
-  let followupFinding = null;
-  let showWhyAnswer = 0;
-
-  function setMode(nextMode) {
-    if (!modeEnabled) return;
-    host.classList.remove('show-why-pending');
-    mode = nextMode;
-    host.dataset.mode = nextMode;
-    if (demo) demo.mode = nextMode;
-    if (nextMode === 'proof') {
-      chart.redraw();
-      if (window.matchMedia('(max-width: 899px)').matches) setChartOpen(true);
-    }
-  }
-
-  /** Clear loop + highlight + zoom, back to the full mission. */
-  function clearEvidence() {
-    if (!evidenceActive) return;
-    evidenceActive = null;
-    evidenceFull = false;
-    timeline.setLoop(null, { speed: 1 });
-    viewer.setHighlight(null);
-    viewer.hideBanner();
-    chart.resetZoom();
-    host.classList.remove('evidence-on');
-  }
 
   /**
-   * THE money interaction. Order is fixed by the build contract:
-   *   1. scrubber marker flash, loop the finding window, seek to its start, play
-   *   2. chart switches channel/fields and animates its x-domain onto the window
-   *   3. the failing part pulses in the 3D scene
-   *   4. dismissible evidence banner over the viewer
+   * Built after the chat panel, because the transcript's scroll container is the thing activation
+   * is measured against, and `chat.el` is where that container lives. Declared here so the two
+   * hooks below can close over it.
+   */
+  let embeds = null;
+  let chat = null;
+  let firstAnswerSettled = false;
+
+  /**
+   * THE money interaction, relocated.
+   *
+   * It used to be a fixed sequence over three panels that lived somewhere else on the screen: flash
+   * the scrubber marker, loop the window, re-aim the chart, pulse the part, raise a banner. Every
+   * one of those still happens - they are what `embeds.play()` does when a block takes the shared
+   * context - except that they happen INSIDE the message that cited the finding, and the scroll
+   * that brings the reader to it is part of the same act.
    *
    * @param {object} finding
    * @param {{source?: 'user'|'auto'}} [opts] WHO fired it. The demo plays the scripted first
-   *   answer's chip for the visitor exactly once (`source: 'auto'`); everything else is a real
-   *   click, and only a real click is the aha this whole funnel measures. The default is 'user'
-   *   deliberately: a caller that forgets to declare itself over-counts one chip per demo, where
-   *   the opposite default would silently record the aha as never happening at all.
+   *   answer's evidence for the visitor exactly once (`source: 'auto'`); everything else is a real
+   *   click, and only a real click is the aha this funnel measures. The default stays 'user' for
+   *   the same reason it always did: over-counting one block per demo is the safe direction.
    */
   function onEvidence(finding, opts) {
-    if (!finding) return;
-    const auto = !!(opts && opts.source === 'auto');
-    evidenceActive = finding;
-    host.classList.add('evidence-on');
-
-    // 1. A slow-burn finding's window IS the mission: looping it is just normal playback with a
-    // loop bar the width of the whole scrubber, so those replay from a run-up to the cited instant
-    // instead. Bounded findings loop their window exactly as the contract specifies.
-    const w = finding.window || [0, def.duration];
-    const fullMission = w[1] - w[0] >= def.duration * 0.95;
-    evidenceFull = fullMission;
-    viewer.flashMarker(finding.id);
-    if (fullMission) {
-      timeline.setLoop(null, { speed: 1 });
-      timeline.seek(Math.max(0, (finding.t != null ? finding.t : w[0]) - 8));
-    } else {
-      timeline.setLoop(w, { speed: finding.slowmo ? 0.4 : 1 });
-      timeline.seek(w[0]);
-    }
-    timeline.play();
-
-    // 2 - on mobile the chart lives behind a collapsed panel, so open it or the zoom is invisible
-    if (window.matchMedia('(max-width: 899px)').matches) setChartOpen(true);
-    chart.focus(finding);
-
-    // 3
-    viewer.setHighlight(finding.highlight || null);
-
-    // 4
-    viewer.showBanner(finding, clearEvidence);
-
+    if (!finding || !embeds) return;
+    if (!embeds.play(finding, opts || {})) return;
     const source = opts && opts.source;
-    if (auto) track.evidenceAutoPlayed(def.id, finding.id);
-    else if (source !== 'show-why') track.evidenceUserClicked(def.id, finding.id);
-
-    if (modeEnabled) {
-      proofFinding = finding;
-      if (firstAnswerSettled || source === 'show-why') setMode('proof');
-    }
+    if (source === 'auto') track.evidenceAutoPlayed(def.id, finding.id);
+    else track.evidenceUserClicked(def.id, finding.id);
   }
 
-  let chat = null;
-  chat = own(createChat(chatMount, def, {
-    onEvidence,
-    onAsk: (question) => {
-      if (!modeEnabled) {
-        clearEvidence();
-        return;
-      }
-      if (firstAnswerSettled) {
-        const entry = chat && chat.matchEntry ? chat.matchEntry(question) : null;
-        const findingId = entry && entry.evidence && entry.evidence[0];
-        followupFinding = (def.findings || []).find((finding) => finding.id === findingId) || proofFinding;
-        if (mode === 'proof') setMode('followup');
-      }
-    },
-    onSettled: (info) => {
-      if (signupTriggers) signupTriggers.chatSettled();
-      if (!modeEnabled) return;
-      if (!firstAnswerSettled) {
+  chat = own(
+    createChat(chatMount, def, {
+      onEvidence,
+      /**
+       * Every evidence-bearing answer gets its evidence, in the answer. Scripted openers, scripted
+       * suggestions and live streamed answers all arrive here, because all three settle through the
+       * same typewriter and the same hydrate pass; the host does not need to know which was which.
+       */
+      onEvidenceBlock: (row, findings) => {
+        if (!embeds) return false;
+        return embeds.attach(row, findings).length > 0;
+      },
+      onSettled: () => {
+        if (signupTriggers) signupTriggers.chatSettled();
+        if (firstAnswerSettled) return;
         firstAnswerSettled = true;
+        // The completed flow's role-specific follow-up, offered as the composer's placeholder. A
+        // follow-up is an ordinary message now: there is no mode for it to switch the screen into.
         if (flowHandoff && flowHandoff.followUp) {
           const input = chat.el.querySelector('.chat-input');
           if (input) input.placeholder = flowHandoff.followUp;
         }
-        chat.announceBeat();
-        if (proofFinding) setMode('proof');
-        return;
-      }
-      if (mode === 'followup' && info && info.id !== showWhyAnswer) {
-        showWhyAnswer = info.id;
-        const finding = followupFinding || proofFinding || (def.findings || [])[0] || null;
-        chat.addAction('Show why', () => {
-          host.classList.remove('show-why-pending');
-          track.showWhyClicked(def.id, {
-            role: getRoleId(),
-            step: 'followup',
-            finding: finding ? finding.id : null,
-          });
-          if (finding) onEvidence(finding, { source: 'show-why' });
-          else setMode('proof');
-        });
-        host.classList.add('show-why-pending');
-      }
+      },
+    }),
+  );
+
+  embeds = own(
+    createEvidenceEmbeds({
+      def,
+      timeline,
+      park,
+      scroller: chat.el.querySelector('.chat-log'),
+      icon: ROBOT_ICONS[def.id] || GENERIC_ICON,
+    }),
+  );
+
+  demo = {
+    def,
+    timeline,
+    chat,
+    embeds,
+    onEvidence,
+    /** QA/integration: the live block's replay and chart, wherever in the transcript they are. */
+    get viewer() {
+      return embeds.viewer;
     },
-  }));
-
-  // Scrubbing (marker click, drag, chart click) outside a running evidence loop drops the loop in
-  // timeline.seek. That is the user leaving the evidence, so the banner, highlight and chart zoom
-  // have to leave with it instead of lingering over a mission that is no longer looping.
-  timeline.onChange((s) => {
-    if (evidenceActive && !evidenceFull && !s.loopWindow) clearEvidence();
-  });
-
-  // mobile: chart panel collapses
-  const chartPanel = host.querySelector('#chart-panel');
-  const chartToggle = host.querySelector('#chart-toggle');
-  function setChartOpen(open) {
-    chartPanel.classList.toggle('open', open);
-    host.classList.toggle('chart-open', open);
-    chartToggle.setAttribute('aria-expanded', String(open));
-    chart.redraw();
-  }
-  chartToggle.onclick = () => setChartOpen(!chartPanel.classList.contains('open'));
-  setChartOpen(false);
-
-  demo = { def, timeline, viewer, chart, chat, guide: null, mode, setMode, onEvidence, clearEvidence, setChartOpen };
+    get chart() {
+      return embeds.chart;
+    },
+    get evidence() {
+      return embeds.activeFinding;
+    },
+  };
   // exposed for QA/integration assertions (page state, not pixels)
   window.__demo = demo;
 
-  // Installed here, after the viewer/chart/chat nodes exist, because the machine arms off THEIR
-  // surfaces (the render canvas, the scrubber, the chart, the chips, the composer) and off nothing
-  // programmatic. Generated demos get it too: that visitor is the warmest lead on the page.
+  // Installed here, after the chat node exists, because the machine arms off THAT surface now: the
+  // composer, the suggestion chips, and the charts and replays that arrive inside answers. Every
+  // one of those is created after this point, so the machine delegates rather than snapshotting.
+  // Generated demos get it too: that visitor is the warmest lead on the page.
   if (signupPopup) {
     signupTriggers = createSignupTriggers({
       host,
       popup: signupPopup,
       isDemoRoute: () => currentRoute.name === 'demo',
       isStreaming: () => chat.streaming,
-      // WHO announces the handover, and therefore how long the fallback grace runs. On a guided
-      // mission the beat is the end of a walk the visitor paces, not a 420 ms timer.
-      guided: modeEnabled || guided,
+      experience: modeEnabled,
     });
     window.__signup = signupTriggers;
   }
 
   timeline.play();
 
-  // The choreography, in place of the opener. Owned before it starts, so a throw anywhere later in
-  // this function unwinds it with everything else, and guarded so a walk that cannot be built
-  // falls back to the untouched round-1 flow rather than stranding a visitor on a chat-only screen
-  // with nothing to tap.
-  if (guided) {
-    try {
-      const guide = own(
-        createGuide({
-          def,
-          chat,
-          panels: { host, timeline, viewer, chart, onEvidence, setChartOpen },
-          // The walk's OWN failure path. Every beat is guarded inside guide.js and any throw
-          // settles into the full layout, so this `try` only ever catches a synchronous throw out
-          // of the construction below - and a beat that dies before the opener was asked leaves a
-          // settled layout with an EMPTY transcript. The engine calls this instead, which is the
-          // one thing that turns that back into the round-1 demo it claims to fall back to.
-          onFallback: () => fallbackOpener(chat, def),
-        }),
-      );
-      demo.guide = guide;
-      guide.start();
-    } catch (err) {
-      console.warn(`[demo] ${def.id}: guided choreography unavailable, falling back`, err);
-      if (demo.guide) {
-        demo.guide.dispose();
-        demo.guide = null;
-      }
-      delete host.dataset.guide;
-      // This session ran the round-1 flow, so it must not be counted as a guided one: the beat
-      // funnel's denominator is `demo_opened{guided:true}` and a session with zero `beat_shown`
-      // in it makes the comparison this change exists to measure look worse than it is.
-      guided = false;
-      fallbackOpener(chat, def);
-    }
-  } else {
-    // A mission the ROLE TABLE guides into, arriving here without beats, has already been through
-    // the decluttered brief. It gets its context back with the opener; everything else - rescue,
-    // donna, arm6, drone, every generated demo - is untouched round 1, down to the timer.
-    if (isGuidedMission(def.id)) fallbackOpener(chat, def);
-    else openerBeat(chat, flowHandoff && flowHandoff.firstQuestion, def.firstQuestion || null);
-  }
+  openerBeat(chat, flowHandoff && flowHandoff.firstQuestion, def.firstQuestion || null);
 
-  // `guided` is the flow that STARTED. A walk that throws asynchronously mid-beat (guide.js catches
-  // it, settles, and calls onFallback) has already been counted here; those sessions are the ones
-  // reporting `guided:true` with no `beat_shown` at all, which is how the funnel tells them apart.
-  capture('demo_opened', { robot: def.id, guided, mode: modeEnabled ? 'chat' : 'legacy' });
+  capture('demo_opened', { robot: def.id, guided: false, mode: modeEnabled ? 'chat' : 'legacy' });
 }
 
 // ------------------------------------------------------------------- generated robots
@@ -1034,22 +831,15 @@ const scenePending = new Set();
  * Robot ids whose `loadSceneData()` promise has SETTLED at least once in this session, resolved or
  * rejected.
  *
- * A lazy mission's guided beats ride the same promise as its payload (`script.js` chains
- * `loadGuided()` into `loadSceneData()`), but `isSceneDataLoaded()` flips true the moment the ROUND
- * module decodes - one HTTP round trip before the side-module lands. Inside that window a second
- * route entry (a Back press, the header link off the loading card, any extra hashchange) read
- * `hasChoreo(def) === false` and built the NON-guided demo for the rest of the visit, off a def
- * whose brief had already been decluttered on the promise of a walk.
- *
- * So the route gate asks the same question the demo does, and waits on the composed promise until
- * it has settled. This set is what stops that becoming a loop: a guided module that will not load
- * settles, `choreo` stays unset, and the next entry falls through to the round-1 flow instead of
- * parking on the loading card forever.
+ * A lazy mission's experience and role opener ride the same promise as its scene payload, but
+ * `isSceneDataLoaded()` can flip true one HTTP round trip before that side module lands. This set
+ * keeps route entry waiting on the composed promise, then lets the existing missing-experience
+ * fallback decide whether the three-step flow is still available.
  */
 const sceneSettled = new Set();
 
 /**
- * A lazy definition may advertise the four-step flow before its small experience side module lands.
+ * A lazy definition may advertise the three-step flow before its small experience side module lands.
  * If the composed load settles without attaching that block, the static flag is no longer truthful:
  * clear it and replace the step/demo hash with the tested legacy brief. The generation and current
  * hash checks keep an old continuation from pulling a newer navigation back to this mission.
@@ -1248,8 +1038,14 @@ let routedOnce = false;
 function parseHash() {
   const h = (location.hash || '#/').replace(/^#/, '');
   const parts = h.split('/').filter(Boolean);
-  if (parts[0] === 'connect' && parts[1] && ['robot', 'mission', 'failure', 'choose'].includes(parts[2])) {
+  if (parts[0] === 'connect' && parts[1] && ['robot', 'mission', 'failure'].includes(parts[2])) {
     return { name: 'flow', id: parts[1], step: parts[2] };
+  }
+  // The retired fourth step. Kept as a NAMED route rather than falling through to the picker
+  // bounce, because it is a hash real sessions have in their history and a bookmark someone may
+  // have kept: it belongs in the demo, which is the screen it used to be one tap away from.
+  if (parts[0] === 'connect' && parts[1] && parts[2] === 'choose') {
+    return { name: 'choose-gone', id: parts[1] };
   }
   if (parts[0] === 'connect' && parts[1]) return { name: 'connect', id: parts[1] };
   if (parts[0] === 'demo' && parts[1]) return { name: 'demo', id: parts[1] };
@@ -1290,6 +1086,15 @@ function route() {
       return;
     }
     location.replace(location.pathname + location.search + '#/start');
+    return;
+  }
+
+  // The retired fourth step, redirected rather than 404ed. REPLACE, not assign, and before the
+  // registry is consulted: pushing would leave the dead hash in history for the Back button to
+  // bounce off, and a generated id that is not registered yet resolves on the next pass exactly as
+  // a `#/demo/g-...` hash typed by hand does.
+  if (next.name === 'choose-gone') {
+    location.replace(location.pathname + location.search + `#/demo/${next.id}`);
     return;
   }
 
@@ -1401,9 +1206,8 @@ function route() {
   // payload is in: its channels are derived from it. Wait on the loading card first, then this
   // same function runs again with everything present.
   //
-  // The second clause is the guided half of the same payload: `isSceneDataLoaded()` answers for the
-  // ROUND module only, and a mission the role table guides into is not ready to build until its
-  // beats are merged too. See `sceneSettled`, which keeps that a single wait rather than a loop.
+  // The second clause waits for the experience side module after the scene decoder has resolved.
+  // See `sceneSettled`, which keeps that a single wait rather than a loop.
   if (
     typeof def.loadSceneData === 'function' &&
     (!(def.isSceneDataLoaded && def.isSceneDataLoaded()) ||

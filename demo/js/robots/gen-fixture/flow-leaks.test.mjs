@@ -70,7 +70,7 @@ const PROBE = `(() => {
     glLive: [...p.gl].filter((ctx) => !(ctx.isContextLost && ctx.isContextLost())).length,
     listeners: p.listeners.filter((row) => row.target === window || row.target === document || row.target.isConnected).length,
     flowCanvases: document.querySelectorAll('#flow-viewer-mount canvas, #flow-chart-mount canvas').length,
-    demoCanvases: document.querySelectorAll('#viewer-mount canvas, #chart-mount canvas').length,
+    demoCanvases: document.querySelectorAll('#viewer-mount canvas, .ev-embed canvas').length,
     pickerCanvases: document.querySelectorAll('#screen-picker canvas').length,
     hasFlow: !!window.__flow,
     hasDemo: !!window.__demo,
@@ -112,7 +112,7 @@ await page.goto(`${server.origin}/demo/#/start`, { waitUntil: 'domcontentloaded'
 H.ok(await waitFor(page, () => document.body.dataset.screen === 'start', 10000, 'start screen'), 'the leak probe boots before the app');
 const baseline = await state();
 
-H.section('one viewer survives all four steps and no second context is created');
+H.section('one viewer survives all three steps and no second context is created');
 for (let cycle = 0; cycle < 3; cycle++) {
   H.ok(
     await go(
@@ -127,7 +127,7 @@ for (let cycle = 0; cycle < 3; cycle++) {
   H.ok(robot.hasFlow && !robot.hasDemo, `cycle ${cycle + 1} exposes only the flow instance`);
 
   const stepStates = [robot];
-  for (const step of ['mission', 'failure', 'choose']) {
+  for (const step of ['mission', 'failure']) {
     H.ok(
       await go(
         `#/connect/arm6/${step}`,
@@ -161,6 +161,75 @@ for (let cycle = 0; cycle < 3; cycle++) {
     after.flowCanvases === 0 && after.demoCanvases === 0 && after.pickerCanvases === 0,
     `cycle ${cycle + 1} leaves no flow, demo or picker canvas (${after.flowCanvases}/${after.demoCanvases}/${after.pickerCanvases})`,
   );
+}
+
+// ROUND 3 deleted the fourth step. The hash is still one real sessions have in their history, so
+// it is redirected rather than 404ed, and the redirect is the leak-relevant part: it must land on
+// the demo screen with the flow torn down, not leave a flow instance behind it.
+H.section('the retired choose hash redirects into the demo');
+{
+  H.ok(
+    await go(
+      '#/connect/arm6/robot',
+      () => document.body.dataset.screen === 'flow' && !!window.__flow && window.__flow.step === 'robot',
+      'arm6 robot step before the redirect',
+    ),
+    'the flow is up before the retired hash is used',
+  );
+  H.ok(
+    await go(
+      '#/connect/arm6/choose',
+      () => document.body.dataset.screen === 'demo' && location.hash === '#/demo/arm6' && !window.__flow,
+      'the choose redirect',
+    ),
+    'the retired choose hash lands on the demo with the flow torn down',
+  );
+  const inDemo = await state();
+  H.ok(inDemo.hasDemo && !inDemo.hasFlow, 'only the demo instance is exposed after the redirect');
+  H.ok(
+    await go('#/start', () => document.body.dataset.screen === 'start' && !window.__demo, 'demo teardown'),
+    'the demo tears down on the way out',
+  );
+  const after = await state();
+  H.ok(after.glLive === baseline.glLive, `the demo releases its WebGL context (${after.glLive})`);
+  H.ok(after.roLive === baseline.roLive, `the demo disconnects every ResizeObserver (${after.roLive})`);
+  H.ok(after.ioLive === baseline.ioLive, `the demo disconnects every IntersectionObserver (${after.ioLive})`);
+  H.ok(after.demoCanvases === 0, `no demo or inline-block canvas survives (${after.demoCanvases})`);
+  H.ok(after.listeners === baseline.listeners, `the demo restores the persistent listener count (${after.listeners})`);
+}
+
+// The inline evidence block is where the demo screen's renderer and charts now live, so the leak
+// claim that used to be about the fixed panes is about the block: a settled answer allocates one
+// context and one chart, and leaving the screen must release both.
+H.section('an inline evidence block releases its context and its chart');
+{
+  H.ok(
+    await go('#/demo/arm6', () => document.body.dataset.screen === 'demo' && !!window.__demo, 'arm6 demo'),
+    'the arm6 demo opens as a transcript',
+  );
+  const typing = await waitFor(page, () => window.__demo && window.__demo.chat.streaming, 30000, 'the arm6 opener');
+  if (typing) await page.evaluate(() => window.__demo.chat.finishStreaming());
+  H.ok(
+    await waitFor(page, () => document.querySelectorAll('.ev-embed').length > 0, 30000, 'the inline block'),
+    'the settled answer carries an inline evidence block',
+  );
+  const live = await state();
+  H.ok(live.glLive === baseline.glLive + 1, `the block owns exactly one live WebGL context (${live.glLive})`);
+  H.ok(
+    live.demoCanvases >= 2,
+    `and the block really holds a replay canvas and a chart canvas (${live.demoCanvases})`,
+  );
+  H.ok(
+    await go('#/start', () => document.body.dataset.screen === 'start' && !window.__demo, 'block teardown'),
+    'leaving the demo tears the block down',
+  );
+  const after = await state();
+  H.ok(after.glLive === baseline.glLive, `the block releases its WebGL context (${after.glLive})`);
+  H.ok(after.roLive === baseline.roLive, `the block disconnects every ResizeObserver (${after.roLive})`);
+  H.ok(after.ioLive === baseline.ioLive, `the block disconnects every IntersectionObserver (${after.ioLive})`);
+  H.ok(after.raf <= baseline.raf, `the block leaves no orphan animation frame (${after.raf})`);
+  H.ok(after.demoCanvases === 0, `no canvas survives the block (${after.demoCanvases})`);
+  H.ok(after.listeners === baseline.listeners, `the block restores the persistent listener count (${after.listeners})`);
 }
 
 H.section('changing mission replaces rather than stacks the viewer');

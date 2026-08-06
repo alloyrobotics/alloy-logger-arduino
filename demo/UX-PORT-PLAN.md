@@ -15,14 +15,14 @@ visual is the production Three.js scene, telemetry, motion and evidence.
   `alloy_demo_role`, super-property in PostHog, sent to `/demo/api/chat` and
   `/api/signup-lead`. Worker normalizes via `worker/roles.js`; role registers in
   `worker/chat.js` change answer altitude, never facts.
-- Guided flow v1 (`core/guide.js` + `def.choreo.beats`): three-beat chat->chart->stage
-  reveal for sbr/ssl/battle, keyed off the role table (`GUIDED_MISSIONS`). Superseded by
-  this port for the four active missions; files retained.
+- Guided flow v1 (`core/guide.js` + `def.choreo.beats`) was superseded by the inline-evidence
+  chat surface and removed in round 3. Mission role openers remain behind their existing lazy
+  boundaries without carrying guide beats.
 - Core surfaces: timeline (loop/speed/seek), viewer (sceneApi contract: update,
   setHighlight, cameraHome, cameraFocus, followTuning, hudState, rendering; no projection
   or label machinery today), chart (channel/field chips, focus(finding) with
   failure-toned shading, no inline labels today), chat (streaming, script matching,
-  guided helpers say/askScripted/addAction/announceBeat, role-aware live calls),
+  inline evidence hydration, role-aware live calls),
   signup (engagement trigger machine, 7-day cooldown, `/api/signup-lead`).
 - Registry: `ROBOTS` array is BOTH picker order and route registry (7 missions).
   Facts packs for all 7. Eager gzip gates for ssl/battle/donna static graphs.
@@ -40,11 +40,19 @@ New public route table (parseHash):
 | `#/start` | seat fork |
 | `#/missions` | mission library (4 cards) |
 | `#/connect/:id` | legacy brief for non-experience defs (sbr, rescue, battle, g-*); experience defs redirect (location.replace) to `#/connect/:id/robot` |
-| `#/connect/:id/robot` | step 1/4 Understand the robot |
-| `#/connect/:id/mission` | step 2/4 Understand the mission |
-| `#/connect/:id/failure` | step 3/4 See the failure |
-| `#/connect/:id/choose` | step 4/4 Choose how to debug |
-| `#/demo/:id` | demo shell; internal modes `chat` -> `proof` <-> `followup` (data-mode, not hash) |
+| `#/connect/:id/robot` | step 1/3 Understand the robot |
+| `#/connect/:id/mission` | step 2/3 Understand the mission |
+| `#/connect/:id/failure` | step 3/3 See the failure; its CTA ("Ask Alloy") hands straight to the demo |
+| `#/connect/:id/choose` | RETIRED (round 3). `location.replace` to `#/demo/:id` |
+| `#/demo/:id` | the chat surface. ONE transcript, no internal modes |
+
+**ROUND 3 (2026-08-06 UX wall).** Two structural changes to this section:
+- The fourth step is deleted. It asked "how do you want to debug it?" and answered it with three
+  comparison cards, one screen before a demo whose whole job is to answer that by doing it. The
+  hash is redirected rather than 404ed because real sessions have it in their history.
+- The demo's internal modes are deleted. Evidence now renders INSIDE the answer that cites it
+  (`core/embeds.js`: annotated seekable chart, causal line, live 3D replay), so there are no panels
+  left to arrange and a follow-up is just another message.
 
 Rules:
 - Step routes are real hash routes: Back/Forward walk the steps; reload re-enters a step.
@@ -53,22 +61,29 @@ Rules:
 - `?robot=` deep link keeps its semantics; for experience defs the "brief" destination is
   `#/connect/:id/robot`, and `alloy_brief_seen_<id>` keeps gating brief vs demo.
 - navGen staleness and the loading-card pattern extend to step routes: entering
-  mission/failure/choose (or demo) for a lazy def parks the loading card and awaits
+  mission/failure (or demo) for a lazy def parks the loading card and awaits
   `loadSceneData()` with a generation-aware continuation. `robot` step runs on
   previewData when the full payload is not yet loaded (kick the load off in background).
-- Teardown: one flow module owns all four step screens and disposes viewer/labels/RAF/
+- Teardown: one flow module owns all three step screens and disposes viewer/labels/RAF/
   listeners on exit; `show()` gains the new screen container; `screenState()` fixture
   helper updated to include it.
 
-Demo internal modes (no new hashes, mirrors wall):
-- `chat`: chat-first full-screen answer (composer bottom, single column).
-- `proof`: replay + chart + composer (desktop: replay left, chart right-top, composer
-  right-bottom; mobile: stacked replay/chart/composer). Entered from chat once the
-  answer settles and evidence fires, or via "Show why".
-- `followup`: full-screen chat again for a typed follow-up; the answer carries one
-  "Show why" action which returns to `proof` with the relevant synchronized state.
-  Conversation history and evidence context persist across mode switches (same chat
-  instance, same timeline; mode is CSS/data-mode only).
+The demo surface (round 3; supersedes the chat/proof/followup modes this section described):
+- ONE full-height transcript at every viewport, centred at a reading measure, composer pinned
+  to the bottom. No fixed replay stage, no telemetry pane, no `Show why`.
+- An evidence-bearing answer (scripted opener, scripted suggestion, or a live streamed answer
+  carrying an evidence chip) mounts an inline block into its own bubble: annotated seekable
+  chart, then the short causal paragraph, then the live 3D replay.
+- ONE WebGL context for the whole screen. The shared viewer element is moved into the block
+  nearest the reader's centre; every other block shows a poster captured off that renderer at
+  handover. `#viewer-mount` survives as the off-screen park the viewer lives in between blocks,
+  and BEFORE the first one: the renderer is built there a frame after the screen mounts rather
+  than on the frame a block first asks for it, so activation is a reparent and a resize.
+- The shared TimelineStore is unchanged: seeking any block's chart moves the mission clock,
+  which moves the live replay. Taking the context is what makes a block's finding the active
+  loop.
+- `#screen-demo` still carries `data-mode="chat"` as one constant value (chat.js keys the wall's
+  answer typography off it, analytics reports it); nothing branches on it.
 
 ## 3. Mission experience schema (backward compatible)
 
@@ -98,8 +113,8 @@ experience: {
 ```
 
 - arm6/drone: `experience` set statically in `script.js` (no eager gate on them).
-- ssl/donna: attached by their existing lazy side-module pattern (`applyGuided`-style,
-  loaded with `loadSceneData`) so eager gzip gates stay green. A tiny static stub flag
+- ssl/donna: attached by their existing lazy side-module pattern (`applyRoleOpeners` or
+  `applyExperience`, loaded with `loadSceneData`) so eager gzip gates stay green. A tiny static stub flag
   (`hasExperience: true`) marks them for routing before the payload lands.
 - Generated g-* defs and sbr/rescue/battle have no `experience`: legacy flow, untouched.
 - Facts builder does not read `experience`; facts:fresh stays byte-identical.
@@ -213,24 +228,19 @@ with a short leader tick (chart.js addition), matching the wall.
 - Role routing (role.js): hobbyist -> arm6, engineer -> ssl, lead -> ssl,
   marketing -> donna, unknown/default -> arm6. Legacy aliases unchanged.
 - The flow itself is identical for all roles; role changes COPY ONLY:
-  step intro framing, failure implication line, debug comparison card copy,
-  first question phrasing, follow-up phrasing, signup headline/body where the signup
-  module already supports it. Mission truth (anatomy, windows, findings, telemetry,
-  physics, scenes) is role-invariant.
-- `core/flow-copy.js` (SOL-B) holds all 16 mission x role variants:
-  `flowCopy[mission][role] -> { missionIntro, failureIntro, debugCards, firstQuestion,
-  followUp }` with a `base` fallback per mission. Every variant must exist and be
-  non-empty (gated).
+  step intro framing, failure implication line, first question phrasing, follow-up phrasing,
+  and signup headline/body where the signup module already supports it. Mission truth
+  (anatomy, windows, findings, telemetry, physics, scenes) is role-invariant.
+- `core/flow-copy.js` holds all 16 mission x role variants:
+  `flowCopy[mission][role] -> { missionIntro, failureIntro, firstQuestion, followUp }` with a
+  `base` fallback per mission. Every variant must exist and be non-empty (gated).
 - Analyst register stays worker-side (`worker/chat.js` registers, unchanged).
 - Banned in all UI copy: meta-output labels ("Plain-language version", "Summary",
   "Analysis" as labels), em dashes.
 - Disclosure discipline: ssl and donna card taglines and provenance surfaces keep their
-  disclosure copy verbatim. The picker footer count changes truthfully for the 4-card
-  roster ("Two synthetic missions, one real match replay with planted fault overlays,
-  and one real match replayed from three robots' onboard logs. Runs entirely in your
-  browser.") with the frozen-string tests updated to the new exact copy. The chat
-  answers keep their claim-ledger-tested numbers; wall placeholder numbers are not
-  ported.
+  disclosure copy verbatim. The mission-library footer is removed; its honesty claims remain on
+  the card tagline, robot-stage `context.provenance` and standing `chatProvenance`. The chat
+  answers keep their claim-ledger-tested numbers; wall placeholder numbers are not ported.
 
 ## 9. Roster archive
 
@@ -264,18 +274,17 @@ New gates (SOL-T), following the browser-fixture pattern:
 | Gate | Asserts |
 | --- | --- |
 | test:flow-roster (node) | PICKER_ROBOTS exactly [arm6, drone, ssl, donna]; ROBOTS_BY_ID retains all seven; role map matches Section 8 |
-| test:flow-copy (node) | 16/16 variants exist, non-empty; no meta-output labels; no em dashes in any flow/step/UI copy including experience blocks |
+| test:flow-copy (node) | 16/16 variants exist, non-empty, with no retired debug-card field; no meta-output labels; no em dashes in any flow/step/UI copy including experience blocks |
 | test:experience (node) | per active mission: exactly 4 anatomy parts whose anchors resolve against the scene anchor map; success window inside [0,duration], non-overlapping the selected failure finding window; failure findingId resolves; plottedFields subset of the finding channel fields; direct labels match plotted fields |
-| test:flow-walk (browser) | full walk seat -> missions -> 4 steps -> chat -> proof -> followup at 1440x900 and 390x844; one primary CTA per step (DOM count); role variants via DOM assertions for all 16 combos (localStorage role x mission); success step shows no failure UI (no .evidence-on, no alert shading, no finding banner); failure step has no timestamp/summary cards; proof shares TimelineStore (window.__demo timeline identity); followup Show why returns to proof with loop window set; generated-demo fixture falls back to legacy brief; reduced-motion and no-WebGL walks; no horizontal overflow at 390x844; console clean |
-| test:flow-leaks (browser) | step/route churn: WebGL context live count flat, no orphan RAF/observers/listeners (corrupt-meta probe pattern) |
+| test:flow-walk (browser) | full walk seat -> missions -> 3 steps -> chat surface at 1440x900 and 390x844; one primary CTA per step (DOM count); role variants via DOM assertions for all 16 combos (localStorage role x mission); success step shows no failure UI (no .evidence-on, no alert shading, no overlay banner); failure step has no timestamp/summary cards; the settled answer's inline block is a child of that answer, holds chart + causal line + the ONE live replay, shares the TimelineStore, and replaced the trailing chip row; a typed follow-up stays in the same transcript with no mode switch and no second context; the retired `/choose` hash redirects into the demo; generated-demo fixture falls back to legacy brief; reduced-motion and no-WebGL walks (block keeps chart + causal line, replay slot falls back to line art); no horizontal overflow at 390x844; console clean |
+| test:flow-leaks (browser) | step/route churn AND demo churn: WebGL context live count flat, an inline block's context + chart + observers + listeners all released on route exit, no orphan RAF (corrupt-meta probe pattern) |
 | visual captures (script, not in npm test) | 24 captures: 4 missions x {anatomy, success, failure} x {390x844, 1440x900}; per capture: pixel-variance frame difference across two timestamps (motion proof), timeline window assert, highlight assert, chart domain assert, console clean |
 
 Existing suite: full `npm test` + `facts:fresh` must pass. Known updates required:
 `ssl-preview-fallback` (7 -> 4 cards), frozen footer strings in ssl/battle/donna script
-tests (new truthful count), `role-registers.test.mjs` (rewritten to assert the
-experience/flow-copy contract instead of choreo beats for role missions; choreo
-integrity checks retained for defs that still carry choreo), `ssl-chart-absence` (its
-`.guide-cta` driver updated to the flow CTA selector). Any other test that fails must be
+tests (footer pinned absent), `role-registers.test.mjs` (experience/flow-copy contract and
+no retired choreo data), and `ssl-chart-absence` (inline evidence chart driver). Any other
+test that fails must be
 understood before it is edited; data/claim/deident/eager-size gates must pass unmodified
 (experience config for ssl/donna rides the lazy side modules).
 
@@ -298,11 +307,10 @@ before delivery.
    "Survey quadcopter", "SSL soccer fleet", "Donna, Jack & Rory").
 4. Wall answer-card voltages (236/179/21 V) are placeholder; production keeps the
    claim-tested script copy.
-5. "Choose how to debug" comparison durations ("~1 day", "Hours", "5 min") are adopted
-   as approved copy; per-role emphasis handled in flow-copy variants.
-6. Old guide.js three-beat flow is retired for the four active missions but left
-   functional for defs that still declare choreo and sit in GUIDED_MISSIONS (none after
-   the role-map change); fallbackOpener remains the legacy path.
+5. The deleted "Choose how to debug" comparison durations and per-role card copy are removed
+   from `flow-copy.js`; no dormant UI string keeps promising a separate proof screen.
+6. The old guide engine, guide CTAs and `def.choreo` beat copy are removed. Role opener modules
+   remain lazy and attach only the register and experience data the chat surface still uses.
 7. Step screens live in one new static container `#screen-flow` (renaming avoided:
    existing four containers keep their ids).
 8. `?robot=` continues to honor `alloy_brief_seen_<id>`; a seen brief goes straight to
@@ -323,11 +331,12 @@ before delivery.
   the Basler / MX-106 part numbers. The CAD manifest does carry those mesh names, so the
   specific copy is available if wanted later; the conservative copy is truthful and
   stands.
-- Flow provenance: context.provenance is rendered inside the four-step flow (robot and
-  failure steps) for defs that carry it, because experience missions bypass the legacy
-  brief that used to render it. Disclosure precedes the first synthetic failure claim.
-- Header acquisition CTAs are hidden in chat and followup modes, desktop-only in proof;
-  Show why is the sole action while pending (composer hidden), per wall screens 7-9.
+- Flow provenance: `context.provenance` is rendered on the three-step flow's robot stage for
+  defs that carry it, before the mission and failure claims. Donna also keeps it on the failure
+  step; SSL deliberately avoids repeating it below the failure evidence.
+- Header acquisition CTAs no longer move with a layout mode, because there is no layout mode:
+  both show on desktop for the whole session and the phone header stays one line. `Show why`
+  is gone with the modes; the evidence it pointed at is already inside the answer.
 - Failed lazy experience side modules clear the routing flag and fall back to the legacy
   brief instead of dead-ending the flow.
 

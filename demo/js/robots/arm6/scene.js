@@ -9,7 +9,7 @@
 //   'j2'   - the shoulder-lift joint housing + its anodized ring (the joint that saturated)
 //   'drv3' - the driver bay on the pedestal that runs J2 (the channel that overheats)
 //
-// Anatomy anchors (sceneApi.anchors(), used by the four-step flow to hang labels on the robot):
+// Anatomy anchors (sceneApi.anchors(), used by the three-step flow to hang labels on the robot):
 //   'j2'      - outer face of the shoulder joint housing
 //   'gripper' - the TCP between the jaws, the exact point /ee logs
 //   'drv3'    - top face of the driver bay

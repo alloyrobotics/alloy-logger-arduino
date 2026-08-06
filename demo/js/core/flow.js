@@ -1,17 +1,21 @@
-// flow.js - the four-step mission experience shared by the active mission definitions.
+// flow.js - the three-step mission experience shared by the active mission definitions.
+//
+// ROUND 3 removed the fourth step. `#/connect/:id/choose` asked "how do you want to debug it?" and
+// answered it with three comparison cards, one screen before a demo whose entire job is to answer
+// the same question by doing it. The failure step now hands straight to `#/demo/:id`, and app.js
+// redirects any surviving link to the old hash there too.
 
 import { track } from './analytics.js';
 import { getFlowCopy } from './flow-copy.js';
 import { webglAvailable } from './stage3d.js';
 
-const STEPS = Object.freeze(['robot', 'mission', 'failure', 'choose']);
+const STEPS = Object.freeze(['robot', 'mission', 'failure']);
 const CTA = Object.freeze({
   robot: 'Next: the mission',
   mission: 'Next: what failed',
-  failure: 'How long will this take?',
-  choose: 'Ask Alloy',
+  failure: 'Ask Alloy',
 });
-const NEXT = Object.freeze({ robot: 'mission', mission: 'failure', failure: 'choose' });
+const NEXT = Object.freeze({ robot: 'mission', mission: 'failure' });
 const DISPLAY_NAMES = Object.freeze({
   arm6: '6-axis pick and place',
   drone: 'Survey quadcopter',
@@ -28,8 +32,8 @@ const MISSION_HEADINGS = Object.freeze({
 const flowHandoffs = new Map();
 
 /**
- * Read and clear the copy chosen on step 4. The handoff stays in memory only, so a direct demo URL
- * keeps the definition's normal opener while a completed flow uses its role-specific question.
+ * Read and clear the copy chosen by the completed flow. The handoff stays in memory only, so a
+ * direct demo URL keeps the definition's normal opener while a completed flow uses its role-specific question.
  *
  * @param {string} missionId
  * @returns {{firstQuestion?:string,followUp?:string}|null}
@@ -60,11 +64,6 @@ function fallbackCopy(def) {
       `Watch ${DISPLAY_NAMES[def.id] || def.name} complete a healthy passage before the failure appears.`,
     failureIntro:
       context.fault || 'The replay and telemetry now isolate the mission finding against the healthy passage.',
-    debugCards: [
-      { title: 'Telemetry alone', desc: 'Scroll, align, replay, repeat.', time: '~1 day' },
-      { title: 'Code', desc: 'Write parsers and reconstruct the mission context.', time: 'Hours' },
-      { title: 'Alloy', desc: 'Ask once, then jump straight to the proof.', time: '5 min' },
-    ],
     firstQuestion: def.firstQuestion || 'What failed in this mission?',
     followUp: (def.suggested && def.suggested[0]) || 'Show me exactly where it failed.',
   };
@@ -129,7 +128,6 @@ export function createFlow(def, role, mounts, deps) {
   const intro = root.querySelector('#flow-intro');
   const anatomy = root.querySelector('#flow-anatomy');
   const context = root.querySelector('#flow-context');
-  const debug = root.querySelector('#flow-debug');
   const provenance = root.querySelector('#flow-provenance');
   const cta = root.querySelector('#flow-cta');
   const play = root.querySelector('#flow-play');
@@ -259,22 +257,6 @@ export function createFlow(def, role, mounts, deps) {
     root.classList.toggle('has-provenance', visible);
   }
 
-  function renderDebug(cards) {
-    debug.innerHTML = '';
-    (cards || []).slice(0, 3).forEach((item, index) => {
-      const card = document.createElement('article');
-      card.className = 'flow-debug-card' + (index === 2 ? ' is-choice' : '');
-      const h = document.createElement('h2');
-      const p = document.createElement('p');
-      const time = document.createElement('strong');
-      h.textContent = item.title;
-      p.textContent = item.desc;
-      time.textContent = item.time;
-      card.append(h, p, time);
-      debug.appendChild(card);
-    });
-  }
-
   function applyPlayback(nextStep, experience) {
     const v = ensureViewer(
       nextStep === 'robot' ? 'anatomy' : 'full',
@@ -321,7 +303,11 @@ export function createFlow(def, role, mounts, deps) {
       const window = success.window || [0, Math.min(def.duration, 6)];
       timeline.setLoop(window, { speed: 1 });
       timeline.seek(window[0]);
-      if (v && success.loopLabel) v.showContextBanner(success.loopLabel);
+      // NO context banner. `success.loopLabel` used to be painted over the top-left of the replay
+      // as a standing chip ("success loop"), which round 3 called out: the step's own heading and
+      // intro already say what the loop is, so the chip was a label on a label, sitting on the one
+      // part of the panel the robot is framed in. The experiences keep declaring the label - it is
+      // the step's authored name for the passage - and nothing renders it over the 3D any more.
       if (reducedMotion()) {
         timeline.pause();
         if (play) play.hidden = false;
@@ -376,16 +362,13 @@ export function createFlow(def, role, mounts, deps) {
         ? DISPLAY_NAMES[def.id] || def.name
         : nextStep === 'mission'
           ? MISSION_HEADINGS[def.id] || 'How the mission works'
-          : nextStep === 'failure'
-            ? 'Now find the failure'
-            : 'How do you want to debug it?';
+          : 'Now find the failure';
 
     if (!experience) {
       if (nextStep !== 'robot') throw new Error(`Flow experience for ${def.id} did not load.`);
       intro.hidden = true;
       renderAnatomy([]);
       renderContext([]);
-      renderDebug([]);
       cta.querySelector('span').textContent = CTA.robot;
       const v = ensureViewer('anatomy');
       setOrbit(v, false);
@@ -406,14 +389,10 @@ export function createFlow(def, role, mounts, deps) {
         ? experience.success && experience.success.contextualLabels
         : [],
     );
-    renderDebug(nextStep === 'choose' ? copy.debugCards : []);
     cta.querySelector('span').textContent = CTA[nextStep];
     applyPlayback(nextStep, experience);
 
-    if (!opts.refresh) {
-      track.flowStepShown(def.id, { role: roleId, step: nextStep });
-      if (nextStep === 'choose') track.debugChoiceShown(def.id, { role: roleId, step: nextStep });
-    }
+    if (!opts.refresh) track.flowStepShown(def.id, { role: roleId, step: nextStep });
   }
 
   function onCta() {
@@ -475,7 +454,6 @@ export function createFlow(def, role, mounts, deps) {
       chartMount.innerHTML = '';
       anatomy.innerHTML = '';
       context.innerHTML = '';
-      debug.innerHTML = '';
       if (provenance) {
         provenance.textContent = '';
         provenance.hidden = true;

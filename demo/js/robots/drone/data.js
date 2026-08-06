@@ -70,6 +70,9 @@ export const findings = [
     focus: { channel: '/pos', fields: ['alt'] },
     highlight: 'm3',
     slowmo: true,
+    note:
+      'alt is the height the controller is holding against the survey setpoint. It leaves the band ' +
+      'and climbs back on its own; motor 3 is the part lit in the replay below.',
   },
   {
     id: 'motor-wear',
@@ -85,6 +88,9 @@ export const findings = [
     focus: { channel: '/motors', fields: ['pwm1', 'pwm2', 'pwm4', 'pwm3'] },
     highlight: 'm3',
     slowmo: false,
+    note:
+      'All four throttles are plotted on one axis. Three sit flat while pwm3 walks up alone, which ' +
+      'is one drive spending more of its range for the same lift.',
   },
   {
     id: 'battery',
@@ -95,6 +101,10 @@ export const findings = [
     focus: { channel: '/bat', fields: ['v'] },
     highlight: null,
     slowmo: false,
+    note:
+      'v is the pack voltage across the whole flight. The sag steepens once one motor starts ' +
+      'drawing more than the other three, so the window plotted here is the mission rather than a ' +
+      'moment inside it.',
   },
 ];
 

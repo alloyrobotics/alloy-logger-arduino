@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { flowCopy, getFlowCopy } from '../../core/flow-copy.js';
+import { conciseOpenerAnswer } from '../../core/chat.js';
 import { ROLES, ROLE_IDS } from '../../core/role.js';
 import { ROBOTS_BY_ID } from '../index.js';
-import { applyGuided as applySslSideModule } from '../ssl/role-openers.js';
+import { applyRoleOpeners as applySslSideModule } from '../ssl/role-openers.js';
 import { applyExperience as applyDonnaExperience } from '../donna/experience.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -57,9 +58,12 @@ for (const mission of MISSIONS) {
     const authored = block && block[role];
     const resolved = getFlowCopy(mission, role);
     ok(!!authored, `${mission}/${role} is explicitly authored`);
-    ok(!!authored && nonEmpty(authored), `${mission}/${role} has no empty field or debug card value`);
+    ok(!!authored && nonEmpty(authored), `${mission}/${role} has no empty field`);
     ok(!!resolved && nonEmpty(resolved), `${mission}/${role} resolves to a complete copy object`);
-    ok(resolved && resolved.debugCards.length === 3, `${mission}/${role} resolves exactly three debug choices`);
+    ok(
+      resolved && !Object.prototype.hasOwnProperty.call(resolved, 'debugCards'),
+      `${mission}/${role} carries no retired choose-step cards`,
+    );
   }
 }
 ok(getFlowCopy('not-a-mission', 'engineer') === null, 'an unknown mission has no invented copy');
@@ -87,6 +91,29 @@ for (const mission of MISSIONS) {
     experienceStrings.length > 0 && experienceStrings.every(([, text]) => text.trim().length > 0),
     `${mission}'s experience copy and labels are non-empty`,
   );
+}
+
+section('SSL opener stays concise in every role');
+{
+  const opener = ssl.script.find((entry) => entry.id === 'kicker-charge');
+  const answers = [opener.answer, ...Object.values(opener.answerByRole || {})];
+  for (const [index, authored] of answers.entries()) {
+    const answer = conciseOpenerAnswer(authored);
+    ok(
+      !/nothing the fleet actually did in this window follows from it/i.test(answer),
+      `ssl opener register ${index + 1} omits the repeated provenance paragraph in chat`,
+    );
+    ok(/\{\{ev:kicker-charge\}\}/.test(answer), `ssl opener register ${index + 1} keeps inline evidence`);
+  }
+}
+
+section('drone opener replaces the outcome-only filler');
+{
+  const opener = ROBOTS_BY_ID.get('drone').script.find((entry) => entry.id === 'why-failed');
+  const answer = conciseOpenerAnswer(opener.answer, opener.chatCausal);
+  ok(!/92% of the survey/i.test(answer), 'drone chat opener drops the outcome-only filler');
+  ok(/rpm halved while pwm3 railed/i.test(answer), 'drone chat opener keeps one causal line');
+  ok(/\{\{ev:dip\}\}/.test(answer), 'drone chat opener keeps inline evidence');
 }
 
 section('copy safety');

@@ -1702,7 +1702,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     if (disposed) return;
     stepFollow();
     // Everything conditional below is dead for a viewer that was never handed an anatomy or a
-    // camera pose, which is every mission that is not in the four-step flow: `camTween` stays null,
+    // camera pose, which is every mission that is not in the three-step flow: `camTween` stays null,
     // `autoRotate` stays the false OrbitControls was constructed with, and the loop runs the three
     // lines it always ran. The clock is only read when one of them is live.
     if (controls.autoRotate) {
@@ -1727,6 +1727,39 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     // drawn with: the label lands on the pixels it belongs to rather than one frame behind them.
     if (anatomyTick) anatomyTick();
     raf = requestAnimationFrame(frame);
+  }
+
+  /**
+   * A still of the frame currently on screen, as a data URI.
+   *
+   * The inline evidence blocks share ONE context, so this viewer is physically moved from answer to
+   * answer and the block it leaves has to keep showing something truthful. A poster is what it
+   * keeps.
+   *
+   * The renderer is constructed with `preserveDrawingBuffer: false`, so the drawing buffer is only
+   * readable until the compositor takes it, which happens at the end of the task that painted it.
+   * Rendering here and reading in the SAME synchronous task is therefore the whole trick, and the
+   * reason this cannot be a `toDataURL` from outside: a caller reading the canvas one task later
+   * gets a transparent rectangle.
+   *
+   * Returns null on any failure (a lost context, a zero-sized canvas, a browser that taints the
+   * canvas), and the caller falls back to line art.
+   *
+   * @returns {string|null}
+   */
+  function capturePoster() {
+    if (disposed) return null;
+    try {
+      const el2 = renderer.domElement;
+      if (!el2 || !el2.width || !el2.height) return null;
+      if (renderer.getContext && renderer.getContext().isContextLost && renderer.getContext().isContextLost()) {
+        return null;
+      }
+      renderer.render(scene, camera);
+      return el2.toDataURL('image/jpeg', 0.72) || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   // Registered BEFORE frame() rather than after, so a throw inside the first frame - which runs
@@ -1756,6 +1789,9 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       return highlight;
     },
     resetView,
+    capturePoster,
+    /** Re-measure after the element has been moved into a differently sized host. */
+    remeasure: resize,
     flashMarker,
     showBanner,
     showContextBanner,

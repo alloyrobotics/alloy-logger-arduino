@@ -37,19 +37,17 @@ const T_HERO_MATCH_S = 60.44;
 const T_HERO_PREVIEW_S = 2.765;
 
 /**
- * The OPENER's role registers AND the guided flow's beat copy, merged onto the def when the match
- * payload lands. Both live behind a dynamic import because only the demo screen reads either one;
- * `role-openers.js` says why, and why `answer` does not go with them. The merge itself lives over
- * there too, so this side stays one call: a module that will not load leaves `answerByRole` and
- * `choreo` unset, every role reads the engineer answer in the full layout, and the rejection must
- * not reach the loading card.
+ * The opener's role registers and flow experience merge onto the def when the match payload lands.
+ * Both live behind a dynamic import because only the demo route reads them. A module that will not
+ * load leaves the engineer opener intact and the route falls back through the existing lazy-error
+ * path rather than exposing a partial experience.
  */
 let rolePromise = null;
 function loadRoleOpeners() {
   if (!rolePromise) {
     rolePromise = import('./role-openers.js').then(
       (mod) => {
-        if (mod && mod.applyGuided) mod.applyGuided(def);
+        if (mod && mod.applyRoleOpeners) mod.applyRoleOpeners(def);
       },
       (err) => {
         console.warn('[ssl] role openers unavailable; every role reads the engineer answer', err);

@@ -17,15 +17,15 @@
 //   7  the keeper the copy names IS the keeper `TeamInfo.goalkeeper` carries, so the prose and
 //      the data-derived HUD chip cannot drift apart across a re-export
 //   8  NON-CAUSALITY. No answer lets a synthesized fault explain something the real match did,
-//      the opener does not presuppose one, and every synthetic entry carries its honesty line
-//   9  the four-surface disclosure is really on all four surfaces, including the picker footer and
-//      the client-rendered provenance line above the composer
+//      and the opener's standing provenance plus inline note keep the trimmed answer honest
+//   9  disclosure survives on the card, robot stage, chat line, inline finding and facts pack
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRobotDefinition } from '../../../../worker/build-facts.mjs';
 import { matchEntry } from '../../core/matcher.js';
+import { conciseOpenerAnswer } from '../../core/chat.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -122,7 +122,15 @@ section('copy');
   ok(/synthes/i.test(def.context.provenance), 'the provenance line says the telemetry is synthesized');
   const synthetic = def.script.filter((e) => /kicker|radio|dribbler/.test(e.id));
   for (const e of synthetic) {
-    ok(/synthetic overlay/i.test(e.answer), `${e.id}: the answer discloses the synthetic overlay itself`);
+    if (e.id === 'kicker-charge') {
+      const chatAnswer = conciseOpenerAnswer(e.answer);
+      ok(
+        !/nothing the fleet actually did in this window follows from it/i.test(chatAnswer),
+        `${e.id}: the chat opener does not repeat the standing provenance disclosure`,
+      );
+    } else {
+      ok(/synthetic overlay/i.test(e.answer), `${e.id}: the standalone answer discloses the synthetic overlay itself`);
+    }
   }
 }
 
@@ -166,9 +174,16 @@ section('non-causality');
     'firstQuestion still lands on the synthesized channel it is about',
   );
 
-  // Every synthetic entry says so IN ITS OWN BODY, because the scripted answers bypass the facts
-  // pack entirely and a visitor may never see another surface.
+  // Standalone synthetic answers retain their own disclosure. The opener is the one exception: its
+  // standing chat provenance and inline finding note are already visible in the same response, so
+  // repeating the same disclosure as a second prose paragraph is the anti-pattern this round cuts.
   for (const e of synthetic) {
+    if (e.id === 'kicker-charge') {
+      ok(/synthetic overlay/i.test(def.chatProvenance), `${e.id}: standing chat provenance discloses the overlay`);
+      const finding = def.findings.find((f) => f.id === 'kicker-charge');
+      ok(/synthesized/i.test(finding?.note || ''), `${e.id}: inline evidence note discloses the modelled channel`);
+      continue;
+    }
     ok(/synthetic overlay on real match motion/i.test(e.answer), `${e.id}: carries the honesty line`);
     const tail = e.answer.slice(e.answer.search(/synthetic overlay on real match motion/i));
     ok(tail.length > 60, `${e.id}: the honesty line says what is real and what is not, not just a label`);
@@ -186,10 +201,9 @@ section('non-causality');
 
 // ---------------------------------------------------------------- 9. disclosure surfaces
 
-// The plan commits to the disclosure appearing on FOUR surfaces: picker copy, the brief's
-// context.provenance, the scripted first answer, and the facts-pack preamble. Three of them are
-// asserted here (the fourth is build-facts' own output); plus the standing line above the
-// composer, which is the only one that does not depend on a model or a click.
+// The disclosure appears before and inside the answer without repeating a prose paragraph: the
+// card tagline, robot-stage context.provenance, standing chat line and inline finding note. The
+// facts pack carries the same provenance for live answers.
 section('disclosure surfaces');
 {
   ok(
@@ -225,12 +239,18 @@ section('disclosure surfaces');
     ok(real.length === 1, `exactly one finding is the log's own data (got ${real.length})`);
   }
 
+  // ROUND 3 removed the mission-library footer (UX wall, "ML-footer"). The disclosure it carried
+  // is not lost, it is redistributed: the assertions above already pin the same claim on the card
+  // TAGLINE, on `context.provenance` and on `chatProvenance`, which are the three surfaces a
+  // visitor actually reads on the way into this mission. What is pinned here now is that the
+  // fourth one is gone and has not quietly come back with softer wording.
   const html = await readFile(path.join(HERE, '..', '..', '..', 'index.html'), 'utf8');
+  ok(!/class="pick-foot"/.test(html), 'the mission-library footer is gone from the picker');
   ok(
-    html.includes(
-      "Two synthetic missions, one real match replay with planted fault overlays, and one real match replayed from three robots' onboard logs. Runs entirely in your browser.",
-    ),
-    'the picker footer names the fault overlays as planted, verbatim',
+    /planted/i.test(def.tagline) &&
+      /synthesized training overlays/i.test(def.context.provenance) &&
+      /synthetic/i.test(def.chatProvenance),
+    'the overlay disclosure survives on the card tagline, the brief provenance and the chat line',
   );
   const chat = await readFile(path.join(HERE, '..', '..', 'core', 'chat.js'), 'utf8');
   ok(

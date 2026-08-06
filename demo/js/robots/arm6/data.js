@@ -332,6 +332,10 @@ export const findings = [
     focus: { channel: '/joints', fields: ['tau2', 'tau1', 'tau3'] },
     highlight: 'j2',
     slowmo: true,
+    note:
+      'tau2 is the torque the J2 drive reports holding, and tau1 and tau3 are its neighbours. ' +
+      'The J2 estimate collapses at the drop instant while the other two barely move: the shoulder ' +
+      'back-drives under the commanded path and the arm finishes the place move with empty jaws.',
   },
   {
     id: 'follow-err',
@@ -342,6 +346,9 @@ export const findings = [
     focus: { channel: '/ctl', fields: ['err2', 'err_max'] },
     highlight: 'j2',
     slowmo: false,
+    note:
+      'err2 is the gap between where J2 was commanded to be and where its encoder says it is, and ' +
+      'err_max is the worst gap the run has seen. Both open before the payload leaves the gripper.',
   },
   {
     id: 'overtemp',
@@ -352,6 +359,9 @@ export const findings = [
     focus: { channel: '/sys', fields: ['drv3_temp'] },
     highlight: 'drv3',
     slowmo: false,
+    note:
+      'drv3_temp is the drive stage\'s own heatsink estimate. It climbs across the whole run ' +
+      'rather than during any one move, which is why the window plotted here is the mission.',
   },
 ];
 
