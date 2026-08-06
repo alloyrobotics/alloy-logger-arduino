@@ -1150,6 +1150,10 @@ input { font: inherit; color: inherit; }
 .chat.is-streaming .chat-log { cursor: pointer; }
 .msg { display: flex; flex-direction: column; min-width: 0; max-width: 100%; animation: msgIn .26s cubic-bezier(.16,1,.3,1) both; }
 @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* Streamed lines are append-only. The short opacity lift marks each new line without moving any
+   content already in the answer. */
+.stream-in { animation: streamIn .18s ease-out both; }
+@keyframes streamIn { from { opacity: .22; } to { opacity: 1; } }
 .msg.user { align-items: flex-end; }
 .msg.user .bubble {
   background: var(--elev); border: 1px solid var(--line);
@@ -1299,12 +1303,30 @@ input { font: inherit; color: inherit; }
    way through. Desktop keeps both; the phone rules further down keep the header to one line. */
 
 .ev-embed {
+  position: relative;
   margin: 16px 0 4px;
   border: 1px solid var(--line-hi);
   border-radius: 14px;
   background: var(--canvas);
   overflow: hidden;
 }
+/* The token reserves the final block dimensions immediately. The whole-block skeleton is held long
+   enough to be witnessed, then text, chart and replay fill in stages; ready resources stay covered
+   until embeds.js opens their presentation gate. */
+.ev-embed.is-reserved > * { visibility: hidden; }
+.ev-embed.is-reserved::after,
+.ev-embed-chart.is-loading::after,
+.ev-embed-3d.is-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(105deg, #151515 16%, #202020 38%, rgba(255,255,255,.16) 50%, #202020 62%, #151515 84%);
+  background-size: 220% 100%;
+  animation: evLoad 1.25s ease-in-out infinite;
+}
+@keyframes evLoad { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 .ev-embed-head {
   display: flex; align-items: center; gap: 9px;
   padding: 10px 14px; border-bottom: 1px solid var(--line);
@@ -1319,7 +1341,7 @@ input { font: inherit; color: inherit; }
 /* The chart is the ANNOTATION layer: minimal chrome, direct labels, the finding window shaded, and
    the whole plot seekable. Its height is fixed rather than fluid because a transcript scrolls and
    a percentage of an unbounded log means nothing. */
-.ev-embed-chart { display: flex; height: 168px; border-bottom: 1px solid var(--line); }
+.ev-embed-chart { position: relative; display: flex; height: 168px; border-bottom: 1px solid var(--line); }
 .ev-embed-chart .chart { padding: 8px 10px 4px; }
 
 .ev-embed-note {
@@ -1570,6 +1592,14 @@ input { font: inherit; color: inherit; }
   /* stated outright rather than left to the blanket rule above: a pulse reduced to a 0.01 ms ring
      is still a flash, and this one exists purely to draw the eye */
   .ev-chip.pulse { animation: none !important; box-shadow: none !important; }
+  .stream-in { animation: none !important; opacity: 1; }
+  .ev-embed.is-reserved::after,
+  .ev-embed-chart.is-loading::after,
+  .ev-embed-3d.is-loading::after {
+    animation: none !important;
+    background: var(--elev);
+    opacity: .72;
+  }
 }
 </style>
 </head>

@@ -17,7 +17,7 @@
 // signup trigger machine waits for it before it will arm on anything: an ask that fires before the
 // demo has shown what a chip does is not an aha, it is a visitor still being taught.
 //
-import { renderMarkdown } from './markdown.js';
+import { renderInline, renderMarkdown } from './markdown.js';
 import { matchEntry as matchEntryIn } from './matcher.js';
 import { getRoleId } from './role.js';
 import { track } from './analytics.js';
@@ -170,13 +170,11 @@ export function createChat(mount, robotDef, hooks = {}) {
   const onAsk = hooks.onAsk || (() => {});
   const onSettled = hooks.onSettled || (() => {});
   /**
-   * ROUND 3: the host's chance to put the evidence INSIDE the answer.
+   * The host's chance to put evidence inside the answer.
    *
-   * Called once per settled evidence-bearing answer, with the findings it cited, after the final
-   * markdown render. Returning truthy means the host mounted an inline block and this panel drops
-   * the trailing chip row, because the chips existed to send the reader somewhere else and there
-   * is nowhere else any more. Returning falsy (no host handler, no WebGL host, a throw) leaves the
-   * chip row exactly as it was, which is what keeps the fallback path honest.
+   * Called as each complete evidence token enters the stream, then with the final citation list at
+   * settle. Returning truthy means the host filled that token's inline reservation. Returning falsy
+   * leaves the slot for the final chip fallback, which keeps the no-host path honest.
    */
   const onEvidenceBlock = hooks.onEvidenceBlock || (() => false);
   const findingById = new Map((robotDef.findings || []).map((f) => [f.id, f]));
@@ -225,6 +223,8 @@ export function createChat(mount, robotDef, hooks = {}) {
   /** AbortController for the in-flight answer, so a new question cancels the old one. */
   let inflight = null;
   let liveFailures = 0;
+  /** The newest claimed reservation while its staged fill is still in progress. */
+  let evidenceFollowTarget = null;
 
   // ---------- settled answers ----------
   // One question is one LOGICAL answer, whatever route it takes to the screen: a live stream, a
@@ -295,8 +295,22 @@ export function createChat(mount, robotDef, hooks = {}) {
 
   // `force` is for events the reader caused (their own question, a finished answer). Mid-stream
   // frames pass nothing, so scrolling up to re-read an earlier answer is not fought every frame.
-  function scrollDown(force) {
-    if (force || atBottom()) log.scrollTop = log.scrollHeight;
+  // A just-claimed evidence block is the streaming tail, but it is taller than the viewport: bottom
+  // alignment would skip its header and whole-block skeleton. While that block is staging, follow its
+  // leading edge instead. The caller still has to prove the reader was following before DOM growth,
+  // so this special case never pulls somebody back after they scroll away mid-stream.
+  function scrollDown(force, followEvidence = false) {
+    if (!force && !atBottom()) return;
+    if (followEvidence && evidenceFollowTarget && evidenceFollowTarget.isConnected) {
+      if (evidenceFollowTarget.classList.contains('is-staging')) {
+        const target = evidenceFollowTarget.getBoundingClientRect();
+        const view = log.getBoundingClientRect();
+        log.scrollTop += target.top - view.top - 8;
+        return;
+      }
+      evidenceFollowTarget = null;
+    }
+    log.scrollTop = log.scrollHeight;
   }
 
   function addUser(text) {
@@ -397,7 +411,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     p.textContent = t;
     row.appendChild(p);
     log.appendChild(row);
-    scrollDown(true);
+    scrollDown(true, true);
   }
 
   /** Add the coach line once the opener's inline evidence is ready. */
@@ -459,8 +473,60 @@ export function createChat(mount, robotDef, hooks = {}) {
     return entry === openerEntry ? conciseOpenerAnswer(answer, entry.chatCausal) : answer;
   }
 
+  /**
+   * Ask the host to claim complete evidence tokens as soon as their line enters the transcript.
+   * The host replaces only the token's own reserved slot. Everything already streamed around it
+   * stays mounted, so a chart can never arrive by replacing the answer that introduced it.
+   *
+   * @param {HTMLElement} row
+   * @param {ParentNode} [scope]
+   * @returns {boolean} whether at least one slot became an inline evidence block
+   */
+  function reserveEvidenceSlots(row, scope = row) {
+    let embedded = false;
+    const slots = [];
+    if (scope.matches && scope.matches('.ev-slot')) slots.push(scope);
+    if (scope.querySelectorAll) slots.push(...scope.querySelectorAll('.ev-slot'));
+    slots.forEach((slot) => {
+      if (slot.dataset.evClaimed === '1') return;
+      const f = findingById.get(slot.dataset.ev);
+      if (!f) return;
+      try {
+        if (onEvidenceBlock(row, [f], null)) {
+          embedded = true;
+          const claimed = Array.from(row.querySelectorAll('.ev-embed')).find(
+            (block) => block.dataset.ev === f.id,
+          );
+          if (claimed) evidenceFollowTarget = claimed;
+          // A successful host normally replaces the slot. The marker also protects hosts that
+          // choose to fill it in place.
+          if (slot.isConnected) slot.dataset.evClaimed = '1';
+        }
+      } catch (err) {
+        console.warn('[chat] inline evidence block failed', err);
+      }
+    });
+    return embedded;
+  }
+
   function hydrate(row, entry) {
-    // inline {{ev:id}} slots
+    const evRow = row.querySelector('.ev-row');
+    evRow.innerHTML = '';
+    const ids = (entry && entry.evidence) || [];
+
+    // Most tokens have already been claimed during streaming. This final pass covers an answer that
+    // was skipped, arrived in one network frame, or completed before the evidence host was ready.
+    const cited = ids.map((id) => findingById.get(id)).filter(Boolean);
+    let embedded = reserveEvidenceSlots(row);
+    if (cited.length) {
+      try {
+        embedded = !!onEvidenceBlock(row, cited, entry) || embedded;
+      } catch (err) {
+        console.warn('[chat] inline evidence block failed', err);
+      }
+    }
+
+    // Any slot the host could not claim remains a normal inline chip. Invalid model tokens vanish.
     const inlined = new Set();
     row.querySelectorAll('.ev-slot').forEach((slot) => {
       const f = findingById.get(slot.dataset.ev);
@@ -473,27 +539,8 @@ export function createChat(mount, robotDef, hooks = {}) {
       slot.replaceWith(chip);
       inlined.add(f.id);
     });
-    const evRow = row.querySelector('.ev-row');
-    evRow.innerHTML = '';
-    const ids = (entry && entry.evidence) || [];
 
-    // The evidence, inside the answer. The host mounts a chart, a causal line and the live 3D
-    // replay into this row; when it does, the trailing chip row is not rendered at all. A chip was
-    // a POINTER at evidence living somewhere else, and the block it points at is now four hundred
-    // pixels below the sentence that cited it.
-    const cited = ids.map((id) => findingById.get(id)).filter(Boolean);
-    let embedded = false;
-    if (cited.length) {
-      try {
-        embedded = !!onEvidenceBlock(row, cited, entry);
-      } catch (err) {
-        // The panel's own job is done either way. A host that cannot mount its block leaves the
-        // answer readable and falls back to the chip row below.
-        console.warn('[chat] inline evidence block failed', err);
-      }
-    }
-
-    // trailing chip row: only findings the answer did not already place inline
+    // Trailing chips remain the honest fallback when no inline block could be mounted.
     if (!embedded) {
       ids.forEach((id) => {
         if (inlined.has(id)) return;
@@ -508,6 +555,217 @@ export function createChat(mount, robotDef, hooks = {}) {
   /** Long answers get a proportionally faster typewriter so a 2 kB answer is not a 12 s wait. */
   function charsPerFrame(len) {
     return Math.max(CHARS_PER_FRAME, Math.ceil(len / 420));
+  }
+
+  /**
+   * Append-only markdown for a growing answer.
+   *
+   * Complete lines enter the DOM once and stay there. A one-line lookahead distinguishes a table
+   * header from a paragraph; after that, table rows are appended individually. Evidence tokens are
+   * handed to the host on the line where they occur, so the host can reserve and fill that exact
+   * place while later text continues below it. No stream tick rewrites an earlier node.
+   */
+  function createProgressiveRenderer(body, row) {
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    body.appendChild(caret);
+
+    let buffer = '';
+    let pendingLine = null;
+    let table = null;
+    let list = null;
+    let code = null;
+    let finished = false;
+
+    const isTableSep = (line) => /^\s*\|?[\s:-]*-[-\s:|]*\|?\s*$/.test(line) && line.includes('-');
+    const tableCells = (line) =>
+      line
+        .trim()
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.trim());
+
+    function markIn(node) {
+      if (node && node.nodeType === 1) node.classList.add('stream-in');
+      return node;
+    }
+
+    function insert(node) {
+      body.insertBefore(markIn(node), caret);
+      reserveEvidenceSlots(row, node);
+    }
+
+    function insertMarkup(markup) {
+      const template = document.createElement('template');
+      template.innerHTML = markup;
+      const nodes = Array.from(template.content.childNodes);
+      nodes.forEach(insert);
+    }
+
+    function closeList() {
+      list = null;
+    }
+
+    function appendTableRow(line) {
+      const tr = document.createElement('tr');
+      for (const value of tableCells(line)) {
+        const td = document.createElement('td');
+        td.innerHTML = renderInline(value);
+        tr.appendChild(td);
+      }
+      table.tbody.appendChild(markIn(tr));
+      reserveEvidenceSlots(row, tr);
+    }
+
+    function startTable(headerLine) {
+      closeList();
+      const wrap = document.createElement('div');
+      wrap.className = 'md-tablewrap';
+      const el = document.createElement('table');
+      el.className = 'md-table';
+      const thead = document.createElement('thead');
+      const tr = document.createElement('tr');
+      for (const value of tableCells(headerLine)) {
+        const th = document.createElement('th');
+        th.innerHTML = renderInline(value);
+        tr.appendChild(th);
+      }
+      thead.appendChild(tr);
+      const tbody = document.createElement('tbody');
+      el.append(thead, tbody);
+      wrap.appendChild(el);
+      insert(wrap);
+      table = { wrap, tbody };
+    }
+
+    function appendListItem(line, ordered) {
+      const type = ordered ? 'ol' : 'ul';
+      if (!list || list.type !== type) {
+        const el = document.createElement(type);
+        el.className = ordered ? 'md-ol' : 'md-ul';
+        insert(el);
+        list = { type, el };
+      }
+      const li = document.createElement('li');
+      li.innerHTML = renderInline(
+        line.replace(ordered ? /^\s*\d+\.\s+/ : /^\s*[-*]\s+/, ''),
+      );
+      list.el.appendChild(markIn(li));
+      reserveEvidenceSlots(row, li);
+    }
+
+    function commitLine(line) {
+      const standalone = line.trim().match(/^\{\{ev:([a-z0-9_-]+)\}\}$/i);
+      if (standalone) {
+        closeList();
+        const slot = document.createElement('span');
+        slot.className = 'ev-slot ev-slot-block';
+        slot.dataset.ev = standalone[1];
+        insert(slot);
+        return;
+      }
+      if (/^\s*[-*]\s+/.test(line)) {
+        appendListItem(line, false);
+        return;
+      }
+      if (/^\s*\d+\.\s+/.test(line)) {
+        appendListItem(line, true);
+        return;
+      }
+      closeList();
+      insertMarkup(renderMarkdown(line));
+    }
+
+    function flushPending() {
+      if (pendingLine == null) return;
+      commitLine(pendingLine);
+      pendingLine = null;
+    }
+
+    function startCode(line) {
+      closeList();
+      const lang = line.replace(/^\s*```/, '').trim();
+      const pre = document.createElement('pre');
+      pre.className = 'md-pre';
+      if (lang) pre.dataset.lang = lang;
+      const codeEl = document.createElement('code');
+      pre.appendChild(codeEl);
+      insert(pre);
+      code = { el: codeEl, first: true };
+    }
+
+    function acceptLine(line) {
+      if (code) {
+        if (/^\s*```/.test(line)) {
+          code = null;
+        } else {
+          if (!code.first) code.el.appendChild(document.createTextNode('\n'));
+          code.el.appendChild(document.createTextNode(line));
+          code.first = false;
+        }
+        return;
+      }
+
+      if (table) {
+        if (line.trim() && line.includes('|')) {
+          appendTableRow(line);
+          return;
+        }
+        table = null;
+        acceptLine(line);
+        return;
+      }
+
+      if (/^\s*```/.test(line)) {
+        flushPending();
+        startCode(line);
+        return;
+      }
+
+      if (pendingLine != null) {
+        if (pendingLine.includes('|') && isTableSep(line)) {
+          startTable(pendingLine);
+          pendingLine = null;
+          return;
+        }
+        flushPending();
+      }
+
+      if (!line.trim()) {
+        closeList();
+        return;
+      }
+      pendingLine = line;
+    }
+
+    return {
+      push(text) {
+        if (finished || !text) return;
+        buffer += text;
+        let cut;
+        while ((cut = buffer.indexOf('\n')) >= 0) {
+          acceptLine(buffer.slice(0, cut));
+          buffer = buffer.slice(cut + 1);
+        }
+        // Evidence tokens are authored as standalone lines. Once the closing braces arrive, their
+        // reservation is safe to mount even if the network has not delivered the following newline
+        // or the done frame yet.
+        if (/^\s*\{\{ev:[a-z0-9_-]+\}\}\s*$/i.test(buffer)) {
+          acceptLine(buffer.trim());
+          flushPending();
+          buffer = '';
+        }
+      },
+      finish() {
+        if (finished) return;
+        finished = true;
+        if (buffer.length) acceptLine(buffer);
+        buffer = '';
+        flushPending();
+        caret.remove();
+      },
+    };
   }
 
   /** A `copy` affordance on every code block. The Arduino snippet is the conversion answer. */
@@ -554,24 +812,36 @@ export function createChat(mount, robotDef, hooks = {}) {
     const body = row.querySelector('.bot-body');
     let src = '';
     let i = 0;
+    let revealed = 0;
     let closed = false;
     let entry = null;
     let skip = false; // reader clicked to skip the animation
+    const renderer = createProgressiveRenderer(body, row);
+    body.setAttribute('aria-busy', 'true');
     streaming = true;
     el.classList.add('is-streaming');
+
+    function revealTo(next) {
+      const end = Math.min(next, src.length);
+      if (end <= revealed) return;
+      renderer.push(src.slice(revealed, end));
+      revealed = end;
+    }
 
     // `fireEvidence` is false when the reader interrupted with a new question: the abandoned
     // answer must not seek/loop the timeline out from under the question they just asked.
     const done = (fireEvidence) => {
+      revealTo(src.length);
+      renderer.finish();
+      body.removeAttribute('aria-busy');
       streaming = false;
       el.classList.remove('is-streaming');
       finishNow = null;
       if (streamRaf) cancelAnimationFrame(streamRaf);
       streamRaf = 0;
-      body.innerHTML = renderMarkdown(src);
       hydrate(row, entry);
       addCopyButtons(row);
-      scrollDown(true);
+      scrollDown(true, true);
       // fireEvidence === false is a SUPERSEDED answer, abandoned mid-flight because the reader
       // asked something else. It never settles: the answer they are waiting for is the next one.
       if (fireEvidence === false) return;
@@ -589,6 +859,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     finishNow = (fireEvidence) => {
       skip = true;
       i = src.length;
+      revealTo(i);
       if (closed) done(fireEvidence !== false);
       else if (fireEvidence === false) {
         closed = true;
@@ -607,19 +878,14 @@ export function createChat(mount, robotDef, hooks = {}) {
         streamRaf = requestAnimationFrame(step);
         return;
       }
-      i = skip ? src.length : i + charsPerFrame(src.length);
+      i = skip ? src.length : Math.min(src.length, i + charsPerFrame(src.length));
+      const stick = atBottom();
+      revealTo(i);
+      scrollDown(stick, true);
       if (i >= src.length && closed) {
         done(true);
         return;
       }
-      // render a partial that never leaves a half-written token visible
-      let partial = src.slice(0, i);
-      partial = partial.replace(/\{\{ev:[a-z0-9_-]*$/i, '');
-      const fences = (partial.match(/```/g) || []).length;
-      if (fences % 2 === 1) partial += '\n```';
-      const stick = atBottom();
-      body.innerHTML = renderMarkdown(partial) + '<span class="caret"></span>';
-      scrollDown(stick);
       streamRaf = requestAnimationFrame(step);
     };
     streamRaf = requestAnimationFrame(step);

@@ -200,7 +200,15 @@ export default {
                                     // Donna uses info for the added-time-finish finding
       focus:{ channel:'/balance', fields:['pitch','output'] },
       highlight:'body',            // part id passed to scene.setHighlight
-      slowmo:true,                 // play the window at 0.4x
+      loop:[51.2,52.7],            // OPTIONAL, ROUND 5. The tight 3D REPLAY span: ~0.5 s of healthy
+                                    // motion, the failure, ~0.5 s of the settled fail state. `window`
+                                    // still decides what the chart plots and shades, so the trace
+                                    // keeps its context while the replay only plays the moment.
+                                    // Absent = the replay loops `window`, as it always did. Keep the
+                                    // lap (span / speed) under 4 s of wall clock, and keep the loop
+                                    // inside the chart's padded domain (`window` +/- 15% of its span)
+                                    // or the playhead parks off the plot edge.
+      slowmo:true,                 // play the LOOP (or the window, if there is no loop) at 0.4x
       healthState:'DEGRADED',      // OPTIONAL. A computed classification, never a wire field;
       healthStateNote:'...' }      // emitted in the facts pack, with its note, when present
   ],
@@ -378,8 +386,9 @@ chip row, which is what makes the fallback path honest.
 **`onEvidence(finding)` in app.js is still the money interaction, and it is still the same
 sequence - it just happens INSIDE the message that cited the finding rather than in panels beside
 it.** `embeds.play(finding)` scrolls the block to the reader, hands it the shared context, flashes
-its marker, loops `finding.window` (`speed: finding.slowmo ? 0.4 : 1`) on the ONE mission timeline,
-aims its chart at `finding.focus`, and pulses `finding.highlight` in the replay. Seeking any block's
+its marker, loops `finding.loop || finding.window` (`speed: finding.slowmo ? 0.4 : 1`) on the ONE
+mission timeline, aims its chart at `finding.focus` over `finding.window`, and pulses
+`finding.highlight` in the replay. Seeking any block's
 chart moves the mission clock, which moves the live replay: a block is a window onto one mission,
 not a private copy of it.
 
@@ -466,7 +475,8 @@ drops 1→0 mid-transfer, /ee z of payload... payload not logged — the tell is
 while grip=0 early). Recovery: arm re-homes, next cycles fine at nominal payload. Slow-burn:
 drv3_temp creeping 38→71 °C. Root cause: payload × reach exceeds J2's torque envelope; tau2
 saturation + err2 spike prove it.
-Findings: `drop` (alert, [52,60], slowmo, highlight `j2`), `overtemp` (warn, [0,80], focus
+Findings: `drop` (alert, chart window [52,60], replay loop [55.8,57.3], slowmo, highlight `j2`),
+`overtemp` (warn, [0,80], focus
 drv3_temp), plus root-cause entry. firstQuestion: "Why did the arm drop the payload?"
 Scene: pedestal + 6 articulated links + parallel gripper, cube payload that attaches on grip,
 detaches and falls with gravity at 56.3 s; two pads on the ground; highlight J2 joint capsule.
@@ -481,7 +491,8 @@ masks it with pwm3 climbing to 100% by t≈58 s; at **t=61.2 s** compensation ru
 altitude dip + 18° yaw excursion + roll wobble; failsafe descends and lands at t≈70→78 s
 (controlled, not a crash). Slow-burn: bat v sag steepens under the extra load (16.8→13.9 V,
 inflection visible at 40 s). Root cause: rpm3/pwm3 divergence vs motors 1/2/4.
-Findings: `dip` (alert, [58,66], slowmo, highlight `m3`), `motor-wear` (warn, [38,62], focus
+Findings: `dip` (alert, chart window [58,66], replay loop [60.7,62.9] at 1x, highlight `m3`),
+`motor-wear` (warn, [38,62], focus
 rpm3+pwm3), `battery` (warn, focus /bat). firstQuestion: "What went wrong on the survey flight?"
 Scene: X-quad (arms, spinning prop discs with blur-disc material, canopy) flying the actual /pos
 path above a gridded ground with the survey lanes faintly drawn; wobble + dip from data; lands at
@@ -649,7 +660,9 @@ was up at a given instant: no surface says "throughout".
 Every field carries two-dimensional provenance
 `{origin: REAL_TRACKER|REAL_GAME_CONTROLLER|REAL_VISION|SYNTHETIC, transform: WIRE|
 FIRMWARE_FLAG_DECODE|DERIVED_<X>|NONE}`, and both dimensions are emitted into the facts pack.
-Findings: `kicker-charge` (alert), `radio-degraded` (warn), `dribbler-overheat` (warn),
+Findings: `kicker-charge` (alert, chart window 46.34-62.74 s so the sawtooth is visibly short of its
+240 V set point, replay loop 53.48-54.63 s on the real attributed kick, slowmo),
+`radio-degraded` (warn), `dribbler-overheat` (warn),
 `vision-confidence` (info, REAL). firstQuestion: "What is wrong with bot 8's kicker?"
 
 Scene: the field from the geometry packet, robots as 180 x 147 mm cylinders with the flat dribbler

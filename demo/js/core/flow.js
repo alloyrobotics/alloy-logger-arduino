@@ -324,8 +324,27 @@ export function createFlow(def, role, mounts, deps) {
       setCamera(v, failure.camera);
       if (v) v.setHighlight(finding.highlight || null);
       const window = finding.window || [0, def.duration];
-      timeline.setLoop(window, { speed: finding.slowmo ? 0.4 : 1 });
-      timeline.seek(window[0]);
+      // ROUND 5 SPLIT THE REPLAY LOOP OFF THE CHART WINDOW.
+      //
+      // Both used to be `finding.window`, and that window is written for the CHART: it has to hold
+      // enough of the trace either side of the event that the step in it means something (ssl's
+      // kicker sawtooth needs 16 s before the reader can see it never reaches 240 V). Looping the
+      // same span put 8 to 20 wall-clock seconds of mostly-nothing between one sight of the failure
+      // and the next - at 0.4x, ssl's window ran 41 s a lap - and the note on the round was that
+      // every mission's replay was "way too long".
+      //
+      // So a finding may now declare `loop`: the tight replay span, roughly half a second of
+      // healthy motion, the failure, half a second of the settled fail state. `window` still
+      // decides what the chart plots and shades, so the trace keeps its context while the 3D
+      // replays only the moment. A finding with no `loop` loops its window exactly as before.
+      //
+      // The loop is allowed to open slightly BEFORE the chart window (donna's fall onset IS the
+      // window's left edge, and the healthy half-second sits behind it). That is safe up to the
+      // 15% pad `chart.applyFocusWindow` puts around the shaded region: inside the padded domain
+      // the playhead is still drawn, so it sweeps rather than parking off the edge.
+      const loop = finding.loop || window;
+      timeline.setLoop(loop, { speed: finding.slowmo ? 0.4 : 1 });
+      timeline.seek(loop[0]);
       if (reducedMotion()) timeline.pause();
       else timeline.play();
       const c = ensureChart();

@@ -9,7 +9,8 @@
 // static `hasExperience: true` flag on the def is what routing reads before the payload lands.
 //
 // Nothing here restates a number the ledger owns. The hero instant comes off `claims.mjs`, the
-// failure window, camera, highlight and slow motion come off the finding in `data.js`, and the four
+// failure chart window, the tight replay loop, camera, highlight and slow motion come off the
+// finding in `data.js` (whose loop edges are themselves ledger values +/- half a second), and the four
 // anchors are resolved by `scene.js`'s `anchors()` against the posed rig. What IS authored here is
 // the success window and the four anatomy parts, and both are held to the same rule as every other
 // visitor-facing surface in this mission: only what the recordings support.
@@ -354,8 +355,9 @@ export const EXPERIENCE = {
     ],
   },
   failure: {
-    // Jack's third fall and the recovery he speaks through. The window, the instant, the lit robot
-    // and the slow-motion flag all live on the finding in data.js and are not restated here.
+    // Jack's third fall and the recovery he speaks through. The chart window, the tight replay loop,
+    // the instant, the lit robot and the slow-motion flag all live on the finding in data.js and are
+    // not restated here.
     findingId: 'jack-falls-foul-line',
     camera: null,
     plottedFields: { channel: '/imu', fields: ['accelMagMps2', 'pitchDeg', 'rollDeg'] },

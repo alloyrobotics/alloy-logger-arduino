@@ -65,11 +65,21 @@ export const findings = [
     id: 'dip',
     title: 'Altitude dip at 61.2 s',
     window: [58.0, 66.0],
+    // The 3D replay loop, tight around the break: 0.5 s of the airframe holding 6 m on the last
+    // survey lane, the bearing binding at 61.2 s (T_FAIL below; findings is evaluated before it, so
+    // this window is written out in full exactly as `t` is), the 2.10 m drop and the yaw kick that
+    // comes with it, then 0.6 s of the failsafe holding the altitude it has accepted. The trough
+    // is at 62.30 s and the loss is back to 1.82 m of the 2.10 by 62.9 s, so the lap ends on the
+    // settled fail state rather than mid-recovery. 2.2 s of data.
+    loop: [60.7, 62.9],
     t: 61.2,
     severity: 'alert',
     focus: { channel: '/pos', fields: ['alt'] },
     highlight: 'm3',
-    slowmo: true,
+    // NOT slow motion any more. The break itself takes 1.1 s and is 2.1 m of altitude plus a yaw
+    // runaway: it reads at 1x, and 0.4x on a window this tight is 5.5 s a lap, which is the length
+    // this round was called out for.
+    slowmo: false,
     note:
       'alt is the height the controller is holding against the survey setpoint. It leaves the band ' +
       'and climbs back on its own; motor 3 is the part lit in the replay below.',

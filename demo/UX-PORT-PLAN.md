@@ -211,15 +211,18 @@ shading, or failure-window chart treatment.
 
 ## 7. Failure findings (existing IDs, real windows)
 
-| Mission | findingId | Window | Plotted fields (direct-labeled) |
-| --- | --- | --- | --- |
-| arm6 | drop | [52, 60] | /joints tau2, tau1, tau3 |
-| drone | dip | [58, 66] | /pos alt |
-| ssl | kicker-charge | [46.3376, 62.74] | /bot8/kicker kickerLevel, kickerMax |
-| donna | jack-falls-foul-line | [145.878, 150.147] | /imu accelMagMps2, pitchDeg, rollDeg |
+| Mission | findingId | Chart window | Replay loop (round 5) | Lap | Plotted fields (direct-labeled) |
+| --- | --- | --- | --- | --- | --- |
+| arm6 | drop | [52, 60] | [55.8, 57.3] @ 0.4x | 3.8 s | /joints tau2, tau1, tau3 |
+| drone | dip | [58, 66] | [60.7, 62.9] @ 1x | 2.2 s | /pos alt |
+| ssl | kicker-charge | [46.3376, 62.74] | [53.477, 54.627] @ 0.4x | 2.9 s | /bot8/kicker kickerLevel, kickerMax |
+| donna | jack-falls-foul-line | [145.878, 150.147] | [145.378, 147.398] @ 1x | 2.0 s | /imu accelMagMps2, pitchDeg, rollDeg |
 
 Failure step: synchronized replay (finding camera/highlight) + chart focused on the
-finding window. Removed on this screen: timestamp readouts and the generic
+finding window. ROUND 5 split the two columns above: the replay loops `finding.loop`
+(~0.5 s healthy, the failure, ~0.5 s of the settled fail state, capped at a 4 s wall-clock
+lap) while the chart keeps plotting and shading the wider `finding.window` so the trace
+still has its context. Missions with no `loop` loop their window, unchanged. Removed on this screen: timestamp readouts and the generic
 reading/channel summary cards. Every plotted line gets a direct end-of-line pill label
 with a short leader tick (chart.js addition), matching the wall.
 

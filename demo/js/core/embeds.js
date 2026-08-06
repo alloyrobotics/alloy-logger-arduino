@@ -44,6 +44,15 @@ import { webglAvailable } from './stage3d.js';
 /** How far a block's centre may sit from the reader's centre and still be worth activating. */
 const ACTIVATE_SLACK = 1.35; // in viewport heights
 
+/**
+ * A claimed reservation must be witnessed before ready resources are allowed through its skeleton.
+ * The chart and shared viewer may warm underneath it immediately; these gates control presentation,
+ * not allocation, so even the instant scripted opener progresses without adding much real latency.
+ */
+const REVEAL_TEXT_MS = 650;
+const REVEAL_CHART_MS = 1050;
+const REVEAL_REPLAY_MS = 1450;
+
 /** Blocks per answer. Two is the most any authored or streamed answer cites in practice. */
 export const MAX_BLOCKS_PER_ANSWER = 2;
 
@@ -195,6 +204,8 @@ export function createEvidenceEmbeds(o) {
 
   /** @type {Array<object>} every block on screen, in transcript order. */
   const blocks = [];
+  /** Per-answer ownership keeps progressive one-token attaches inside MAX_BLOCKS_PER_ANSWER. */
+  const answerBlocks = new WeakMap();
   let active = null;
   let viewer = null;
   let viewerDead = false; // no WebGL at all, or a context we could not get back
@@ -287,18 +298,19 @@ export function createEvidenceEmbeds(o) {
    */
   function build(finding) {
     const el = document.createElement('figure');
-    el.className = 'ev-embed';
+    el.className = 'ev-embed is-reserved is-staging';
     el.dataset.ev = finding.id;
     el.dataset.sev = finding.severity || 'warn';
+    el.setAttribute('aria-busy', 'true');
     el.innerHTML = `
       <figcaption class="ev-embed-head">
         <span class="ev-embed-dot"></span>
         <span class="ev-embed-title"></span>
         <span class="ev-embed-win mono"></span>
       </figcaption>
-      <div class="ev-embed-chart"></div>
+      <div class="ev-embed-chart is-loading"></div>
       <p class="ev-embed-note"></p>
-      <div class="ev-embed-3d">
+      <div class="ev-embed-3d is-loading">
         <div class="ev-embed-stage"></div>
         <img class="ev-embed-poster" alt="" hidden />
         <div class="ev-embed-art" aria-hidden="true">
@@ -323,7 +335,14 @@ export function createEvidenceEmbeds(o) {
       play: el.querySelector('.ev-embed-play'),
       chart: null,
       chartDead: false,
+      chartReady: false,
+      chartGateOpen: false,
+      stageReady: false,
+      stageGateOpen: false,
+      revealStartedAt: 0,
+      revealTimers: [],
       posterSrc: null,
+      row: null,
     };
 
     // The tap target has two jobs and they are the same gesture: take the context from whichever
@@ -334,6 +353,79 @@ export function createEvidenceEmbeds(o) {
     });
 
     return block;
+  }
+
+  /** Clear aria-busy only after every reserved section has resolved to real content or fallback. */
+  function updateBusy(block) {
+    if (!block || block.el.classList.contains('is-reserved')) return;
+    const waiting = block.chartMount.classList.contains('is-loading') || block.stage.classList.contains('is-loading');
+    if (waiting) block.el.setAttribute('aria-busy', 'true');
+    else block.el.removeAttribute('aria-busy');
+  }
+
+  /** Let a ready chart through only after its presentation gate has opened. */
+  function revealChart(block) {
+    if (!block || !block.chartGateOpen || !block.chartReady) return;
+    block.chartMount.classList.remove('is-loading');
+    block.chartMount.classList.add(block.chartDead ? 'is-unavailable' : 'is-ready');
+    updateBusy(block);
+  }
+
+  /** Let a ready replay or fallback through only after its presentation gate has opened. */
+  function revealReplay(block) {
+    if (!block || !block.stageGateOpen || !block.stageReady) return;
+    block.stage.classList.remove('is-loading');
+    block.stage.classList.add('is-ready');
+    block.el.classList.remove('is-staging');
+    updateBusy(block);
+  }
+
+  /** True only when the reservation itself, not its IntersectionObserver preload margin, is visible. */
+  function reservationVisible(block) {
+    if (!block || !block.el.isConnected) return false;
+    const r = block.el.getBoundingClientRect();
+    const view = scroller && scroller.getBoundingClientRect
+      ? scroller.getBoundingClientRect()
+      : { top: 0, bottom: window.innerHeight };
+    return r.height > 0 && r.bottom > view.top && r.top < view.bottom;
+  }
+
+  /**
+   * Start the witnessed loading progression on first actual viewport entry. Resources may already be
+   * ready underneath, but the whole skeleton holds for 650 ms, then text, chart and replay land in
+   * distinct beats. Reduced motion uses the same dwell with a static fill supplied by the stylesheet.
+   */
+  function armReveal(block) {
+    if (disposed || !block || block.revealStartedAt || !reservationVisible(block)) return;
+    block.revealStartedAt = performance.now ? performance.now() : Date.now();
+    ensureChart(block);
+
+    const after = (delay, fn) => {
+      const timer = window.setTimeout(() => {
+        const at = block.revealTimers.indexOf(timer);
+        if (at >= 0) block.revealTimers.splice(at, 1);
+        if (disposed || !block.el.isConnected) return;
+        fn();
+      }, delay);
+      block.revealTimers.push(timer);
+    };
+
+    after(REVEAL_TEXT_MS, () => {
+      block.el.classList.remove('is-reserved');
+      updateBusy(block);
+    });
+    after(REVEAL_CHART_MS, () => {
+      block.chartGateOpen = true;
+      revealChart(block);
+    });
+    after(REVEAL_REPLAY_MS, () => {
+      block.stageGateOpen = true;
+      revealReplay(block);
+    });
+  }
+
+  function armVisibleReveals() {
+    for (const block of blocks) armReveal(block);
   }
 
   /**
@@ -355,13 +447,13 @@ export function createEvidenceEmbeds(o) {
     try {
       return buildChart(block);
     } catch (err) {
-      // A chart that will not build must not take the block down with it. The causal line and the
-      // replay are the other two thirds of the evidence and both still stand; the plot frame is
-      // dropped out of the layout rather than left as an empty box claiming to be a chart.
+      // A chart that will not build must not take the block down with it. Keep the reserved plot
+      // height so failure cannot pull the causal line and replay upward after they entered the flow.
       console.warn(`[embeds] ${def.id}: inline chart for ${block.finding.id} failed`, err);
       block.chartDead = true;
-      block.chartMount.remove();
+      block.chartReady = true;
       block.chart = null;
+      revealChart(block);
       return null;
     }
   }
@@ -381,6 +473,8 @@ export function createEvidenceEmbeds(o) {
     });
     chart.redraw();
     block.chart = chart;
+    block.chartReady = true;
+    revealChart(block);
     return chart;
   }
 
@@ -398,6 +492,8 @@ export function createEvidenceEmbeds(o) {
     block.poster.hidden = !block.posterSrc;
     block.art.hidden = !!block.posterSrc;
     block.play.hidden = !webglAvailable();
+    block.stageReady = true;
+    revealReplay(block);
   }
 
   /**
@@ -446,6 +542,8 @@ export function createEvidenceEmbeds(o) {
     block.art.hidden = true;
     block.play.hidden = true;
     block.el.classList.add('is-live');
+    block.stageReady = true;
+    revealReplay(block);
     v.remeasure();
 
     const finding = block.finding;
@@ -458,8 +556,13 @@ export function createEvidenceEmbeds(o) {
       timeline.setLoop(null, { speed: 1 });
       timeline.seek(Math.max(0, (finding.t != null ? finding.t : w[0]) - 8));
     } else {
-      timeline.setLoop(w, { speed: finding.slowmo ? 0.4 : 1 });
-      timeline.seek(w[0]);
+      // ROUND 5: the tight replay loop, when the finding declares one. `w` still decides what this
+      // block's chart plots and shades (see buildChart), so the trace keeps its context while the 3D
+      // replays only the failure moment: ~0.5 s of healthy motion, the failure, ~0.5 s of the settled
+      // fail state. No `loop` on the finding = the window loops, exactly as before.
+      const lw = finding.loop || w;
+      timeline.setLoop(lw, { speed: finding.slowmo ? 0.4 : 1 });
+      timeline.seek(lw[0]);
     }
     timeline.play();
     ensureChart(block);
@@ -481,6 +584,7 @@ export function createEvidenceEmbeds(o) {
   function pick() {
     pending = 0;
     if (disposed || !blocks.length) return;
+    armVisibleReveals();
     const view = scroller && scroller.getBoundingClientRect
       ? scroller.getBoundingClientRect()
       : { top: 0, bottom: window.innerHeight, height: window.innerHeight };
@@ -556,20 +660,42 @@ export function createEvidenceEmbeds(o) {
 
   return {
     /**
-     * Put this answer's evidence inside this answer.
+     * Fill this answer's evidence tokens in place.
      *
-     * @param {HTMLElement} row the `.msg.bot` row whose typewriter has finished
-     * @param {Array<object>} findings the findings the answer cited, in citation order
-     * @returns {Array<object>} the blocks created
+     * Calls may arrive one token at a time while the answer is still growing, then once more with
+     * the final citation list. Existing blocks are returned on that final pass, and the per-answer
+     * cap applies across all calls.
+     *
+     * @param {HTMLElement} row the `.msg.bot` row currently streaming or settled
+     * @param {Array<object>} findings the findings cited so far, in citation order
+     * @returns {Array<object>} blocks created earlier or in this call
      */
     attach(row, findings) {
       if (disposed || !row) return [];
       const made = [];
-      const wanted = (findings || []).filter(Boolean).slice(0, MAX_BLOCKS_PER_ANSWER);
-      for (const finding of wanted) {
+      let owned = answerBlocks.get(row);
+      if (!owned) {
+        owned = [];
+        answerBlocks.set(row, owned);
+      }
+
+      for (const finding of (findings || []).filter(Boolean)) {
+        const existing = owned.find((block) => block.finding.id === finding.id);
+        if (existing) {
+          if (!made.includes(existing)) made.push(existing);
+          continue;
+        }
+        if (owned.length >= MAX_BLOCKS_PER_ANSWER) break;
+        const slot = Array.from(row.querySelectorAll('.ev-slot')).find(
+          (candidate) => candidate.dataset.ev === finding.id && candidate.dataset.evClaimed !== '1',
+        );
+        if (!slot) continue;
+
         const block = build(finding);
-        row.appendChild(block.el);
+        block.row = row;
+        slot.replaceWith(block.el);
         blocks.push(block);
+        owned.push(block);
         made.push(block);
         if (io) io.observe(block.el);
         else ensureChart(block);
@@ -593,7 +719,7 @@ export function createEvidenceEmbeds(o) {
       if (!target) return false;
       try {
         target.el.scrollIntoView({
-          block: 'center',
+          block: opts.source === 'auto' && target.el.classList.contains('is-staging') ? 'start' : 'center',
           behavior: opts.source === 'auto' ? 'auto' : 'smooth',
         });
       } catch (_) {
@@ -639,6 +765,8 @@ export function createEvidenceEmbeds(o) {
       // Parking the element first keeps the canvas in the document while its controls unwind.
       if (viewer && viewer.el) park.appendChild(viewer.el);
       for (const b of blocks) {
+        for (const timer of b.revealTimers) window.clearTimeout(timer);
+        b.revealTimers.length = 0;
         if (b.chart) b.chart.dispose();
         b.chart = null;
         b.el.remove();

@@ -18,12 +18,56 @@ if (!pw) H.skip('playwright not resolvable on this machine');
 
 const MISSIONS = ['arm6', 'drone', 'ssl', 'donna'];
 const ROLES = ['hobbyist', 'engineer', 'lead', 'marketing'];
+/**
+ * ROUND 5 SPLIT THESE IN TWO, and the split is the assertion.
+ *
+ * `window` is what the CHART plots and shades: unchanged, because the trace needs its context (ssl's
+ * sawtooth is only visibly short of 240 V across the whole live stretch). `loop` is what the 3D
+ * REPLAY plays on a lap: roughly half a second of healthy motion, the failure, half a second of the
+ * settled fail state, which is the retime Hugh asked for after the round-4 walkthrough - every
+ * mission was looping its chart window, so ssl ran 41 wall-clock seconds a lap and arm6 ran 20.
+ *
+ * `wall` is the lap in seconds a visitor actually waits: the loop's span over the finding's speed
+ * (0.4 where it declares `slowmo`). It is asserted with the loop, because the whole point of the
+ * round is a duration a person sits through and a window alone does not say what that is.
+ */
 const EXPECTED_FAILURE = {
-  arm6: { id: 'drop', window: [52, 60], channel: '/joints', fields: ['tau2', 'tau1', 'tau3'] },
-  drone: { id: 'dip', window: [58, 66], channel: '/pos', fields: ['alt'] },
-  ssl: { id: 'kicker-charge', window: [46.3376, 62.74], channel: '/bot8/kicker', fields: ['kickerLevel', 'kickerMax'] },
-  donna: { id: 'jack-falls-foul-line', window: [145.878, 150.147], channel: '/imu', fields: ['accelMagMps2', 'pitchDeg', 'rollDeg'] },
+  arm6: {
+    id: 'drop',
+    window: [52, 60],
+    loop: [55.8, 57.3],
+    wall: 3.75,
+    channel: '/joints',
+    fields: ['tau2', 'tau1', 'tau3'],
+  },
+  drone: {
+    id: 'dip',
+    window: [58, 66],
+    loop: [60.7, 62.9],
+    wall: 2.2,
+    channel: '/pos',
+    fields: ['alt'],
+  },
+  ssl: {
+    id: 'kicker-charge',
+    window: [46.3376, 62.74],
+    loop: [53.477, 54.627],
+    wall: 2.875,
+    channel: '/bot8/kicker',
+    fields: ['kickerLevel', 'kickerMax'],
+  },
+  donna: {
+    id: 'jack-falls-foul-line',
+    window: [145.878, 150.147],
+    loop: [145.378, 147.398],
+    wall: 2.02,
+    channel: '/imu',
+    fields: ['accelMagMps2', 'pitchDeg', 'rollDeg'],
+  },
 };
+
+/** The wall-clock lap every public mission's failure replay has to stay inside. */
+const LAP_MAX_S = 4.0;
 const GEN_ID = 'g-aaaaaaaaaaaaaaaaaaaa';
 const GEN_DEF = await readFile(path.join(ROOT, 'demo', 'js', 'robots', 'gen-fixture', 'def.json'), 'utf8');
 
@@ -184,6 +228,15 @@ async function assertFailureStep(page, mission, expectedCopy, mobileLabel = '') 
     return {
       intro: (document.getElementById('flow-intro').textContent || '').trim(),
       loop: window.__flow.timeline.loopWindow,
+      speed: window.__flow.timeline.speed,
+      // Resolved the same way flow.js resolves it: the named finding, else the alert one.
+      findingWindow: (() => {
+        const def = window.__flow.def;
+        const id = def.experience && def.experience.failure && def.experience.failure.findingId;
+        const list = def.findings || [];
+        const f = list.find((x) => x.id === id) || list.find((x) => x.severity === 'alert') || {};
+        return f.window;
+      })(),
       channel: chart && chart.channel,
       fields: chart && chart.fields,
       minimal: !!document.querySelector('#flow-chart-mount .chart.chart-minimal'),
@@ -197,7 +250,16 @@ async function assertFailureStep(page, mission, expectedCopy, mobileLabel = '') 
     };
   });
   H.ok(state.intro === expectedCopy.failureIntro, `${mission} failure intro matches the selected role variant`);
-  H.ok(closeEnough(state.loop, expected.window), `${mission} failure loop is ${expected.window.join('..')} (${JSON.stringify(state.loop)})`);
+  H.ok(closeEnough(state.loop, expected.loop), `${mission} failure replay loops the tight ${expected.loop.join('..')} s (${JSON.stringify(state.loop)})`);
+  H.ok(
+    closeEnough(state.findingWindow, expected.window),
+    `${mission} failure chart keeps its wider ${expected.window.join('..')} s context window (${JSON.stringify(state.findingWindow)})`,
+  );
+  const lap = Array.isArray(state.loop) ? (state.loop[1] - state.loop[0]) / (state.speed || 1) : Infinity;
+  H.ok(
+    Math.abs(lap - expected.wall) <= 0.1 && lap <= LAP_MAX_S,
+    `${mission} failure replay laps in ${lap.toFixed(2)} s of wall clock at ${state.speed}x (expected ${expected.wall}, cap ${LAP_MAX_S})`,
+  );
   H.ok(state.channel === expected.channel, `${mission} failure chart selects ${expected.channel} (${state.channel})`);
   H.ok(JSON.stringify(state.fields) === JSON.stringify(expected.fields), `${mission} direct-label fields match the experience (${(state.fields || []).join(', ')})`);
   H.ok(state.canvas && state.minimal, `${mission} failure chart is present in direct-label minimal mode`);

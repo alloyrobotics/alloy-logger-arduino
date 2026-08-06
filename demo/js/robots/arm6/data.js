@@ -327,6 +327,12 @@ export const findings = [
     id: 'drop',
     title: 'Payload dropped at 56.3 s',
     window: [52, 60],
+    // The 3D replay loop, tight around the drop: 0.5 s of the arm carrying the steel blank with
+    // tau2 already flat on its 12 Nm clamp, the jaw-gap encoder reporting the part gone at 56.3 s,
+    // the 0.29 s fall to the floor (scene.js integrates it ballistically from /ee at the release)
+    // and its damped bounce, then the arm finishing the place move with empty jaws. 1.5 s of data,
+    // 3.8 s a lap at the slowmo speed, against 20 s a lap when this looped the chart window.
+    loop: [DROP_T - 0.5, DROP_T + 1.0],
     t: DROP_T,
     severity: 'alert',
     focus: { channel: '/joints', fields: ['tau2', 'tau1', 'tau3'] },

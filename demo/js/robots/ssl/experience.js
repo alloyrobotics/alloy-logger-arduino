@@ -127,6 +127,14 @@ const ANATOMY_CAMERA = {
  * narrative cost. Showing a dribbler card over a robot with no ball is a truth cost, and that is
  * the one worth avoiding.
  *
+ * ROUND 5 MADE THAT RE-READ LITERAL, and it is worth writing down. The failure step no longer loops
+ * the whole 16.4 s window: it loops `kicker-charge.loop`, 53.48-54.63 s, which is these seconds
+ * plus half a second either side. So step 1 shows this kick from 0.5 m off the roller and step 3
+ * shows the same kick from 0.92 m off the hull with the capacitor trace under it. The truth
+ * position is unchanged - one is a card about a roller, the other is a synthesized charge overlay,
+ * and neither claims the kick was faulty - but the visitor now sees one kick twice on purpose,
+ * which is a better reason to be here than the coincidence this paragraph used to describe.
+ *
  * SHOTS. Offsets in metres, resolved against the live rig every frame: `pos` is [towards the
  * dribbler face, to the robot's right, up] from the point the camera looks at, `aim` nudges that
  * point off the part's own anchor, and the `End` pair is where each is by the end of the beat - the
@@ -270,8 +278,9 @@ const FAILURE_CAMERA = {
  * maxAllowedBots says and what the tracker shows for every sample of the passage. Score and block
  * are what the robots in it are doing.
  *
- * FAILURE. The existing `kicker-charge` finding owns the window, the instant, the lit robot and the
- * slow-motion flag; only the plotted pair is restated here, and it is the finding's own focus.
+ * FAILURE. The existing `kicker-charge` finding owns the chart window, the replay loop, the instant,
+ * the lit robot and the slow-motion flag; only the plotted pair is restated here, and it is the
+ * finding's own focus.
  * Both steps carry an explicit camera (see MISSION_CAMERA / FAILURE_CAMERA above): the scene's own
  * `cameraHome` frames a whole 12 x 9 m pitch, which on a phone panel is a plan view of carpet.
  */

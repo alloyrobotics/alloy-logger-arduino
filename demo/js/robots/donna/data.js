@@ -231,11 +231,27 @@ export const findings = [
     id: 'jack-falls-foul-line',
     title: `Jack's ${T('jackFallCountWord')} falls and the foul line`,
     window: [V('jackFall3T'), V('jackRecovery3T')],
+    // The 3D replay loop, tight around the third fall. Both edges are ledger values with half a
+    // second either side, so the loop quotes the same recorded events the window does: 0.5 s of
+    // Jack walking, the fall onset at jackFall3T, the ~1.0 s of going down, and 0.5 s of him on the
+    // carpet before the getting-up state at jackGettingUp3T carries him out of it. 2.0 s of data.
+    //
+    // It opens 0.5 s BEFORE the window, because the window's left edge IS the fall onset and the
+    // healthy half-second Hugh asked for sits behind it. 0.5 s is inside the 0.64 s pad the chart
+    // puts around this shaded window, so the playhead sweeps for the whole lap.
+    //
+    // `t` (jackSpeak3T, 148.064 s) sits OUTSIDE this loop, and that is correct: the instant is the
+    // narrative anchor for the foul line, the loop is the failure. Nothing in the scene renders the
+    // speech - it is quoted in the note and the facts pack - so the loop loses nothing by ending
+    // before it. A `loop` is not required to contain `t`.
+    loop: [V('jackFall3T') - 0.5, V('jackGettingUp3T') + 0.5],
     t: V('jackSpeak3T'),
     severity: 'alert',
     focus: { channel: '/imu', fields: ['accelMagMps2', 'pitchDeg', 'rollDeg'] },
     highlight: 'jack',
-    slowmo: true,
+    // NOT slow motion any more. The fall takes a full second of real time and is a humanoid going
+    // from walking to flat: it reads at 1x, and 0.4x on this loop is 5 s a lap.
+    slowmo: false,
     note:
       `Window fall counts are Donna ${T('donnaFallCount')}, Jack ${T('jackFallCount')} and Rory ` +
       `${T('roryFallCount')}. During the last recovery Jack says, "This was definitely a foul."`,

@@ -228,7 +228,7 @@ export default {
       ],
     },
     failure: {
-      findingId: 'dip', // findings[0]: alert, [58, 66], slowmo, highlight m3
+      findingId: 'dip', // findings[0]: alert, chart window [58, 66], replay loop [60.7, 62.9], highlight m3
       camera: null, // the finding's own highlight plus the follow shot; no separate framing
       plottedFields: { channel: '/pos', fields: ['alt'] }, // mirrors findings.dip.focus
     },
@@ -265,7 +265,7 @@ Nothing hit the ground: 92% of the survey was already flown.
     {
       id: 'show-me',
       matchers: ['show', 'show me', 'where', 'see', 'replay', 'watch', 'exactly', 'moment', 'look'],
-      answer: `Looping it at 0.4x, motor 3 lit. Watch its disc slow while the other three spin up, then the 2.1 m drop and the 18 deg heading swing.
+      answer: `Looping the two seconds around the break, motor 3 lit. Watch its disc slow while the other three spin up, then the 2.1 m drop and the 18 deg heading swing.
 
 {{ev:dip}}`,
       evidence: ['dip'],

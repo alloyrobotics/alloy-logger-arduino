@@ -505,6 +505,8 @@ export const findings = [
     id: 'kicker-charge',
     title: 'Kicker on #8 never reaches its 240 V set point',
     window: [T_LIVE_START_3, T_LIVE_END_3],
+    // Tight 3D replay loop on the kick; `window` stays the CHART's. Rationale in experience.js.
+    loop: [T_KICK_Y8 - 0.5, T_KICK_Y8 + 0.65],
     t: T_KICK_Y8,
     severity: 'alert',
     focus: { channel: '/bot8/kicker', fields: ['kickerLevel', 'kickerMax'] },
