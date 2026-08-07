@@ -919,11 +919,11 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 /* the leader itself: a hairline, at the same weight as every other rule on this page */
 .v-anat-line{stroke:rgba(255,255,255,0.16);stroke-width:1;}
 .v-anat-dot{fill:rgba(255,255,255,0.24);}
-.v-anat-card{max-width:300px;padding:13px 14px;border:1px solid var(--line-hi);border-radius:10px;
+.v-anat-card{max-width:420px;padding:18px 20px;border:1px solid var(--line-hi);border-radius:10px;
   background:rgba(24,24,24,0.86);backdrop-filter:blur(10px);
   animation:vAnatIn .34s cubic-bezier(.16,1,.3,1) both;animation-delay:var(--vd,0s);}
-.v-anat-card h2{font-size:14px;font-weight:500;color:var(--tx);line-height:1.25;}
-.v-anat-card p{margin-top:6px;font-size:12px;line-height:1.45;color:var(--tx-body);}
+.v-anat-card h2{font-size:18.5px;font-weight:500;color:var(--tx);line-height:1.2;}
+.v-anat-card p{margin-top:7px;font-size:14.5px;line-height:1.38;color:var(--tx-body);}
 .v-anat-1{grid-row:1;grid-column:1;justify-self:start;}
 .v-anat-2{grid-row:1;grid-column:2;justify-self:end;}
 .v-anat-3{grid-row:3;grid-column:1;justify-self:start;}
@@ -931,9 +931,9 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 @keyframes vAnatIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 @media (max-width:700px){
   .v-anat{gap:8px;padding:10px;}
-  .v-anat-card{max-width:none;padding:11px 12px;}
-  .v-anat-card h2{font-size:13px;}
-  .v-anat-card p{margin-top:5px;font-size:11.5px;}}
+  .v-anat-card{max-width:none;padding:12px 13px;}
+  .v-anat-card h2{font-size:15px;line-height:1.2;}
+  .v-anat-card p{margin-top:5px;font-size:13px;line-height:1.35;}}
 /* Asked for less motion: the cards are already there when the step opens, and the leader lines are
    projected once and on resize rather than every frame. Nothing on this overlay moves. */
 @media (prefers-reduced-motion:reduce){.v-anat-card{animation:none;}}

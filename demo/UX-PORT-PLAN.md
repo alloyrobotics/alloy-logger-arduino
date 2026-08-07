@@ -130,6 +130,8 @@ frame, so labels stay attached while the camera orbits or the robot moves; ancho
 behind the camera or off-frustum hide their leader line. Wall layout keeps the four
 cards in corner slots (2x2 rows on mobile); the leader lines tie each card to its
 projected anchor per the build contract (wall art had none; task requires them).
+ROUND 6 sized the cards up: desktop max-width 420px, 18.5px headings, 14.5px body
+(was 300/14/12); <=700px panels get 15px headings, 13px body.
 
 ## 4. File ownership (exclusive, one writer per path)
 
@@ -203,11 +205,17 @@ the real hull regions those subsystems occupy, matching the channels the mission
 | --- | --- | --- |
 | arm6 | [26.0, 32.0] | Complete nominal cycle 5 (A to B and back), spans the hero pose at 30 s. Cycles are 6 s; fault cycle 9 starts at 50.0. |
 | drone | [18.6, 27.7] | Full survey lane 1, before bearing wear begins at 32 s. |
-| ssl | [0.5, 7.5] | First real live-play interval [0, 7.857] from kick-off; before every finding window (vision 22.5, dribbler 26, radio 30, kicker 46.3). |
+| ssl | [61.78, 63.6] | ROUND 6: the match's only goal, 1.82 s at 1x. Opens on the first sample with the ball back on the field side of its own goal line after the pre-goal rebound (the tracker has it IN the net 61.52-61.78 s off Ferrum 4's touches, so opening earlier shows a ball in the net twice per lap); Ferrum 12's shot 62.69 s, referee crossing 62.739 s, ball out of the net by 63.13 s; closes at a 0.82 m follow-spring wrap (63.85-64.25 s is a dead band where the wrap can neither hide nor snap, do not end there). It is an OWN GOAL off our keeper (Polaris 6, game-controller last touch): no surface may say the tracked fleet scored. Overlaps kicker-charge's 46.34-62.74 chart window by construction; clear of its 53.477-54.627 loop and t 53.977. |
 | donna | [184.0, 190.0] | All three robots present, upright, unpenalized; Donna WALKING with a valid ball estimate; hero 187.6 inside; no fall within 5 s. |
 
 Success screens show only the working mission: no error log, failure card, anomaly
 shading, or failure-window chart treatment.
+
+ROUND 6 changed the non-overlap invariant with the ssl retime. Since round 5 a finding's
+`window` is wide chart CONTEXT, so "before every finding window" is no longer the rule:
+a success window must not overlap any finding's REPLAY span (`loop`, else `window`) and
+must not contain any finding's `t`. Whole-log spans ([0, duration]) are exempt from the
+span check and guarded by `t` alone (arm6 overtemp, drone battery hit this).
 
 ## 7. Failure findings (existing IDs, real windows)
 
@@ -278,8 +286,8 @@ New gates (SOL-T), following the browser-fixture pattern:
 | --- | --- |
 | test:flow-roster (node) | PICKER_ROBOTS exactly [arm6, drone, ssl, donna]; ROBOTS_BY_ID retains all seven; role map matches Section 8 |
 | test:flow-copy (node) | 16/16 variants exist, non-empty, with no retired debug-card field; no meta-output labels; no em dashes in any flow/step/UI copy including experience blocks |
-| test:experience (node) | per active mission: exactly 4 anatomy parts whose anchors resolve against the scene anchor map; success window inside [0,duration], non-overlapping the selected failure finding window; failure findingId resolves; plottedFields subset of the finding channel fields; direct labels match plotted fields |
-| test:flow-walk (browser) | full walk seat -> missions -> 3 steps -> chat surface at 1440x900 and 390x844; one primary CTA per step (DOM count); role variants via DOM assertions for all 16 combos (localStorage role x mission); success step shows no failure UI (no .evidence-on, no alert shading, no overlay banner); failure step has no timestamp/summary cards; the settled answer's inline block is a child of that answer, holds chart + causal line + the ONE live replay, shares the TimelineStore, and replaced the trailing chip row; a typed follow-up stays in the same transcript with no mode switch and no second context; the retired `/choose` hash redirects into the demo; generated-demo fixture falls back to legacy brief; reduced-motion and no-WebGL walks (block keeps chart + causal line, replay slot falls back to line art); no horizontal overflow at 390x844; console clean |
+| test:experience (node) | per active mission: exactly 4 anatomy parts whose anchors resolve against the scene anchor map; success window inside [0,duration], clear of EVERY finding's replay span (`loop`, else `window`; whole-log spans exempt) and containing no finding's `t` (round 6 rule); failure findingId resolves; plottedFields subset of the finding channel fields; direct labels match plotted fields |
+| test:flow-walk (browser) | full walk seat -> missions -> 3 steps -> chat surface at 1440x900 and 390x844; one primary CTA per step (DOM count); role variants via DOM assertions for all 16 combos (localStorage role x mission); success step shows no failure UI (no .evidence-on, no alert shading, no overlay banner); failure step has no timestamp/summary cards; the settled answer's inline evidence is a child of that answer as three in-flow pieces in order (chart, streamed causal prose, the ONE live replay: round 6), shares the TimelineStore, and replaced the trailing chip row; a typed follow-up stays in the same transcript with no mode switch and no second context; the retired `/choose` hash redirects into the demo; generated-demo fixture falls back to legacy brief; reduced-motion and no-WebGL walks (block keeps chart + causal line, replay slot falls back to line art); no horizontal overflow at 390x844; console clean |
 | test:flow-leaks (browser) | step/route churn AND demo churn: WebGL context live count flat, an inline block's context + chart + observers + listeners all released on route exit, no orphan RAF (corrupt-meta probe pattern) |
 | visual captures (script, not in npm test) | 24 captures: 4 missions x {anatomy, success, failure} x {390x844, 1440x900}; per capture: pixel-variance frame difference across two timestamps (motion proof), timeline window assert, highlight assert, chart domain assert, console clean |
 

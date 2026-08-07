@@ -225,6 +225,10 @@ export function createChat(mount, robotDef, hooks = {}) {
   let liveFailures = 0;
   /** The newest claimed reservation while its staged fill is still in progress. */
   let evidenceFollowTarget = null;
+  /** True only while the reader has not interrupted the evidence sequence's automatic follow. */
+  let evidenceFollowing = false;
+  let programmaticFollow = false;
+  let followRaf = 0;
 
   // ---------- settled answers ----------
   // One question is one LOGICAL answer, whatever route it takes to the screen: a live stream, a
@@ -299,18 +303,28 @@ export function createChat(mount, robotDef, hooks = {}) {
   // alignment would skip its header and whole-block skeleton. While that block is staging, follow its
   // leading edge instead. The caller still has to prove the reader was following before DOM growth,
   // so this special case never pulls somebody back after they scroll away mid-stream.
+  function setFollowScroll(top) {
+    programmaticFollow = true;
+    log.scrollTop = top;
+    if (followRaf) cancelAnimationFrame(followRaf);
+    followRaf = requestAnimationFrame(() => {
+      followRaf = 0;
+      programmaticFollow = false;
+    });
+  }
+
   function scrollDown(force, followEvidence = false) {
     if (!force && !atBottom()) return;
     if (followEvidence && evidenceFollowTarget && evidenceFollowTarget.isConnected) {
       if (evidenceFollowTarget.classList.contains('is-staging')) {
         const target = evidenceFollowTarget.getBoundingClientRect();
         const view = log.getBoundingClientRect();
-        log.scrollTop += target.top - view.top - 8;
+        setFollowScroll(log.scrollTop + target.top - view.top - 8);
         return;
       }
       evidenceFollowTarget = null;
     }
-    log.scrollTop = log.scrollHeight;
+    setFollowScroll(log.scrollHeight);
   }
 
   function addUser(text) {
@@ -492,12 +506,19 @@ export function createChat(mount, robotDef, hooks = {}) {
       const f = findingById.get(slot.dataset.ev);
       if (!f) return;
       try {
+        const wasFollowing = atBottom();
         if (onEvidenceBlock(row, [f], null)) {
           embedded = true;
           const claimed = Array.from(row.querySelectorAll('.ev-embed')).find(
             (block) => block.dataset.ev === f.id,
           );
-          if (claimed) evidenceFollowTarget = claimed;
+          if (claimed) {
+            evidenceFollowTarget = claimed.querySelector('.is-staging') || claimed;
+            if (wasFollowing) {
+              evidenceFollowing = true;
+              scrollDown(true, true);
+            }
+          }
           // A successful host normally replaces the slot. The marker also protects hosts that
           // choose to fill it in place.
           if (slot.isConnected) slot.dataset.evClaimed = '1';
@@ -739,23 +760,36 @@ export function createChat(mount, robotDef, hooks = {}) {
       pendingLine = line;
     }
 
+    function processBuffer() {
+      let cut;
+      while ((cut = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 1);
+        acceptLine(line);
+        // A skip can hand the renderer the rest of an answer in one call. Stop at the evidence token
+        // just as the typewriter would, leaving later authored prose buffered until this sequence is
+        // complete instead of letting it jump ahead of the chart, causal line and replay.
+        if (row.querySelector('.ev-sequence[data-state="staging"]')) return;
+      }
+      if (row.querySelector('.ev-sequence[data-state="staging"]')) return;
+      // Evidence tokens are authored as standalone lines. Once the closing braces arrive, their
+      // reservation is safe to mount even if the network has not delivered the following newline
+      // or the done frame yet.
+      if (/^\s*\{\{ev:[a-z0-9_-]+\}\}\s*$/i.test(buffer)) {
+        acceptLine(buffer.trim());
+        flushPending();
+        buffer = '';
+      }
+    }
+
     return {
       push(text) {
-        if (finished || !text) return;
-        buffer += text;
-        let cut;
-        while ((cut = buffer.indexOf('\n')) >= 0) {
-          acceptLine(buffer.slice(0, cut));
-          buffer = buffer.slice(cut + 1);
-        }
-        // Evidence tokens are authored as standalone lines. Once the closing braces arrive, their
-        // reservation is safe to mount even if the network has not delivered the following newline
-        // or the done frame yet.
-        if (/^\s*\{\{ev:[a-z0-9_-]+\}\}\s*$/i.test(buffer)) {
-          acceptLine(buffer.trim());
-          flushPending();
-          buffer = '';
-        }
+        if (finished) return;
+        if (text) buffer += text;
+        processBuffer();
+      },
+      drain() {
+        if (!finished) processBuffer();
       },
       finish() {
         if (finished) return;
@@ -821,6 +855,16 @@ export function createChat(mount, robotDef, hooks = {}) {
     streaming = true;
     el.classList.add('is-streaming');
 
+    function evidencePending() {
+      return !!row.querySelector('.ev-sequence[data-state="staging"]');
+    }
+
+    function cancelPendingEvidence() {
+      row.querySelectorAll('.ev-sequence[data-state="staging"]').forEach((sequence) => {
+        sequence.dispatchEvent(new CustomEvent('chat:evidence-cancel'));
+      });
+    }
+
     function revealTo(next) {
       const end = Math.min(next, src.length);
       if (end <= revealed) return;
@@ -831,6 +875,8 @@ export function createChat(mount, robotDef, hooks = {}) {
     // `fireEvidence` is false when the reader interrupted with a new question: the abandoned
     // answer must not seek/loop the timeline out from under the question they just asked.
     const done = (fireEvidence) => {
+      renderer.drain();
+      if (evidencePending()) return;
       revealTo(src.length);
       renderer.finish();
       body.removeAttribute('aria-busy');
@@ -842,6 +888,8 @@ export function createChat(mount, robotDef, hooks = {}) {
       hydrate(row, entry);
       addCopyButtons(row);
       scrollDown(true, true);
+      evidenceFollowing = false;
+      evidenceFollowTarget = null;
       // fireEvidence === false is a SUPERSEDED answer, abandoned mid-flight because the reader
       // asked something else. It never settles: the answer they are waiting for is the next one.
       if (fireEvidence === false) return;
@@ -858,17 +906,30 @@ export function createChat(mount, robotDef, hooks = {}) {
     // stays alive and keeps pace with the remaining deltas.
     finishNow = (fireEvidence) => {
       skip = true;
+      if (fireEvidence === false) {
+        cancelPendingEvidence();
+        closed = true;
+        i = src.length;
+        revealTo(i);
+        cancelPendingEvidence();
+        renderer.drain();
+        cancelPendingEvidence();
+        done(false);
+        return;
+      }
+      if (evidencePending()) return;
       i = src.length;
       revealTo(i);
-      if (closed) done(fireEvidence !== false);
-      else if (fireEvidence === false) {
-        closed = true;
-        done(false);
-      }
+      if (closed) done(true);
     };
 
     const step = () => {
       if (disposed) return;
+      renderer.drain();
+      if (evidencePending()) {
+        streamRaf = requestAnimationFrame(step);
+        return;
+      }
       if (i >= src.length) {
         if (closed) {
           done(true);
@@ -879,11 +940,12 @@ export function createChat(mount, robotDef, hooks = {}) {
         return;
       }
       i = skip ? src.length : Math.min(src.length, i + charsPerFrame(src.length));
-      const stick = atBottom();
+      const stick = evidenceFollowing || atBottom();
       revealTo(i);
-      scrollDown(stick, true);
+      scrollDown(evidenceFollowing ? true : stick, true);
       if (i >= src.length && closed) {
-        done(true);
+        if (evidencePending()) streamRaf = requestAnimationFrame(step);
+        else done(true);
         return;
       }
       streamRaf = requestAnimationFrame(step);
@@ -920,6 +982,35 @@ export function createChat(mount, robotDef, hooks = {}) {
   function finishStreaming(fireEvidence) {
     if (finishNow) finishNow(fireEvidence !== false);
   }
+
+  log.addEventListener('chat:evidence-stage', (e) => {
+    const detail = e.detail || {};
+    if (!detail.target || !detail.target.isConnected) return;
+    evidenceFollowTarget = detail.target;
+    if (detail.follow || evidenceFollowing) {
+      evidenceFollowing = true;
+      scrollDown(true, true);
+    }
+  });
+
+  log.addEventListener('chat:evidence-sequence-done', () => {
+    evidenceFollowTarget = null;
+  });
+
+  const stopEvidenceFollow = () => {
+    evidenceFollowing = false;
+    evidenceFollowTarget = null;
+  };
+  log.addEventListener('wheel', stopEvidenceFollow, { passive: true });
+  log.addEventListener('touchstart', stopEvidenceFollow, { passive: true });
+  log.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) {
+      stopEvidenceFollow();
+    }
+  });
+  log.addEventListener('scroll', () => {
+    if (!programmaticFollow && evidenceFollowing) stopEvidenceFollow();
+  }, { passive: true });
 
   log.addEventListener('click', (e) => {
     if (streaming && !e.target.closest('.ev-chip')) finishStreaming();
@@ -1148,6 +1239,7 @@ export function createChat(mount, robotDef, hooks = {}) {
     dispose() {
       disposed = true;
       if (streamRaf) cancelAnimationFrame(streamRaf);
+      if (followRaf) cancelAnimationFrame(followRaf);
       if (pendingTimer) window.clearTimeout(pendingTimer);
       if (inflight) inflight.abort();
       inflight = null;

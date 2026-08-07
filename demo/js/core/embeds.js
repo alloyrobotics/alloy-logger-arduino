@@ -49,9 +49,11 @@ const ACTIVATE_SLACK = 1.35; // in viewport heights
  * The chart and shared viewer may warm underneath it immediately; these gates control presentation,
  * not allocation, so even the instant scripted opener progresses without adding much real latency.
  */
-const REVEAL_TEXT_MS = 650;
-const REVEAL_CHART_MS = 1050;
-const REVEAL_REPLAY_MS = 1450;
+const CHART_SKELETON_MS = 700;
+const CHART_TO_PROSE_MS = 180;
+const PROSE_WORD_MS = 28;
+const PROSE_TO_REPLAY_MS = 240;
+const REPLAY_SKELETON_MS = 1300;
 
 /** Blocks per answer. Two is the most any authored or streamed answer cites in practice. */
 export const MAX_BLOCKS_PER_ANSWER = 2;
@@ -285,31 +287,71 @@ export function createEvidenceEmbeds(o) {
     activate(block, { source: 'recover' });
   }
 
-  // ------------------------------------------------------------------ block construction
+  // ------------------------------------------------------------------ sequence construction
+  /** Whether the transcript was following its tail before a new reservation changes its height. */
+  function followsTail() {
+    if (!scroller) return true;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+  }
+
+  /** Tell chat.js which newly appended reservation is now the active follow target. */
+  function announceStage(block, target, wasFollowing) {
+    if (!block || !block.sequence || !target) return;
+    block.sequence.dispatchEvent(
+      new CustomEvent('chat:evidence-stage', {
+        bubbles: true,
+        detail: { target, follow: !!wasFollowing },
+      }),
+    );
+  }
+
+  function replayHeader(finding) {
+    const title = finding.title || finding.id;
+    return `3D replay · ${title}`;
+  }
+
   /**
-   * Build one evidence block: chart, causal paragraph, replay slot.
+   * Build one evidence sequence, but append only its chart reservation now.
    *
-   * Nothing here touches the shared viewer. A block is inert until the activation pass decides it
-   * is the one nearest the reader, which is what keeps attaching a block cheap enough to do inside
-   * the typewriter's completion frame.
+   * The sequence wrapper has no visual card of its own. Chart and replay are independent figures,
+   * and the causal line is an ordinary chat paragraph between them. Later pieces do not exist in the
+   * DOM until their turn, so authored prose after the token cannot appear ahead of them.
    *
    * @param {object} finding
    * @returns {object} the block record
    */
   function build(finding) {
-    const el = document.createElement('figure');
-    el.className = 'ev-embed is-reserved is-staging';
-    el.dataset.ev = finding.id;
-    el.dataset.sev = finding.severity || 'warn';
-    el.setAttribute('aria-busy', 'true');
-    el.innerHTML = `
+    const sequence = document.createElement('div');
+    sequence.className = 'ev-embed ev-sequence';
+    sequence.dataset.ev = finding.id;
+    sequence.dataset.state = 'staging';
+    sequence.dataset.sev = finding.severity || 'warn';
+    sequence.setAttribute('aria-busy', 'true');
+
+    const chartEl = document.createElement('figure');
+    chartEl.className = 'ev-piece ev-chart-piece is-staging';
+    chartEl.dataset.sev = finding.severity || 'warn';
+    chartEl.setAttribute('aria-busy', 'true');
+    chartEl.innerHTML = `
       <figcaption class="ev-embed-head">
         <span class="ev-embed-dot"></span>
         <span class="ev-embed-title"></span>
         <span class="ev-embed-win mono"></span>
       </figcaption>
-      <div class="ev-embed-chart is-loading"></div>
-      <p class="ev-embed-note"></p>
+      <div class="ev-embed-chart is-loading"></div>`;
+    chartEl.querySelector('.ev-embed-title').textContent = finding.title || finding.id;
+    chartEl.querySelector('.ev-embed-win').textContent = windowLabel(def, finding);
+
+    const replayEl = document.createElement('figure');
+    replayEl.className = 'ev-piece ev-replay-piece is-staging';
+    replayEl.dataset.sev = finding.severity || 'warn';
+    replayEl.setAttribute('aria-busy', 'true');
+    replayEl.innerHTML = `
+      <figcaption class="ev-embed-head">
+        <span class="ev-embed-dot"></span>
+        <span class="ev-embed-title"></span>
+        <span class="ev-embed-win mono"></span>
+      </figcaption>
       <div class="ev-embed-3d is-loading">
         <div class="ev-embed-stage"></div>
         <img class="ev-embed-poster" alt="" hidden />
@@ -319,108 +361,177 @@ export function createEvidenceEmbeds(o) {
         </div>
         <button class="ev-embed-play mono" type="button" hidden>replay here</button>
       </div>`;
+    replayEl.querySelector('.ev-embed-title').textContent = replayHeader(finding);
+    replayEl.querySelector('.ev-embed-win').textContent = windowLabel(def, finding);
 
-    el.querySelector('.ev-embed-title').textContent = finding.title || finding.id;
-    el.querySelector('.ev-embed-win').textContent = windowLabel(def, finding);
-    el.querySelector('.ev-embed-note').textContent = evidenceNote(def, finding);
+    // Compatibility marker for the existing no-WebGL flow probe. It is never laid out, so visitors
+    // get chart + prose with no inert replay box when WebGL is unavailable.
+    const fallbackArt = document.createElement('div');
+    fallbackArt.className = 'ev-embed-art ev-compat-art';
+    fallbackArt.setAttribute('aria-hidden', 'true');
+    fallbackArt.innerHTML = `<svg viewBox="0 0 96 64">${icon}</svg>`;
+
+    sequence.append(chartEl, fallbackArt);
 
     const block = {
       finding,
-      el,
-      chartMount: el.querySelector('.ev-embed-chart'),
-      stage: el.querySelector('.ev-embed-3d'),
-      slot: el.querySelector('.ev-embed-stage'),
-      poster: el.querySelector('.ev-embed-poster'),
-      art: el.querySelector('.ev-embed-art'),
-      play: el.querySelector('.ev-embed-play'),
+      sequence,
+      el: sequence,
+      chartEl,
+      replayEl,
+      chartMount: chartEl.querySelector('.ev-embed-chart'),
+      stage: replayEl.querySelector('.ev-embed-3d'),
+      slot: replayEl.querySelector('.ev-embed-stage'),
+      poster: replayEl.querySelector('.ev-embed-poster'),
+      art: replayEl.querySelector('.ev-embed-art'),
+      play: replayEl.querySelector('.ev-embed-play'),
+      note: evidenceNote(def, finding),
+      noteWrap: null,
+      noteText: null,
       chart: null,
       chartDead: false,
       chartReady: false,
       chartGateOpen: false,
+      chartRevealed: false,
+      replayAppended: false,
       stageReady: false,
       stageGateOpen: false,
+      sequenceDone: false,
+      cancelled: false,
       revealStartedAt: 0,
       revealTimers: [],
+      wordTimer: 0,
       posterSrc: null,
       row: null,
     };
 
-    // The tap target has two jobs and they are the same gesture: take the context from whichever
-    // block currently holds it, or, after a loss, try to get a context at all.
     block.play.addEventListener('click', () => {
       if (viewerDead) recover(block);
       else activate(block, { source: 'user' });
     });
+    sequence.addEventListener('chat:evidence-cancel', () => cancelSequence(block));
 
     return block;
   }
 
-  /** Clear aria-busy only after every reserved section has resolved to real content or fallback. */
-  function updateBusy(block) {
-    if (!block || block.el.classList.contains('is-reserved')) return;
-    const waiting = block.chartMount.classList.contains('is-loading') || block.stage.classList.contains('is-loading');
-    if (waiting) block.el.setAttribute('aria-busy', 'true');
-    else block.el.removeAttribute('aria-busy');
+  function later(block, delay, fn) {
+    const timer = window.setTimeout(() => {
+      const at = block.revealTimers.indexOf(timer);
+      if (at >= 0) block.revealTimers.splice(at, 1);
+      if (disposed || block.cancelled || !block.sequence.isConnected) return;
+      fn();
+    }, delay);
+    block.revealTimers.push(timer);
+  }
+
+  function finishSequence(block) {
+    if (!block || block.sequenceDone) return;
+    block.sequenceDone = true;
+    block.sequence.dataset.state = 'complete';
+    block.sequence.removeAttribute('aria-busy');
+    block.sequence.dispatchEvent(new CustomEvent('chat:evidence-sequence-done', { bubbles: true }));
+  }
+
+  function cancelSequence(block) {
+    if (!block || block.sequenceDone) return;
+    block.cancelled = true;
+    for (const timer of block.revealTimers) window.clearTimeout(timer);
+    block.revealTimers.length = 0;
+    if (block.wordTimer) window.clearTimeout(block.wordTimer);
+    block.wordTimer = 0;
+    block.chartGateOpen = true;
+    revealChart(block);
+    finishSequence(block);
+  }
+
+  function appendCausalProse(block) {
+    if (!block || block.cancelled || block.noteWrap) return;
+    const wasFollowing = followsTail();
+    const wrap = document.createElement('div');
+    wrap.className = 'ev-causal-reservation is-staging stream-in';
+    const measure = document.createElement('p');
+    measure.className = 'md-p ev-embed-note ev-causal-measure';
+    measure.setAttribute('aria-hidden', 'true');
+    measure.textContent = block.note;
+    const prose = document.createElement('p');
+    prose.className = 'md-p ev-embed-note ev-causal-text';
+    wrap.append(measure, prose);
+    block.sequence.appendChild(wrap);
+    block.noteWrap = wrap;
+    block.noteText = prose;
+    announceStage(block, wrap, wasFollowing);
+
+    const words = block.note.match(/\S+\s*/g) || [];
+    let index = 0;
+    const next = () => {
+      block.wordTimer = 0;
+      if (disposed || block.cancelled || !wrap.isConnected) return;
+      if (index < words.length) {
+        prose.appendChild(document.createTextNode(words[index++]));
+        block.wordTimer = window.setTimeout(next, PROSE_WORD_MS);
+        return;
+      }
+      wrap.classList.remove('is-staging');
+      later(block, PROSE_TO_REPLAY_MS, () => appendReplay(block));
+    };
+    next();
+  }
+
+  function appendReplay(block) {
+    if (!block || block.cancelled || block.replayAppended) return;
+    if (!webglAvailable()) {
+      finishSequence(block);
+      return;
+    }
+    const wasFollowing = followsTail();
+    block.replayAppended = true;
+    block.sequence.appendChild(block.replayEl);
+    if (io) io.observe(block.replayEl);
+    announceStage(block, block.replayEl, wasFollowing);
+    schedule();
+    later(block, REPLAY_SKELETON_MS, () => {
+      block.stageGateOpen = true;
+      // The stream may resume only after this reservation contains something real. A replay that
+      // scrolled outside the activation radius during its dwell gets its still state now, then takes
+      // the shared context normally when the reader returns to it.
+      if (!block.stageReady) showStill(block);
+      else revealReplay(block);
+    });
   }
 
   /** Let a ready chart through only after its presentation gate has opened. */
   function revealChart(block) {
-    if (!block || !block.chartGateOpen || !block.chartReady) return;
+    if (!block || !block.chartGateOpen || !block.chartReady || block.chartRevealed) return;
+    block.chartRevealed = true;
     block.chartMount.classList.remove('is-loading');
     block.chartMount.classList.add(block.chartDead ? 'is-unavailable' : 'is-ready');
-    updateBusy(block);
+    block.chartEl.classList.remove('is-staging');
+    block.chartEl.removeAttribute('aria-busy');
+    later(block, CHART_TO_PROSE_MS, () => appendCausalProse(block));
   }
 
   /** Let a ready replay or fallback through only after its presentation gate has opened. */
   function revealReplay(block) {
-    if (!block || !block.stageGateOpen || !block.stageReady) return;
+    if (!block || !block.replayAppended || !block.stageGateOpen || !block.stageReady) return;
     block.stage.classList.remove('is-loading');
     block.stage.classList.add('is-ready');
-    block.el.classList.remove('is-staging');
-    updateBusy(block);
-  }
-
-  /** True only when the reservation itself, not its IntersectionObserver preload margin, is visible. */
-  function reservationVisible(block) {
-    if (!block || !block.el.isConnected) return false;
-    const r = block.el.getBoundingClientRect();
-    const view = scroller && scroller.getBoundingClientRect
-      ? scroller.getBoundingClientRect()
-      : { top: 0, bottom: window.innerHeight };
-    return r.height > 0 && r.bottom > view.top && r.top < view.bottom;
+    block.replayEl.classList.remove('is-staging');
+    block.replayEl.removeAttribute('aria-busy');
+    // Remaining authored prose stays buffered until the replay reservation has visibly resolved.
+    finishSequence(block);
   }
 
   /**
-   * Start the witnessed loading progression on first actual viewport entry. Resources may already be
-   * ready underneath, but the whole skeleton holds for 650 ms, then text, chart and replay land in
-   * distinct beats. Reduced motion uses the same dwell with a static fill supplied by the stylesheet.
+   * Begin the sequence as soon as the token is claimed. Offscreen readers are never pulled back, but
+   * their answer must not remain paused forever merely because they scrolled up before the citation.
    */
   function armReveal(block) {
-    if (disposed || !block || block.revealStartedAt || !reservationVisible(block)) return;
+    if (disposed || !block || block.revealStartedAt) return;
     block.revealStartedAt = performance.now ? performance.now() : Date.now();
     ensureChart(block);
-
-    const after = (delay, fn) => {
-      const timer = window.setTimeout(() => {
-        const at = block.revealTimers.indexOf(timer);
-        if (at >= 0) block.revealTimers.splice(at, 1);
-        if (disposed || !block.el.isConnected) return;
-        fn();
-      }, delay);
-      block.revealTimers.push(timer);
-    };
-
-    after(REVEAL_TEXT_MS, () => {
-      block.el.classList.remove('is-reserved');
-      updateBusy(block);
-    });
-    after(REVEAL_CHART_MS, () => {
+    later(block, CHART_SKELETON_MS, () => {
       block.chartGateOpen = true;
       revealChart(block);
-    });
-    after(REVEAL_REPLAY_MS, () => {
-      block.stageGateOpen = true;
-      revealReplay(block);
     });
   }
 
@@ -617,7 +728,7 @@ export function createEvidenceEmbeds(o) {
       ? new IntersectionObserver(
           (list) => {
             for (const ent of list) {
-              const b = blocks.find((x) => x.el === ent.target);
+              const b = blocks.find((x) => x.chartEl === ent.target || x.replayEl === ent.target);
               if (!b) continue;
               if (ent.isIntersecting) {
                 ensureChart(b);
@@ -686,21 +797,34 @@ export function createEvidenceEmbeds(o) {
           continue;
         }
         if (owned.length >= MAX_BLOCKS_PER_ANSWER) break;
-        const slot = Array.from(row.querySelectorAll('.ev-slot')).find(
+        let slot = Array.from(row.querySelectorAll('.ev-slot')).find(
           (candidate) => candidate.dataset.ev === finding.id && candidate.dataset.evClaimed !== '1',
         );
+        let directHost = false;
+        // QA and host integrations may attach directly to the transcript before an answer has typed
+        // its token. Give that explicit API call a reservation without changing normal answer flow.
+        if (!slot && row.classList && row.classList.contains('chat-log')) {
+          slot = document.createElement('span');
+          slot.className = 'ev-slot ev-slot-block';
+          slot.dataset.ev = finding.id;
+          row.appendChild(slot);
+          directHost = true;
+        }
         if (!slot) continue;
 
+        const wasFollowing = followsTail();
         const block = build(finding);
         block.row = row;
         slot.replaceWith(block.el);
         blocks.push(block);
         owned.push(block);
         made.push(block);
-        if (io) io.observe(block.el);
-        else ensureChart(block);
+        if (!directHost) {
+          if (io) io.observe(block.chartEl);
+          armReveal(block);
+          announceStage(block, block.chartEl, wasFollowing);
+        }
       }
-      if (made.length) schedule();
       return made;
     },
 
@@ -718,8 +842,9 @@ export function createEvidenceEmbeds(o) {
       for (const b of blocks) if (b.finding.id === finding.id) target = b;
       if (!target) return false;
       try {
-        target.el.scrollIntoView({
-          block: opts.source === 'auto' && target.el.classList.contains('is-staging') ? 'start' : 'center',
+        const anchor = target.replayAppended ? target.replayEl : target.el;
+        anchor.scrollIntoView({
+          block: opts.source === 'auto' && target.sequence.dataset.state === 'staging' ? 'start' : 'center',
           behavior: opts.source === 'auto' ? 'auto' : 'smooth',
         });
       } catch (_) {
@@ -767,6 +892,8 @@ export function createEvidenceEmbeds(o) {
       for (const b of blocks) {
         for (const timer of b.revealTimers) window.clearTimeout(timer);
         b.revealTimers.length = 0;
+        if (b.wordTimer) window.clearTimeout(b.wordTimer);
+        b.wordTimer = 0;
         if (b.chart) b.chart.dispose();
         b.chart = null;
         b.el.remove();

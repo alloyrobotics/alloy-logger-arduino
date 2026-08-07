@@ -216,44 +216,67 @@ const ANATOMY_TOUR = {
  * Both steps used to leave `camera` null, which handed the shot to `cameraHome` - an offset 5.34 m
  * long, framed to keep a whole 12 x 9 m pitch legible. On a 390 px phone that reads as a plan view
  * of a carpet with specks on it, and on the failure step, where the panel is half height because
- * the chart has the other half, it left two wedges of empty dark where the pitch had run out. Both
- * are the SAME azimuth as `cameraHome` (18 deg off the long axis), so the shot the mission was
- * tuned for is the shot that arrives, just closer and steeper:
+ * the chart has the other half, it left two wedges of empty dark where the pitch had run out. So
+ * both steps carry an explicit offset:
  *
- *   mission  0.80 m at 64 deg, tracking the ball. Two or three robots and the ball across the
- *            panel, against seven and a lot of carpet before.
- *   failure  0.92 m at 42 deg, tracking BOT 8 (see `followAnchor` below), on a panel that gives
- *            up some of its height to the chart.
+ *   mission  2.40 m at 60 deg, bearing 40 deg off the long axis on the +y touchline side, tracking
+ *            the ball. Framed for the GOAL MOUTH, which is what round 6 asked this step to show.
+ *   failure  0.92 m at 42 deg, same azimuth as `cameraHome` (18 deg off the long axis), tracking
+ *            BOT 8 (see `followAnchor` below), on a panel that gives up some of its height to the
+ *            chart.
  *
- * HOW CLOSE, arithmetically, because "closer" on its own is how the first pass at this ended up
- * still reading as a plan view. `viewer.js` widens its 42 deg base fov as the panel narrows, and on
- * a 390 px phone the mission panel lands near 68 deg vertical, so the ground it covers ACROSS the
- * frame is about 0.96 x the camera distance. At 2.35 m that is 2.25 m of pitch over 372 px and a
- * 180 mm robot is 30 px: a speck, which is the finding. The first pass at this took it to 1.25 m,
- * 1.20 m of pitch and a 56 px robot, and on a 390 px phone that was still a passage of play with
- * most of a panel of empty carpet under it. 0.80 m covers 0.77 m across the frame, which is two
- * hulls and the ball between them, and puts the same robot at 87 px. The failure panel is squarer,
- * so its across-frame coverage is about 1.16 x distance: 0.92 m covers 1.07 m and puts its robot at
- * 62 px against 50 before. Both numbers are chosen for the phone, which is the narrow case; on
- * desktop the fov narrows back towards 42 deg and the same distance reads wider, which is the right
- * way round.
+ * THE MISSION NUMBERS CHANGED IN ROUND 6 AND THE OLD RATIONALE NO LONGER APPLIES. Round 5 framed
+ * this step at 0.80 m for two hulls and a ball, on the argument that a 180 mm robot has to be more
+ * than 30 px. Round 6 moved the window onto the goal (see SUCCESS WINDOW below), and a goal mouth is
+ * 1.8 m wide (`geometry.goalWidth`; 0.18 m deep, walls 0.155 m tall). A shot that covers 0.8 m of
+ * ground cannot hold it, so the choice is not "close or wide", it is "show the mouth or show the
+ * hulls", and the step's job now names the mouth.
  *
- * WHY THE ELEVATIONS DIFFER, and why the mission step is steeper than `cameraHome`. On a portrait
- * panel a camera tilted down puts everything nearer than its target in the bottom half of the
- * frame, and at 58 deg from 3 m that was half a panel of empty carpet under the play. Steepening it
- * compresses that near band - the ground in front of the target and the ground behind it end up at
- * similar range - so the same robots occupy more of the same panel. The failure step goes the other
- * way, to 42 deg, because it is framing ONE machine rather than a passage of play: flatter puts the
- * hull's own side in shot instead of its top plate, and its panel is short enough that the near
- * band never gets a chance to open up.
+ * HOW WIDE, arithmetically, measured against the live panels rather than assumed. `viewer.js` holds
+ * a 42 deg base fov and widens it by sqrt(2.2 / aspect) as the panel narrows. The mission stage is
+ * 678 x 599 px on a 1440 px desktop (aspect 1.13 -> 56.3 deg vertical) and 352 x 441 px on a 390 px
+ * phone (aspect 0.80 -> 65.0 deg), so the ground each covers ACROSS the frame is 1.21 x and 1.02 x
+ * the camera distance. At 2.40 m that is 2.90 m of pitch over 678 px and 2.44 m over 352 px: the
+ * 1.8 m mouth fits both with room either side. Simulated frame by frame against the live follow
+ * spring, both goalposts hold inside the frame for EVERY frame of the success loop on the desktop
+ * panel and for all but its last on the phone, where the far post slips past the edge at 63.58 s
+ * with the ball already 1.5 m from the goal centre. The cost is the robot: 180 mm is 42 px on
+ * desktop and 26 px on the phone, against round 5's 87 px. That is the trade, taken deliberately - a legible
+ * hull with no goal in the frame does not show a goal being scored.
+ *
+ * WHY 60 DEG, AND WHAT THE BLACK BAND IS. Behind the goal there is 0.6 m of run-off
+ * (`boundaryWidthGoalLine`), a 100 mm perimeter wall, and then the background colour: no sky, no
+ * crowd, nothing. From 2.4 m out, aimed at a ball that is ON the goal line, that wall is inside the
+ * frame no matter how the camera is pitched - clearing it would need better than 78 deg, which is a
+ * plan view. 60 deg is where the band above the boarding settles at 13-25% of the panel (worst
+ * whenever the ball is hard against the goal line, which this lap reaches twice - at the open, 0.04 m
+ * outside it, and across the 62.94-63.13 s crossing), while the rest of the frame stays on
+ * carpet and machine. Flatter grows the band; steeper flattens the mouth into a top-down rectangle.
+ *
+ * WHY 40 DEG AND NOT `cameraHome`'S 18. The approach runs from y +1.83 down to the mouth at y +0.4,
+ * so the camera has to sit up-field on the +y side for the mouth to stay AHEAD of the ball while the
+ * ball travels. At the old azimuth the FAR POST projects at -1.20 of half-width on the phone at the
+ * moment of the shot - off the edge, with the goal centre back at -0.64 and half the mouth simply
+ * not on the panel - and the whole mouth is in frame for only 49% of the lap. At 40 deg that post
+ * sits at -0.77 at the same instant and the mouth holds for the whole lap, which is what makes the
+ * crossing read as a crossing rather than as a cut to a ball that is suddenly in a net.
+ *
+ * ONE KNOWN OCCLUSION, kept because it is the event. Polaris 6 is 0.14 m off the ball as it crosses
+ * - that proximity IS the last touch that makes this an own goal - so for about a tenth of a second
+ * the keeper's hull covers the ball from this bearing. No azimuth removes it: the two are 6 deg
+ * apart as seen from any camera that also holds the mouth. The ball reappears inside the goal from
+ * 63.0 s and stays visible through the rebound.
  *
  * The follow translates camera and target together, so what is written here is the OFFSET the shot
  * keeps for the whole step; the absolute pair is that offset applied to the tracked point at the
  * instant each window opens, which is what stops the first follow frame from jumping.
  */
+// Absolute pair for the focus point where the window opens at 61.78 s: the smoothed ball track is
+// at scene (-5.958, -0.218), 0.04 m outside its own goal line. From the first follow frame on, only
+// the offset matters.
 const MISSION_CAMERA = {
-  position: { x: -1.228, y: 0.779, z: 1.742 },
-  target: { x: -1.562, y: 0.06, z: 1.634 },
+  position: { x: -5.038, y: 2.138, z: -0.989 },
+  target: { x: -5.958, y: 0.06, z: -0.218 },
 };
 
 // Absolute pair for bot 8 where it stands when the finding's window opens at 46.34 s: scene
@@ -266,17 +289,70 @@ const FAILURE_CAMERA = {
 /**
  * The mission experience. Schema: demo/UX-PORT-PLAN.md section 3.
  *
- * SUCCESS WINDOW. 0.5 to 7.5 s, inside the first live-play interval of the window (the free kick
- * held from before t = 0 comes into play immediately and the referee stops the game at 7.857 s).
- * Every robot both teams have on the field is tracked for all of it, and it ends 15 s before the
- * earliest finding starts at 22.5 s, so nothing on this step is a fault. This is the passage the
- * step LOOPS, which is a different job from the anatomy pose above: a loop wants play, a hero pose
- * wants one robot on its own, and no second in this payload is both.
+ * SUCCESS WINDOW. 61.78 to 63.60 s, 1.82 s at 1x: the one goal in this payload. Round 5 looped
+ * 0.5-7.5 s, a clean stretch of passing chosen because no finding touched it; round 6's note on this
+ * screen was "show it scoring a goal", and a passage picked for containing nothing is the opposite
+ * of that. Every number below is measured off the decoded tracker and the exported referee track.
+ *
+ * WHAT THE LOOP SHOWS. The ball rebounds out of the goal at 61.76 s, runs up to Ferrum 12, and
+ * Ferrum 12 kicks it back at 62.6897 s from (-5.223, 1.831) at 6.07 m/s. The tracked ball clears the
+ * goal line at about 62.94 s, reaches 0.167 m behind it at 63.013 s, comes off the back wall, is
+ * back over the line at 63.13 s and is 1.5 m from the goal centre by the time the lap ends, rolling
+ * away down the pitch under the referee's HALT. The referee's own record puts the crossing at
+ * 62.739 s (`referee.goals[0].tBallCrossing`, which is also where the third live-play interval ends)
+ * and the score awarded at 77.183 s, 14.4 s of review later; the tracked ball and the game
+ * controller disagree by about two tenths, and both are in the window.
+ *
+ * IT IS AN OWN GOAL AND THE COPY MAY NEVER SAY OTHERWISE. The tracker attributes the shot to Ferrum
+ * 12. The game controller attributes the LAST TOUCH - the thing that decides the rule - to Polaris
+ * 6, our keeper, who is 0.14 m off the ball as it crosses. Polaris is the tracked fleet, so this is
+ * a goal CONCEDED. Robots converging, a ball crossing the line, a goal being scored in this passage:
+ * all true and all sayable. "Our robots scored" is false here and is banned on every surface that
+ * describes this step, in all four roles.
+ *
+ * NONE OF THE FLEET FAULTS TIE TO THIS GOAL. `kicker-charge`'s CHART window is 46.34-62.74 s, so it
+ * contains this passage and this success window necessarily overlaps it - a shared span, not a
+ * shared cause, which is exactly what the finding's own honesty note and the `goal-review` answer in
+ * `script.js` say. The fault MOMENT is untouched and stays exclusive to the failure step:
+ * `kicker-charge.loop` 53.477-54.627 s around t 53.977, eight seconds before this window opens.
+ * `experience.test.mjs` enforces that separation on the loop and the instant rather than on the
+ * chart span, for the same reason.
+ *
+ * WHY IT OPENS AT 61.78 AND NOT ON FERRUM 4'S TOUCHES AT 61.14 AND 61.20. Those touches are good
+ * build-up right up until you watch where the ball goes: the tracker has it behind x = -6 from
+ * 61.52 to 61.75 s, dead centre of the mouth, before it comes off the back wall. Nothing in the log
+ * calls that a goal and the game controller records one crossing, not two, but a loop that opened at
+ * 61.05 s would put a ball in the net twice inside one lap on a step whose copy says there was one
+ * goal. 61.78 s is the first sample with the ball back on the field side of the line.
+ *
+ * WHY IT CLOSES AT 63.60, WHICH IS THE NEAR SIDE OF A GAP AND NOT THE FAR SIDE. The follow spring in
+ * `stepFollow()` snaps instead of chasing when the point it is handed jumps further than
+ * `followTuning.snap` (3.0 m, summed over the axes), and a loop wrap is exactly such a jump - except
+ * that the comparison is against the LAGGING follow point, not against the focus track. On this
+ * passage the spring runs about a metre behind the ball, so a short tail leaves a short wrap jump,
+ * and there are TWO clean tails with a bad band between them:
+ *
+ *   63.60 s   wrap 0.82 m. No snap fires, but the spring absorbs it inside half a second and the
+ *             ball never leaves the panel - worst projection 0.74 of half-width on the phone,
+ *             simulated at 30, 45, 60, 90, 120 and 240 fps.
+ *   63.85 to 64.25 s   wrap 1.4-2.9 m. Too big for the spring to hide, too small to snap, so the
+ *             opening tenths of every lap have the ball off the panel. Do not end here.
+ *   64.55 s   wrap 3.81 m, which snaps clean. This is where round 6's first pass at the retime put
+ *             the tail, having found the snap threshold and stopped looking.
+ *
+ * The far tail is the one this file nearly took, and measuring the framing rather than eyeballing
+ * it is what argued it down. The ball runs 4.1 m in that window, and past 63.68 s the goal is out of
+ * frame entirely on both panels: a third of the lap is a ball rolling across empty carpet with no
+ * goal in it, on the one step whose note was "show it scoring a goal". At 63.60 s the whole mouth is
+ * in frame for the whole lap. The tail is not filler either: it is the ball coming out of the net
+ * and running 1.5 m off the goal centre, which is what makes the frames before it read as a ball
+ * that went in.
  *
  * CONTEXTUAL LABELS. Mission truth, and role-invariant. The roster is the one the log carries:
  * eight robots on one side, eleven on the other, which is what the game controller's
  * maxAllowedBots says and what the tracker shows for every sample of the passage. Score and block
- * are what the robots in it are doing.
+ * are the two things the robots in this passage are trying to do, which is as true of a conceded
+ * goal as of any other minute; neither label says who managed it.
  *
  * FAILURE. The existing `kicker-charge` finding owns the chart window, the replay loop, the instant,
  * the lit robot and the slow-motion flag; only the plotted pair is restated here, and it is the
@@ -320,7 +396,7 @@ export const EXPERIENCE = {
     ],
   },
   success: {
-    window: [0.5, 7.5],
+    window: [61.78, 63.6],
     camera: MISSION_CAMERA,
     loopLabel: 'success loop',
     contextualLabels: [

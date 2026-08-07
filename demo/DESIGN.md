@@ -392,6 +392,17 @@ mission timeline, aims its chart at `finding.focus` over `finding.window`, and p
 chart moves the mission clock, which moves the live replay: a block is a window onto one mission,
 not a private copy of it.
 
+**ROUND 6: the token no longer renders one combined card.** A claimed `{{ev:id}}` expands
+IN-STREAM, at its claimed spot, as three pieces that arrive one at a time: the chart (its own
+skeleton reservation, then reveal), the causal line streamed as ordinary chat prose (same
+NOTE_CHARS whole-sentence trim), then the replay (its own skeleton, then the live loop). Remaining
+authored prose stays buffered until the replay visibly resolves, so every evidence-bearing answer
+reads text -> chart -> text -> 3D in every path: scripted openers, authored follow-ups, live SSE.
+Only replay pieces ever host the shared WebGL context; chart pieces never do;
+`MAX_BLOCKS_PER_ANSWER` caps replay pieces per answer. No-WebGL visitors get chart + prose with no
+inert replay box. Append-only still holds: each piece has its own fixed-height reservation, the
+active reservation is the stream's follow target, and reader-initiated scroll is never reclaimed.
+
 `ingest.js` — the faux connect sequence between picker and demo: a mono terminal card streaming
 plausible lines (`alloy.begin("robots/sbr")`, `POST /v1/chunk 202 (14.2 KB)`, `mesh table
 alloy.fleet.balance +3894 rows`, `mission finalized → sbr-01.mcap`), ~2.5 s total, then auto-advance.
@@ -518,6 +529,14 @@ spinning without motion; slide-back; flippers articulate; highlight left track.
 
 The one mission on this page that is not synthetic all the way down, and the reason several of the
 contracts above exist. 110 s window, 19 tracked robots, mixed cadence (`rates`, not `rate`).
+
+**The mission step shows the goal (round 6).** `EXPERIENCE.success.window` loops the match's only
+goal (61.78-63.6 s) under an explicit 2.40 m / 60 deg elevation / 40 deg azimuth goal-mouth follow
+camera, not the near hull framing. Honesty rule: it is an OWN GOAL off our keeper (Polaris 6 by
+game-controller last touch, Ferrum 12's shot). "A goal was scored", "the ball crossed the line"
+are sayable; "our robots scored" is false and banned in all four roles. None of the synthesized
+fleet faults tie to this goal (they only share kicker-charge's chart span), consistent with the
+`goal-review` answer in script.js.
 
 **What is real.** Robot and ball tracks, yaw, the referee command timeline, the score, the cards,
 the kick attributions and the tracker's own `visibility` numbers are replayed sample for sample out

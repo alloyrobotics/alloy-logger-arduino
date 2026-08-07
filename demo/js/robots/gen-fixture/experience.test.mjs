@@ -131,10 +131,39 @@ for (const mission of MISSIONS) {
   const finding = (def.findings || []).find((item) => item.id === failure.findingId);
   ok(!!finding, `${mission} failure findingId "${failure.findingId}" resolves`);
   if (!finding) continue;
-  ok(
-    Array.isArray(finding.window) && !overlaps(successWindow, finding.window),
-    `${mission} success window does not overlap ${finding.id} ${JSON.stringify(finding.window)}`,
-  );
+
+  // THE SUCCESS STEP MUST NOT SPOIL THE FAULT, and round 6 changed what "the fault" means here.
+  //
+  // Until now this checked the success window against `finding.window`. That held while the two
+  // were the same thing, and round 5 stopped them being the same thing: a finding's `window` is the
+  // CHART span, written wide enough that the trace either side of the event means something (ssl's
+  // kicker sawtooth needs 16.4 s of it, and arm6's overtemp declares the whole 80 s log), while
+  // `loop` is the tight span the failure step actually replays. What a visitor must not meet early
+  // is the fault MOMENT - the replayed loop and the instant the finding points at - not the context
+  // the chart happens to plot around it. ssl's round-6 success window is the goal at 62.7 s, which
+  // is inside `kicker-charge`'s 46.34-62.74 s chart span and eight seconds clear of its 53.48-54.63 s
+  // loop: a shared span, not a shared cause, and the old assertion could not tell the two apart.
+  //
+  // So: no overlap with any REPLAY span, and no finding's instant inside the window. A finding with
+  // no `loop` replays its window (`flow.js`), so that is its replay span - except when the window is
+  // the whole log, which is a declaration that the channel is context for every second of the
+  // mission and which no success window could avoid. There the instant is the only guard, and it is
+  // the right one: it is the second the failure step seeks to.
+  for (const item of def.findings || []) {
+    const replay = Array.isArray(item.loop) ? item.loop : item.window;
+    const wholeLog = Array.isArray(replay) && replay[0] <= 0 && replay[1] >= def.duration;
+    const kind = Array.isArray(item.loop) ? 'loop' : 'window';
+    if (Array.isArray(replay) && !wholeLog) {
+      ok(
+        !overlaps(successWindow, replay),
+        `${mission} success window does not overlap ${item.id} ${kind} ${JSON.stringify(replay)}`,
+      );
+    }
+    ok(
+      !Number.isFinite(item.t) || item.t < successWindow[0] || item.t > successWindow[1],
+      `${mission} success window does not contain ${item.id} t=${item.t}`,
+    );
+  }
 
   const plotted = failure.plottedFields || finding.focus || {};
   const channel = (def.channels || []).find((item) => item.path === plotted.channel);

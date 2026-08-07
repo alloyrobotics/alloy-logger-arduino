@@ -1289,77 +1289,72 @@ input { font: inherit; color: inherit; }
 }
 .chat-send:hover { background: var(--blue-hi); }
 
-/* ====================================== 3c. the inline evidence block (js/core/embeds.js)
-   Round 3 collapsed chat / proof / follow-up into ONE surface. There is no layout mode left: the
-   demo screen is a full-height transcript, and the evidence a message cites is rendered inside the
-   message. `data-mode="chat"` survives as a single constant value because chat.js keys the wall's
-   answer typography off it and because analytics reports it; nothing branches on it any more.
-
-   A block is a chart, a causal line and a replay slot. Only ONE slot holds the shared WebGL
-   viewer at a time (the one nearest the reader's centre); the rest show a poster captured off that
-   same renderer at handover, or the mission's line art if no poster exists yet. */
-/* Header acquisition links no longer move with a layout mode, because there is no layout mode: the
-   demo screen is one settled surface from the first frame, so the header behaves the same the whole
-   way through. Desktop keeps both; the phone rules further down keep the header to one line. */
-
-.ev-embed {
-  position: relative;
+/* ====================================== 3c. inline evidence sequences (js/core/embeds.js)
+   A standalone evidence token expands at its exact place in the answer as three separate beats:
+   annotated chart, ordinary streamed causal prose, then the replay. The wrapper is intentionally
+   visually empty. Each visual piece owns its own fixed reservation, so a later arrival never changes
+   geometry above itself and only replay pieces can receive the shared WebGL viewer. */
+.ev-embed.ev-sequence {
+  display: flex; flex-direction: column; min-width: 0;
   margin: 16px 0 4px;
-  border: 1px solid var(--line-hi);
-  border-radius: 14px;
-  background: var(--canvas);
-  overflow: hidden;
 }
-/* The token reserves the final block dimensions immediately. The whole-block skeleton is held long
-   enough to be witnessed, then text, chart and replay fill in stages; ready resources stay covered
-   until embeds.js opens their presentation gate. */
-.ev-embed.is-reserved > * { visibility: hidden; }
-.ev-embed.is-reserved::after,
+.ev-piece {
+  position: relative; margin: 0;
+  border: 1px solid var(--line-hi); border-radius: 14px;
+  background: var(--canvas); overflow: hidden;
+}
+.ev-piece.is-staging > * { visibility: hidden; }
+.ev-piece.is-staging::after,
 .ev-embed-chart.is-loading::after,
 .ev-embed-3d.is-loading::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
+  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
   background: linear-gradient(105deg, #151515 16%, #202020 38%, rgba(255,255,255,.16) 50%, #202020 62%, #151515 84%);
-  background-size: 220% 100%;
-  animation: evLoad 1.25s ease-in-out infinite;
+  background-size: 220% 100%; animation: evLoad 1.25s ease-in-out infinite;
 }
 @keyframes evLoad { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 .ev-embed-head {
   display: flex; align-items: center; gap: 9px;
-  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  min-height: 41px; padding: 10px 14px; border-bottom: 1px solid var(--line);
   font-size: 12.5px; color: var(--tx);
 }
 .ev-embed-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: 0 0 auto; }
-.ev-embed[data-sev="alert"] .ev-embed-dot { background: var(--alert); }
-.ev-embed[data-sev="info"] .ev-embed-dot { background: var(--sage); }
+.ev-piece[data-sev="alert"] .ev-embed-dot { background: var(--alert); }
+.ev-piece[data-sev="info"] .ev-embed-dot { background: var(--sage); }
 .ev-embed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev-embed-win { flex: 0 0 auto; font-size: 10.5px; color: var(--tx-mute); }
 
-/* The chart is the ANNOTATION layer: minimal chrome, direct labels, the finding window shaded, and
-   the whole plot seekable. Its height is fixed rather than fluid because a transcript scrolls and
-   a percentage of an unbounded log means nothing. */
-.ev-embed-chart { position: relative; display: flex; height: 168px; border-bottom: 1px solid var(--line); }
+/* The annotated chart is one complete card. Direct labels, shaded finding window and the header keep
+   it self-describing even before the causal sentence arrives below it. */
+.ev-chart-piece { height: 210px; }
+.ev-embed-chart { position: relative; display: flex; height: 168px; }
 .ev-embed-chart .chart { padding: 8px 10px 4px; }
 
-.ev-embed-note {
-  margin: 0; padding: 12px 14px;
-  font-size: 13px; line-height: 1.5; color: var(--tx-body);
-  border-bottom: 1px solid var(--line);
+/* Reserve the causal sentence's final line-wrap before its first word appears. The invisible measure
+   and visible paragraph share one grid cell, so the prose behaves like normal chat text without
+   moving the replay reservation when a word wraps. */
+.ev-causal-reservation {
+  display: grid; min-width: 0; margin: 14px 2px 16px;
 }
+.ev-causal-reservation > * { grid-area: 1 / 1; }
+.ev-embed-note {
+  margin: 0; padding: 0;
+  font-size: 13px; line-height: 1.55; color: var(--tx-body);
+}
+.ev-causal-measure { visibility: hidden; pointer-events: none; }
+.ev-causal-text { position: relative; }
 
-/* The replay slot. `position: relative` is load-bearing: `.viewer` is `position:absolute; inset:0`
-   and is MOVED into whichever slot is live. */
+/* The replay is a second card appended only after the causal sentence has completed. No-WebGL
+   visitors never receive this reservation, so there is no inert 3D box below otherwise complete
+   evidence. `.ev-compat-art` exists only for the legacy no-WebGL probe and never enters layout. */
+.ev-replay-piece { margin-top: 0; }
 .ev-embed-3d { position: relative; aspect-ratio: 16 / 10; background: var(--canvas); }
 .ev-embed-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .ev-embed-art {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--tx-mute);
 }
 .ev-embed-art svg { width: min(42%, 200px); height: auto; }
+.ev-compat-art { display: none !important; }
 .ev-embed-play {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   z-index: 3; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
@@ -1367,19 +1362,18 @@ input { font: inherit; color: inherit; }
   border: 1px solid var(--line-hi); border-radius: 60px; padding: 7px 16px;
 }
 .ev-embed-play:hover { border-color: var(--blue-hi); color: var(--blue-hi); }
-.ev-embed.is-live { border-color: rgba(47,120,255,0.45); }
-
-/* The scrubber and the OrbitControls surface both want the pointer. In a fixed pane that was free;
-   inside a scrolling transcript it has to be declared, or a vertical drag started on the replay
-   both spins the camera and scrolls the page. */
+.ev-embed.is-live .ev-replay-piece { border-color: rgba(47,120,255,0.45); }
 .ev-embed-3d .v-canvas, .ev-embed-3d .v-scrub { touch-action: none; }
 .ev-embed-3d .v-hud { padding: 8px 12px 10px; }
 
 @media (max-width: 899px) {
-  .ev-embed { margin: 14px -4px 4px; border-radius: 12px; }
+  .ev-embed.ev-sequence { margin: 14px -4px 4px; }
+  .ev-piece { border-radius: 12px; }
+  .ev-chart-piece { height: 190px; }
   .ev-embed-chart { height: 148px; }
   .ev-embed-3d { aspect-ratio: 4 / 3; }
-  .ev-embed-note { font-size: 12.5px; padding: 11px 12px; }
+  .ev-causal-reservation { margin: 12px 4px 14px; }
+  .ev-embed-note { font-size: 12.5px; }
 }
 
 /* ================================================================= signup popup */
@@ -1593,7 +1587,7 @@ input { font: inherit; color: inherit; }
      is still a flash, and this one exists purely to draw the eye */
   .ev-chip.pulse { animation: none !important; box-shadow: none !important; }
   .stream-in { animation: none !important; opacity: 1; }
-  .ev-embed.is-reserved::after,
+  .ev-piece.is-staging::after,
   .ev-embed-chart.is-loading::after,
   .ev-embed-3d.is-loading::after {
     animation: none !important;
