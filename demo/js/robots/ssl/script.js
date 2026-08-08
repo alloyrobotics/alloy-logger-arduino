@@ -76,8 +76,10 @@ const def = {
     port: 'base-station telemetry link · 20 Hz',
     faultT: 53.977,
     label: 'kicker bank sag',
+    // Sentence three is ATTRIBUTION: MIT wants the notice to travel with the redistribution, and this
+    // strip renders on the robot step, the only step that draws the CAD. Notice: RTT-MODEL-NOTICE.md.
     provenance:
-      "Match motion and referee timeline come from real SSL tracking data (a professional match, 2026 season, teams renamed). Three onboard faults are synthesized training overlays, not claims about any real team's hardware; the bot 13 tracking loss is the log's own data.",
+      "Match motion and referee timeline come from real SSL tracking data (a professional match, 2026 season, teams renamed). Three onboard faults are synthesized training overlays, not claims about any real team's hardware; the bot 13 tracking loss is the log's own data. Robot model: RoboTeam Twente's published CAD, MIT licensed.",
     // Mission VOLUME, authored because this def's channels come from a lazily loaded payload and
     // the brief can reach a visitor with nothing built. 37,043 is the row-times-field total over
     // the six channels, read out of buildData() under node (/bot8/kicker 2201 x 2, /bot8/power

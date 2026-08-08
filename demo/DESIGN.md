@@ -530,6 +530,17 @@ spinning without motion; slide-back; flippers articulate; highlight left track.
 The one mission on this page that is not synthetic all the way down, and the reason several of the
 contracts above exist. 110 s window, 19 tracked robots, mixed cadence (`rates`, not `rate`).
 
+**The anatomy step draws real published CAD (round 8).** The robot on "Understand the robot" is
+RoboTeam Twente's v2024 open-source mechanics (MIT), tessellated from their Full Assembly STEP
+into `rtt-model.mesh` and rendered as a transparent feature-edge wireframe; the live tour card's
+part group (omni / imu / kicker / dribbler) renders solid + emissive. Three of the four cards name
+parts INSIDE the machine, which no camera angle can show on a solid hull - the wireframe is what
+makes the capacitor bank, IMU board and roller visible at all. The asset loads lazily on that step
+only; every other SSL surface, and the step itself when the fetch fails, uses the round-7
+procedural hull. Credit is visible in the step's provenance block and the MIT text ships in
+RTT-MODEL-NOTICE.md. This does not change "What is real" below: the CAD is the robot's SHAPE, from
+a real team's published design; the fleet faults remain synthesized overlays.
+
 **The mission step shows the goal (round 6).** `EXPERIENCE.success.window` loops the match's only
 goal (61.78-63.6 s) under an explicit 2.40 m / 60 deg elevation / 40 deg azimuth goal-mouth follow
 camera, not the near hull framing. Honesty rule: it is an OWN GOAL off our keeper (Polaris 6 by

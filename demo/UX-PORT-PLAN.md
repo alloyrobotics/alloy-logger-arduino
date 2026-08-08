@@ -139,6 +139,15 @@ fallback) while its beat's mission seconds play. Parts a card names that had no 
 geometry now have small representational modules at their anchors (IMU boards, driver box,
 battery pack) so the highlight lights something real. Beat windows, one-live-card, leader
 lines, reduced-motion behaviour all unchanged.
+ROUND 8 (ssl robot step only): the tour draws RoboTeam Twente's published v2024 CAD
+(github.com/RoboTeamTwente/mechanics, MIT) as a transparent feature-edge wireframe, with the
+live card's part group rendered solid + emissive. The mesh ships as
+`demo/js/robots/ssl/rtt-model.mesh` (865 KB, 184 parts / 99,384 tris, groups omni/hull/imu/
+kicker/dribbler), fetched lazily on that step only; on any fetch failure the round-7
+procedural hull runs the tour unchanged. Attribution: MIT text in
+`demo/js/robots/ssl/RTT-MODEL-NOTICE.md` + a credit line in the step's provenance block.
+`.assetsignore` excludes `assets-src/` (the local CAD pipeline: 92 MB STEP + venv, never
+shipped); `.gitignore` note: `*.bin` is globally ignored, which is why the asset is `.mesh`.
 ROUND 7 also replaced the SSL hull: Ø180 mm x 147 mm from the log's own geometry packet,
 flat front chord with dribbler roller + kicker plate in the mouth, 4 omni wheels at
 +/-60 and +/-120 deg, IMU board on the top plate; ID dot patterns unchanged. The ssl

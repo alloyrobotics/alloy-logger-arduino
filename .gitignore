@@ -21,3 +21,8 @@ node_modules/
 .dev.vars
 .dev.vars*
 .env*
+
+# round 8: RTT CAD pipeline inputs stay local (92MB STEP + 1.3GB venv); scripts ARE tracked
+assets-src/rtt/full-assembly.step
+assets-src/rtt/cadenv/
+assets-src/rtt/*.npz

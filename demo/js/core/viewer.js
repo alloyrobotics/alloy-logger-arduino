@@ -1264,6 +1264,9 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     }
     glowPart = id || null;
     if (typeof sceneApi.setSubject === 'function') sceneApi.setSubject(glowPart);
+    // Same channel, same frame: a def's anatomy model draws the live part solid off this call, so the
+    // card, the leader, the halo and the model all change together.
+    if (anatomyModel && typeof anatomyModel.setSubject === 'function') anatomyModel.setSubject(glowPart);
     if (!glowPart) {
       if (glowHalo) glowHalo.visible = false;
       if (glowShellMat) glowShellMat.opacity = 0;
@@ -1318,6 +1321,59 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     glowHaloMat = null;
     glowHaloTex = null;
     partMeshSrc = null;
+  }
+
+  // ---------- anatomy display model ----------
+  //
+  // A def MAY ship a richer robot for the anatomy step alone, loaded only when that step opens:
+  //
+  //     robotDef.anatomyModel = (THREE, mount) => Promise<handle|null>
+  //     handle = { setSubject?(partId|null), dispose?() }
+  //
+  // WHY THE STEP AND NOT THE SCENE. The scene is whatever the mission is - for ssl it is a whole
+  // match, nineteen robots on a 12 by 9 m pitch, where a 180 mm machine is forty pixels and real CAD
+  // would be a megabyte spent on nothing. The anatomy step is the one screen that asks a visitor to
+  // look AT the machine, and it is a screen a def knows it is on. So the model is scoped to the step:
+  // opened by `setAnatomy()`, disposed by `clearAnatomy()`, and every other surface in the mission
+  // keeps the scene's own robot untouched.
+  //
+  // IT IS ALLOWED TO FAIL AND IT COSTS NOTHING WHEN IT DOES. The promise may reject (a 404, an
+  // offline visitor) or resolve null (the scene has not built its robot yet), and either way the step
+  // is already fully working without it: the rejection is swallowed, the scene's own robot stays, and
+  // the tour, the cards and the leader lines never knew. The token guards the other race - a visitor
+  // who leaves the step while the fetch is in flight gets the handle disposed on arrival rather than
+  // installed into a screen that is gone.
+  let anatomyModel = null;
+  let anatomyModelToken = 0;
+
+  function openAnatomyModel() {
+    if (typeof robotDef.anatomyModel !== 'function') return;
+    const token = ++anatomyModelToken;
+    let pending = null;
+    try {
+      pending = robotDef.anatomyModel(THREE, robotRoot);
+    } catch {
+      return;
+    }
+    Promise.resolve(pending)
+      .then((handle) => {
+        if (!handle) return;
+        if (disposed || token !== anatomyModelToken || !anatomyEl) {
+          if (typeof handle.dispose === 'function') handle.dispose();
+          return;
+        }
+        anatomyModel = handle;
+        // A beat is very likely already live by the time an 865 KB asset lands, so the model is told
+        // which part it arrived into rather than waiting for the next beat change to look right.
+        if (glowPart && typeof handle.setSubject === 'function') handle.setSubject(glowPart);
+      })
+      .catch(() => {});
+  }
+
+  function closeAnatomyModel() {
+    anatomyModelToken++;
+    if (anatomyModel && typeof anatomyModel.dispose === 'function') anatomyModel.dispose();
+    anatomyModel = null;
   }
 
   // ---------- directed anatomy tour ----------
@@ -1649,6 +1705,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   function clearAnatomy() {
     stopTour();
     clearGlow();
+    closeAnatomyModel();
     anatomyTick = null;
     anatomySlots = [];
     anatomyAnchors = null;
@@ -1734,6 +1791,11 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     // lines. Everything else re-projects with the render loop.
     if (!prefersReducedMotion()) anatomyTick = projectAnatomy;
     projectAnatomy();
+
+    // The step's own robot, if the def has a better one for this screen. Started here rather than
+    // inside the tour because it is a property of the STEP: a visitor who asked for reduced motion
+    // gets no tour and still gets the machine.
+    openAnatomyModel();
 
     // A tour is motion, and it is the whole screen's motion: refused outright when the visitor
     // asked for less of it, which leaves the static posed hero with all four labels attached - a

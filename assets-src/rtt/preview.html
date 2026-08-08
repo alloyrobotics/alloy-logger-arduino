@@ -1,0 +1,104 @@
+<!doctype html>
+<!--
+  preview.html - a bench for the shipped asset, off the shipped reader.
+
+  This page imports `demo/js/robots/ssl/rtt-model.js` itself rather than reimplementing it, so what it
+  shows is what the anatomy step will show: same reader, same grouping, same materials, same edge
+  threshold. It exists because the alternative way to look at this model is to load the whole demo,
+  walk the flow to step 3 and wait for a tour beat, which is a slow loop to tune an edge angle in.
+
+      http://localhost:8642/assets-src/rtt/preview.html?part=kicker&az=40
+-->
+<meta charset="utf-8" />
+<title>RTT wireframe bench</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e12; color: #9fb3c8;
+    font: 12px/1.5 ui-monospace, monospace; }
+  #hud { position: fixed; left: 10px; top: 10px; white-space: pre; z-index: 2; }
+</style>
+<div id="hud">loading…</div>
+<script type="importmap">
+  { "imports": { "three": "../../demo/vendor/three.module.js" } }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { installAnatomyModel } from '../../demo/js/robots/ssl/rtt-model.js';
+
+  const q = new URLSearchParams(location.search);
+  const part = q.get('part');
+  const az = parseFloat(q.get('az') || '40');
+  const el = parseFloat(q.get('el') || '30');
+  const dist = parseFloat(q.get('dist') || '0.42');
+  const hud = document.getElementById('hud');
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e12);
+  // Roughly the viewer's rig: one key, one fill, plus ambient, so the live part is lit the way it
+  // will be lit in the demo.
+  scene.add(new THREE.HemisphereLight(0xbcd4ee, 0x0a0d11, 0.85));
+  const key = new THREE.DirectionalLight(0xffffff, 1.15);
+  key.position.set(0.6, 1.2, 0.4);
+  scene.add(key);
+
+  // The carpet, so "the robot sits on the ground" is visible rather than assumed.
+  const felt = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 1.2).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x11331f, roughness: 0.95 }),
+  );
+  scene.add(felt);
+
+  // Stand in for the demo's robot group: same name, and one dummy child so the procedural-hide and
+  // the restore-on-dispose both have something to act on.
+  const mount = new THREE.Group();
+  const bot = new THREE.Group();
+  bot.name = 'bot_y8';
+  const stub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09, 0.09, 0.147, 24).translate(0, 0.0735, 0),
+    new THREE.MeshStandardMaterial({ color: 0x884400 }),
+  );
+  bot.add(stub);
+  mount.add(bot);
+  scene.add(mount);
+
+  const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 20);
+  const a = (az * Math.PI) / 180;
+  const e = (el * Math.PI) / 180;
+  camera.position.set(Math.cos(a) * Math.cos(e) * dist, Math.sin(e) * dist, Math.sin(a) * Math.cos(e) * dist);
+  camera.lookAt(0, 0.07, 0);
+
+  const t0 = performance.now();
+  let handle = null;
+  try {
+    handle = await installAnatomyModel(THREE, mount, { bot: 'bot_y8' });
+  } catch (err) {
+    hud.textContent = `FAILED: ${err.message}`;
+  }
+  if (handle) {
+    const ms = (performance.now() - t0).toFixed(0);
+    if (part) handle.setSubject(part);
+    const h = handle.header;
+    hud.textContent =
+      `${h.source}\n${h.license} · ${h.groups.length} groups · ${h.groups.reduce((s, g) => s + g.tris, 0)} tris\n` +
+      `radius ${h.radius} m · height ${h.height} m\nloaded in ${ms} ms · stub hidden: ${!stub.visible}\n` +
+      `live part: ${part || 'none'}\n` +
+      h.groups.map((g) => `  ${g.id.padEnd(9)} ${String(g.parts).padStart(4)} parts ${String(g.tris).padStart(6)} tris`).join('\n');
+  } else if (!hud.textContent.startsWith('FAILED')) {
+    hud.textContent = 'installAnatomyModel returned null';
+  }
+
+  // Slow turntable, so a screenshot at a fixed wait is deterministic but liveness is visible.
+  renderer.setAnimationLoop(() => {
+    const t = (performance.now() - t0) / 1000;
+    if (q.get('spin') === '1') {
+      const b = a + t * 0.25;
+      camera.position.set(Math.cos(b) * Math.cos(e) * dist, Math.sin(e) * dist, Math.sin(b) * Math.cos(e) * dist);
+      camera.lookAt(0, 0.07, 0);
+    }
+    renderer.render(scene, camera);
+  });
+</script>

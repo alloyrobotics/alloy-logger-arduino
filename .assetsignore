@@ -38,3 +38,4 @@ package-lock.json
 .claude/
 preview-worker.js
 wrangler.preview.jsonc
+assets-src/

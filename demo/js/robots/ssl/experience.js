@@ -18,7 +18,6 @@
 // as this module lands, instead of going without for the rest of the session.
 
 import { findings } from './data.js';
-import { ROBOT_H, DRIB_OFF_X, DRIB_OFF_Y } from './scene.js';
 
 /** The finding the failure step isolates. It also decides which robot the anatomy step is about. */
 const FAILURE_ID = 'kicker-charge';
@@ -33,22 +32,48 @@ const ANATOMY_BOT = (findings.find((f) => f.id === FAILURE_ID) || {}).highlight 
 
 /**
  * Where each label attaches, as a point in the robot's OWN frame: +x is the dribbler face, +y is
- * up, +z is one side. The hull is a 180 mm cylinder 147 mm tall with a flat face 72.5 mm out, and
- * these are four real regions of it. Where the scene models the part itself the offset lands on that
- * geometry; where it does not, the point is the region of the hull the part is in, and the tour's
- * highlight marks it rather than inventing a mesh - a claim about hardware the log does not carry is
- * exactly what this file may not make.
+ * up, +z is one side.
  *
- *   omni      on the base ring, near side, 85 mm out: where the wheels meet the carpet.
- *   imu       the centre of the top plate, just clear of it.
- *   kicker    inside the forward hull, below the band split, behind the dribbler mouth.
- *   dribbler  the bar's own offset, the same DRIB_OFF point update() poses the instance at.
+ * EVERY NUMBER HERE IS NOW MEASURED OFF REAL HARDWARE, which is the round 8 change. Round 7 authored
+ * these four points against the PROCEDURAL robot this scene draws from league convention - a 180 mm
+ * cylinder 147 mm tall, wheels on +/-60 and +/-120 degree mounts - and noted that where the scene
+ * modelled no part, the anchor was "the region of the hull the part is in". The anatomy step now
+ * draws RoboTeam Twente's published CAD instead (`rtt-model.js`), so three of these four points can
+ * stop being regions and start being parts, and the fourth has to say plainly that it is not one.
+ * The values come from `assets-src/rtt/anchors.py`, which measures the shipped asset in this exact
+ * frame; the bearings and radii it reports are the real machine's, and two of them disagree with the
+ * convention this file used to assume.
+ *
+ *   omni      -135 deg, 78.7 mm out, 26.5 mm up: the centre of the rear wheel on the +z side. Round 7
+ *             put this at 111 degrees and 12 mm up, between two wheels and near the carpet, because
+ *             the procedural base mounts its rear wheels at 120 degrees. Twente's are at 135, and the
+ *             wheel centre is 26.5 mm up on a 53 mm wheel.
+ *   imu       the hull axis, 134.5 mm up: just clear of the top-plate control boards, whose own tops
+ *             measure 133.9 mm. THIS IS THE ONE ANCHOR THAT IS STILL A REGION AND NOT A PART, and the
+ *             reason is in RTT-MODEL-NOTICE.md: Twente's published assembly names no IMU anywhere in
+ *             its 972 parts, so there is nothing here to point at and nothing may be invented. What
+ *             the card's claim is actually about - orientation tracked while a controller closes the
+ *             motion loop - happens on this board stack, so the marker sits over it. Kept on the axis
+ *             at x = z = 0 deliberately: the tour's wide shot and its basis both hang off this anchor
+ *             (see ANATOMY_TOUR), so moving it sideways would re-frame the whole step. Round 7 had it
+ *             at 149 mm, which on the real 139 mm robot floats above the machine entirely.
+ *   kicker    -16 mm back, 42 mm up, on the hull axis: the centre of the capacitor bank, which is the
+ *             two 35 mm WCAP-AIG5 electrolytics measured at z -70 and +60 mm. The card names a bank and
+ *             this IS the bank, which round 7 could only gesture at with a point inside the forward
+ *             hull. THE MIDPOINT AND NOT ONE OF THE TWO, which is a correction made from the rendered
+ *             frame: anchored on the -z capacitor, the halo sat out on one flank while the beat drew
+ *             the solenoid and chipper solid in the middle of the machine, so one card marked two
+ *             places. On the axis the marker sits over the bank and the mechanism it feeds together,
+ *             and the beat's 35 mm halo still reaches toward both capacitors.
+ *   dribbler  71.6 mm forward, 42.7 mm up: the centre of the dribbler bar. The procedural roller sits
+ *             15 mm lower (DRIB_OFF_Y), well inside this beat's 35 mm halo, so the marker still lands
+ *             on the roller on the fallback path where the CAD never loaded.
  */
 const PART_OFFSETS = [
-  ['omni', -0.03, 0.012, 0.08],
-  ['imu', 0, ROBOT_H + 0.002, 0],
-  ['kicker', 0.045, 0.055, 0],
-  ['dribbler', DRIB_OFF_X, DRIB_OFF_Y, 0],
+  ['omni', -0.0556, 0.0265, 0.0557],
+  ['imu', 0, 0.1345, 0],
+  ['kicker', -0.016, 0.042, 0],
+  ['dribbler', 0.0716, 0.0427, 0],
 ];
 
 /**
@@ -176,10 +201,20 @@ const ANATOMY_CAMERA = {
  * frame - a third of the panel is flat black. At 30 to 34 deg the horizon sits just under the top
  * edge and the whole panel is carpet and machine.
  *
- * THE HALO RADII. This scene models no wheel, capacitor, IMU or roller as its own mesh, so the
- * highlight has no meshes to sleeve and falls back to an anchored marker per part - and its size is
- * therefore authored here rather than measured off geometry. Each is about the size of the real part
- * on a 180 mm robot: a 45 mm wheel, a 35 mm IMU board, a 45 mm bank, a 35 mm roller.
+ * THE HALO RADII. The highlight's shell layer sleeves a part's own meshes when the scene offers them
+ * through `sceneApi.partMeshes()`, and this scene offers none: nineteen robots share two geometries,
+ * so there is no per-part mesh handle to hand over, and the highlight falls back to an anchored
+ * marker. That is still true in round 8 and it is deliberate. The CAD model the anatomy step loads
+ * arrives ASYNCHRONOUSLY, some way into a tour the viewer has already memoised its mesh map for, so
+ * bolting the shell onto it would be a race with two outcomes and no way to tell which one a visitor
+ * got. The wireframe answers the same question better anyway: the part the live card names is drawn
+ * SOLID inside a transparent machine (`rtt-model.js`), which is a stronger statement than a glow, and
+ * the halo stays as the marker that says look here.
+ *
+ * The radii are therefore still authored rather than measured off geometry - but they are now authored
+ * against parts that have been measured. Each is about the size of the real thing on Twente's robot:
+ * a 53 mm wheel, the top-plate board stack, a 35 mm bank capacitor (round 7 guessed 45 mm at this
+ * beat, before there was a part to measure), a 14 by 72 mm roller.
  */
 const ANATOMY_TOUR = {
   hold: 2900,
@@ -200,7 +235,7 @@ const ANATOMY_TOUR = {
   beats: [
     { part: 'omni', window: [2.62, 4.42], glow: 0.045 },
     { part: 'imu', window: [0.7, 1.62], glow: 0.035 },
-    { part: 'kicker', window: [4.42, 5.92], glow: 0.045 },
+    { part: 'kicker', window: [4.42, 5.92], glow: 0.035 },
     { part: 'dribbler', window: [53.5, 54.08], glow: 0.035 },
   ],
 };
@@ -460,6 +495,24 @@ export function sceneAnchors(THREE, mount) {
 export function applyExperience(def) {
   def.experience = EXPERIENCE;
   def.sceneAnchors = sceneAnchors;
+  /**
+   * The anatomy step's display model: RoboTeam Twente's CAD, as a transparent wireframe with the live
+   * card's part drawn solid. Read by `viewer.setAnatomy()` through the `anatomyModel` channel
+   * documented in viewer.js, and by nothing else - so the picker, the mission goal loop, the failure
+   * step and the chat replays all keep the procedural hull, which is what nineteen robots on a pitch
+   * have to be drawn as.
+   *
+   * A DYNAMIC IMPORT INSIDE A LAZY MODULE, for two separate reasons. The eager budget is the first:
+   * `ssl-eager-size.test.mjs` walks static imports from `script.js` and holds them under 60 KB with
+   * about two hundred bytes spare, and while this file is already behind that boundary, the reader and
+   * its 865 KB asset have no business being fetched by a visitor who opens the picker and leaves. The
+   * second is the honest one: the fetch can fail, and a failure here has to cost nothing. This
+   * promise rejecting - a 404, an offline visitor, a truncated asset, a payload whose roster has no
+   * bot 8 - leaves the step exactly as round 7 shipped it, with the procedural robot posed under four
+   * labels and a working tour. The viewer swallows the rejection for precisely that reason.
+   */
+  def.anatomyModel = (THREE, mount) =>
+    import('./rtt-model.js').then((m) => m.installAnatomyModel(THREE, mount, { bot: ANATOMY_BOT }));
   // Read by `viewer.setAnatomy()`, off the def rather than out of the parts array, because it is
   // one spec for the whole step rather than four per-card ones and the flow hands the viewer only
   // the parts. Lands with this module, so a viewer mounted before the payload simply has no tour.
