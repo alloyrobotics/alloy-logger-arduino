@@ -9,11 +9,9 @@
 // the message (core/embeds.js), so the fixed viewer stage and telemetry pane, and the chat/proof/
 // follow-up mode machine that arranged them, no longer exist.
 //
-// `#/` is not a screen. It is the DOOR, and where it opens depends on whether this visitor has
-// already answered the one question the demo asks: a first-timer gets the role fork, someone who
-// has forked is sent straight into the mission their role is guided to. The four-card picker is
-// still first-class, it is just no longer the landing: it lives at #/missions and every screen
-// after the fork carries a link to it.
+// `#/` is not a screen. It is the DOOR, and it always opens on the four-card mission library.
+// A first-time visitor picks a mission, chooses their seat, then enters that mission. A visitor
+// whose role is already known skips the repeated seat question and enters the picked mission.
 //
 // ?robot=<id> on any load deep-links to that robot's BRIEF, not to its demo: the brief is where a
 // visitor is told what the mission was and what finding the fault costs today, and a deep link that
@@ -34,7 +32,7 @@ import { BRIEF_SEEN_PREFIX, createContext, GENERIC_ICON, briefSeen } from './cor
 import { createSignupPopup, createSignupTriggers } from './core/signup.js';
 import { createStart } from './core/start.js';
 import { consumeFlowHandoff, createFlow, hasFlowExperience } from './core/flow.js';
-import { adoptRole, getRoleId, hasRole, hasExperience, missionFor, DEFAULT_MISSION } from './core/role.js';
+import { adoptRole, getRoleId, hasRole, hasExperience } from './core/role.js';
 import { initAnalytics, track, capture } from './core/analytics.js';
 
 const GITHUB_URL = 'https://github.com/alloyrobotics/alloy-logger-arduino';
@@ -90,16 +88,10 @@ function sceneDataFor(def) {
 }
 
 // ---------------------------------------------------------------------------- start
-// The role fork. One question, one tap, and the only screen that decides which mission a visitor is
-// guided into. Built by core/start.js; this file owns nothing but the mount and where a tap goes.
+// The role fork. The mission has already been picked, so this screen only chooses the register used
+// by the rest of that mission. A direct #/start link still works and returns to the library.
 
 let startApi = null;
-
-/** The robot a role is guided into, gated on the registry so a re-pointed role cannot 404. */
-function missionForRole(role) {
-  const id = missionFor(role);
-  return getRobot(id) ? id : DEFAULT_MISSION;
-}
 
 /** Experience capability, including the temporary arm6 sequencing fallback in flow.js. */
 function flowEnabled(def) {
@@ -110,18 +102,19 @@ function connectTarget(def) {
   return flowEnabled(def) ? `#/connect/${def.id}/robot` : `#/connect/${def.id}`;
 }
 
-function buildStart() {
+function buildStart(pendingMissionId = null) {
   const mount = screens.start.querySelector('#start-mount');
   if (startApi) startApi.dispose();
   mount.innerHTML = '';
+  const pending = pendingMissionId ? getRobot(pendingMissionId) : null;
   startApi = createStart(mount, {
+    mission: pending && pending.id,
+    copy: pending
+      ? { sub: `Choose your seat to personalize the ${PICKER_TITLES[pending.id] || pending.name} mission.` }
+      : null,
     // start.js persists the role and fires role_selected before this runs.
-    onPick: (role) => {
-      const def = getRobot(missionForRole(role));
-      location.hash = def ? connectTarget(def) : `#/connect/${DEFAULT_MISSION}/robot`;
-    },
-    onExplore: () => {
-      location.hash = '#/missions';
+    onPick: () => {
+      location.hash = pending ? connectTarget(pending) : '#/missions';
     },
   });
   // exposed for QA/integration assertions (page state, not pixels)
@@ -192,8 +185,7 @@ function buildPicker() {
   const open = screens.picker.querySelector('#picker-open');
   grid.innerHTML = '';
 
-  const roleMission = missionForRole(getRoleId());
-  pickerSelection = PICKER_ROBOTS.some((def) => def.id === roleMission) ? roleMission : PICKER_ROBOTS[0].id;
+  pickerSelection = PICKER_ROBOTS[0].id;
 
   function renderSelection() {
     grid.querySelectorAll('.rcard').forEach((card) => {
@@ -238,18 +230,23 @@ function buildPicker() {
     const card = grid.querySelector(`.rcard[data-robot="${pickerSelection}"]`);
     const art = card && card.querySelector('.rcard-art');
     if (!def || !art) return;
-    const r = art.getBoundingClientRect();
-    const svg = art.querySelector('svg');
-    const g = svg ? svg.getBoundingClientRect() : null;
-    heroHandoff = {
-      id: def.id,
-      at: performance.now(),
-      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
-      ghost: g && g.height ? { w: g.width, h: g.height } : null,
-      live: art.classList.contains('preview-live'),
-      phase: (pickerPreviews && pickerPreviews.phaseFor ? pickerPreviews.phaseFor(def.id) : null) || null,
-    };
-    location.hash = connectTarget(def);
+    const roleKnown = hasRole();
+    if (roleKnown) {
+      const r = art.getBoundingClientRect();
+      const svg = art.querySelector('svg');
+      const g = svg ? svg.getBoundingClientRect() : null;
+      heroHandoff = {
+        id: def.id,
+        at: performance.now(),
+        rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+        ghost: g && g.height ? { w: g.width, h: g.height } : null,
+        live: art.classList.contains('preview-live'),
+        phase: (pickerPreviews && pickerPreviews.phaseFor ? pickerPreviews.phaseFor(def.id) : null) || null,
+      };
+    } else {
+      heroHandoff = null;
+    }
+    location.hash = roleKnown ? connectTarget(def) : `#/start/${def.id}`;
   });
 
   renderSelection();
@@ -1014,6 +1011,7 @@ function resolveSceneData(next, def) {
 
 // ---------------------------------------------------------------------------- router
 let currentRoute = { name: 'start', id: null };
+let rolePresetAtBoot = false;
 /**
  * Monotonic, bumped once per routing pass. Anything awaited across a route change compares the
  * generation it captured against this before it touches the screen.
@@ -1030,10 +1028,8 @@ let routedOnce = false;
 /**
  * Five names, four of which are screens.
  *
- * 'home' is the fifth and it is not a screen: `#/` resolves to the role fork or straight into the
- * guided mission depending on what this visitor has already told us, and that decision is route()'s
- * because it needs the registry. Parsing it as either one here would bake a stored role into a pure
- * function of the URL.
+ * 'home' is the fifth and it is not a screen: `#/` and unknown hashes resolve to the mission
+ * library. A start route may carry the mission selected one screen earlier as `#/start/:id`.
  */
 function parseHash() {
   const h = (location.hash || '#/').replace(/^#/, '');
@@ -1050,7 +1046,7 @@ function parseHash() {
   if (parts[0] === 'connect' && parts[1]) return { name: 'connect', id: parts[1] };
   if (parts[0] === 'demo' && parts[1]) return { name: 'demo', id: parts[1] };
   if (parts[0] === 'missions') return { name: 'picker', id: null };
-  if (parts[0] === 'start') return { name: 'start', id: null };
+  if (parts[0] === 'start') return { name: 'start', id: parts[1] || null };
   return { name: 'home', id: null };
 }
 
@@ -1067,25 +1063,11 @@ function route() {
   routedOnce = true;
   const next = parseHash();
 
-  // `#/` is the door, not a screen. A visitor who has already forked is sent into their guided
-  // mission's brief; everyone else meets the fork. Decided BEFORE any teardown and before
-  // currentRoute moves, so the redirect's own pass does the leaving properly against the screen
-  // that is actually up.
+  // `#/` and unknown hashes are the door, not a screen. REPLACE, never assign: keeping a dead door
+  // behind the redirect makes Back bounce forward again. Every visitor starts from the same mission
+  // library, regardless of whether a role has already been adopted.
   if (next.name === 'home') {
-    if (hasRole()) {
-      // REPLACE, never assign. `location.hash = ...` pushes, so the entry the visitor came in on
-      // (`#/`) stays behind the redirect: pressing Back returns to the door, which redirects
-      // forward again, and the demo becomes a tab you cannot leave with the back button. Replacing
-      // swaps the door for the mission in place, and the entry BEFORE the demo stays reachable.
-      // The path and query are kept so this stays a fragment change and never re-boots the page,
-      // which is the same reason boot()'s deep link uses replace().
-      const id = missionForRole(getRoleId());
-      const def = getRobot(id);
-      const target = briefSeen(id) ? `#/demo/${id}` : def ? connectTarget(def) : `#/connect/${DEFAULT_MISSION}/robot`;
-      location.replace(location.pathname + location.search + target);
-      return;
-    }
-    location.replace(location.pathname + location.search + '#/start');
+    location.replace(location.pathname + location.search + '#/missions');
     return;
   }
 
@@ -1099,6 +1081,19 @@ function route() {
   }
 
   const def = next.id ? getRobot(next.id) : null;
+
+  // Review and embed URLs may arrive with both a preset role and a pending mission. The plain
+  // #/start review frame remains the fork, but the new pending route does not ask the adopted role
+  // a second time.
+  if (next.name === 'start' && next.id && rolePresetAtBoot && hasRole() && def) {
+    location.replace(location.pathname + location.search + connectTarget(def));
+    return;
+  }
+
+  if (next.name === 'start' && next.id && !def) {
+    location.replace(location.pathname + location.search + '#/missions');
+    return;
+  }
 
   if (next.name !== 'picker' && next.name !== 'start' && !def) {
     // A generated demo is not in the registry until its def.json has landed. Resolve it and
@@ -1155,7 +1150,7 @@ function route() {
     show('start');
     // after show(): the panel is measured by nothing, but a screen built into a hidden section
     // cannot take focus, and the fork is the one screen a keyboard visitor lands on cold
-    buildStart();
+    buildStart(next.id);
     // Focus the fork only when the visitor NAVIGATED here (the picker's "Pick your seat" link, a
     // Back press). Not on a cold load: stealing focus there would scroll a fresh landing down to
     // the cards and paint a focus ring on a visitor who arrived with a mouse.
@@ -1248,7 +1243,7 @@ function boot() {
   // Adoption runs before analytics reads the stored role and before the doorway router decides
   // where #/ opens. The query string stays in place, exactly like the ?robot= deep link below.
   const deepRole = q.get('role');
-  if (deepRole != null) adoptRole(deepRole);
+  if (deepRole != null) rolePresetAtBoot = !!adoptRole(deepRole);
 
   // CTA hrefs. A ?src=<channel> tag on the demo URL (dm, dm_fu, bio) is forwarded into the
   // setup-org CTAs as utm_content "<channel>-demo", same idea as the landing page's passthrough,

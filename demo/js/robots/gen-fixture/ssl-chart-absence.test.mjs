@@ -140,7 +140,10 @@ async function openChart(robot, channel, fields) {
 const traceAt = (t) =>
   page.evaluate((tt) => {
     const d = window.__demo;
-    const canvas = document.querySelector('.chart-canvas');
+    // ROUND 7: read the probed chart's OWN canvas. A global querySelector can catch a not-yet-torn-
+    // down canvas from the previous section's screen, and pixels read off one canvas with a mapping
+    // computed from another chart's plot/domain probe the gutter, not the trace.
+    const canvas = d.chart.canvas;
     const c = canvas.getContext('2d');
     const dpr = canvas.width / canvas.clientWidth;
     // The gutters are measured per frame off the real tick labels, so the mapping has to come from
@@ -151,8 +154,13 @@ const traceAt = (t) =>
     const img = c.getImageData(Math.max(0, x - 10), 0, 21, canvas.height).data;
     let hits = 0;
     for (let i = 0; i < img.length; i += 4) {
-      // #2f78ff with a tolerance for the line's antialiased edges
-      if (Math.abs(img[i] - 0x2f) < 40 && Math.abs(img[i + 1] - 0x78) < 40 && img[i + 2] > 0xb0) hits++;
+      // Blue-dominant, i.e. #2f78ff AND its darker variants under the focus-window shade overlay.
+      // ROUND 7: the old exact-bright match (|r-0x2f|<40, |g-0x78|<40, b>0xb0) read a trace that
+      // IS drawn but sits under the finding-window shade as "absent", which is the opposite of
+      // what this file exists to prove: a masked gap draws NOTHING, at any brightness, so
+      // presence only needs the pixel to be the trace's hue. Background greys (r~g~b), grid
+      // lines, white text and the red alert marker all still fail this predicate.
+      if (img[i + 2] > 0x60 && img[i + 2] > img[i] + 0x18 && img[i + 1] > img[i]) hits++;
     }
     return hits;
   }, t);
@@ -172,7 +180,10 @@ async function waitForTrace(t, timeoutMs = 5000) {
 const readoutAt = (t) =>
   page.evaluate((tt) => {
     const d = window.__demo;
-    const canvas = document.querySelector('.chart-canvas');
+    // ROUND 7: read the probed chart's OWN canvas. A global querySelector can catch a not-yet-torn-
+    // down canvas from the previous section's screen, and pixels read off one canvas with a mapping
+    // computed from another chart's plot/domain probe the gutter, not the trace.
+    const canvas = d.chart.canvas;
     const r = canvas.getBoundingClientRect();
     const p = d.chart.plot;
     const [d0, d1] = d.chart.domain;

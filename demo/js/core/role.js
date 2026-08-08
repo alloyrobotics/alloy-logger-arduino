@@ -1,11 +1,10 @@
 // role.js - the work-function fork, and the only place it is ever stored.
 //
-// The demo opens on `#/start` and asks ONE question: what do you do with robots? Not who are you.
-// The answer changes the register of the analyst's answers (a hobbyist wants the thing they can
-// change on their own bench, an engineer wants the micro detail, a lead wants the shape and the
-// cost, marketing wants the sentence they can repeat to a customer), it picks the mission the
-// visitor is guided into, it picks which incumbent tool the brief mocks up, and it rides the lead
-// record so a signup arrives already segmented.
+// After a visitor picks a mission, `#/start/:mission` asks ONE question: what do you do with robots?
+// Not who are you. The answer changes the register of the analyst's answers (a hobbyist wants the
+// thing they can change on their own bench, an engineer wants the micro detail, a lead wants the
+// shape and the cost, marketing wants the sentence they can repeat to a customer), it picks which
+// incumbent tool the brief mocks up, and it rides the lead record so a signup arrives segmented.
 //
 // Role ids are the CANONICAL names, the same four `worker/roles.js` whitelists, so the value in
 // localStorage, the PostHog super-prop, the chat POST and the leads column are one vocabulary.
@@ -24,7 +23,7 @@
 //   * analytics.js reads it as a PostHog super-prop, and re-registers on change
 //   * the brief (its mock family and its register), the old-way panel, the chat POST and the
 //     signup payload read it (getRole / effectiveRole)
-//   * app.js reads `missionFor` to decide where `#/` sends a returning visitor
+//   * analytics and lead payloads retain `missionFor` as the seat's historical suggested mission
 //
 // Deliberately DEPENDENCY-FREE and DOM-free. It is imported by analytics.js, so importing
 // analytics back would be a cycle, and it has to be safe to import from a worker-side test.
@@ -42,7 +41,7 @@ export const ROLE_STORAGE_KEY = 'alloy_demo_role';
  * @property {string} label         the card's headline, first person, one tap
  * @property {string} blurb         the card's second line: who that actually is
  * @property {string} kicker        mono over-line on the card
- * @property {string} mission       robot id this role is guided into (spec: the recommended demo)
+ * @property {string} mission       historical suggested mission, retained for analytics metadata
  * @property {string} register      persona key the worker prepends to the cached prefix
  * @property {string} answerStyle   human-readable register, for the persona block and for QA
  * @property {{tool:string, caption:string, port?:string}} oldWay  the serial-monitor wall's chrome
@@ -184,7 +183,7 @@ export const LEGACY_ROLE_IDS = Object.freeze({ operator: 'engineer', support: 'e
  */
 export const DEFAULT_ROLE_ID = 'engineer';
 
-/** The mission the picker escape hatch and an unknown role land on. */
+/** Historical fallback for callers that still request a role suggestion. */
 export const DEFAULT_MISSION = 'arm6';
 
 /**
@@ -234,8 +233,8 @@ export function roleById(id) {
 }
 
 /**
- * Robot id this role is guided into. An unknown or missing role gets the default mission rather
- * than nothing: the router must always have somewhere to send a visitor.
+ * Historical suggested mission for this role. An unknown or missing role gets the fallback rather
+ * than nothing. The mission picker now owns navigation, so this value is metadata only.
  *
  * @param {string|Role|null} role id or record
  * @returns {string} robot id

@@ -1018,6 +1018,28 @@ export function buildScene(THREE, mount) {
       for (const c of lib[bucket].contacts) contactPts.push({ node, x: c[0], y: c[1], z: c[2] });
     }
 
+    // ---- the two electronics modules the anatomy cards name
+    //
+    // The IMU behind /imu and the computer behind /compute are real hardware on this machine and the
+    // Bit-Bots CAD has neither, so the two cards naming them used to point at bare torso shell.
+    // Boxes on the torso link at their own anchor heights (0.15 and 0.04, see the anchor block
+    // below), mounted on the front of the chest frame and in the open lower cage so a frontal shot
+    // and the tour's highlight land on them. Dark shell, and no claim beyond "a box is bolted here".
+    //
+    // The x offsets are measured, not chosen: down the centreline (|y| < 0.035) the CAD's own front
+    // surface reaches x = 0.0497 across the IMU's z band and 0.0580 across the computer's, so each
+    // box's back face is inside that surface and its front stands 13 mm proud of it. Further out and
+    // they float in front of an open cage; further in and they are behind it.
+    const modules = [
+      [0.056, 0, 0.15, 0.014, 0.036, 0.026],
+      [0.06, 0, 0.045, 0.022, 0.054, 0.038],
+    ].map(([x, y, z, dx, dy, dz]) => {
+      const m = new THREE.Mesh(keep(new THREE.BoxGeometry(dx, dy, dz)), dark);
+      m.position.set(x, y, z);
+      torsoNode.add(m);
+      return m;
+    });
+
     // ---- floating name tag
     const tagTex = keep(nameTagTexture(THREE, spec.label, spec.accent));
     const tagMat = keep(
@@ -1091,6 +1113,7 @@ export function buildScene(THREE, mount) {
       torso: torsoNode,
       joints,
       mats,
+      modules,
       contactPts,
       tag,
       contact,
@@ -1731,6 +1754,7 @@ export function buildScene(THREE, mount) {
   };
   const vAnchor = new THREE.Vector3();
   let anchorMap = null;
+  let partMeshMap = null;
 
   /** Donna's runtime row, or null while nothing is built. */
   function donnaBot() {
@@ -1813,6 +1837,32 @@ export function buildScene(THREE, mount) {
     return anchorMap;
   }
 
+  /**
+   * The anatomy tour's highlight channel (`sceneApi.partMeshes()`, documented in viewer.js): the
+   * meshes on DONNA each of her four cards is about, so the tour can light the live one while the
+   * camera holds her whole body in frame. Head and legs are merged CAD buckets - the head link with
+   * its pan bracket, and both legs' thigh and shank, which is what the leg servos drive and where
+   * the CAD's own Dynamixel housings are; the other two are the boxes `buildRobot()` adds.
+   *
+   * @returns {Record<string, import('three').Mesh[]>}
+   */
+  function partMeshes() {
+    const bot = donnaBot();
+    if (!bot) return {};
+    if (partMeshMap) return partMeshMap;
+    const pick = (...buckets) =>
+      buckets.flatMap((b) =>
+        ['light', 'dark'].map((cls) => bot.group.getObjectByName(`${bot.key}:${b}:${cls}`)).filter(Boolean),
+      );
+    partMeshMap = {
+      head: pick('HeadTilt', 'HeadPan'),
+      imu: [bot.modules[0]],
+      servos: pick('LHipPitch', 'LKnee', 'RHipPitch', 'RKnee'),
+      compute: [bot.modules[1]],
+    };
+    return partMeshMap;
+  }
+
   function dispose() {
     mount.remove(root);
     root.traverse((o) => {
@@ -1834,6 +1884,7 @@ export function buildScene(THREE, mount) {
     hudNote = null;
     hudChipKey = null;
     lastPoseT = null;
+    partMeshMap = null;
     built = false;
     isProxy = false;
     D = null;
@@ -1848,6 +1899,7 @@ export function buildScene(THREE, mount) {
     followTuning,
     hudState,
     anchors,
+    partMeshes,
     // The viewer's default rig is wrong for an 11 x 8 m pitch with its own turf: an 80 m ground
     // plane and two 60 m grids would sit under the field, and a 1024^2 shadow map over an 18 m
     // frustum is ~18 mm/texel, which on a 0.09 m foot is a smear. Grounding is the baked contact

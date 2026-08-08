@@ -34,9 +34,10 @@ const ANATOMY_BOT = (findings.find((f) => f.id === FAILURE_ID) || {}).highlight 
 /**
  * Where each label attaches, as a point in the robot's OWN frame: +x is the dribbler face, +y is
  * up, +z is one side. The hull is a 180 mm cylinder 147 mm tall with a flat face 72.5 mm out, and
- * these are four real regions of it, not four invented meshes. No wheel, capacitor or IMU part is
- * modelled in this scene, and inventing one to point at would be a claim about hardware the log
- * does not carry.
+ * these are four real regions of it. Where the scene models the part itself the offset lands on that
+ * geometry; where it does not, the point is the region of the hull the part is in, and the tour's
+ * highlight marks it rather than inventing a mesh - a claim about hardware the log does not carry is
+ * exactly what this file may not make.
  *
  *   omni      on the base ring, near side, 85 mm out: where the wheels meet the carpet.
  *   imu       the centre of the top plate, just clear of it.
@@ -84,7 +85,8 @@ const ANATOMY_CAMERA = {
 };
 
 /**
- * The directed fly-through: four shots, one per card. Schema: `viewer.js`, "directed anatomy tour".
+ * The directed tour: one wide shot, four cards, four lit parts. Schema: `viewer.js`, "directed
+ * anatomy tour" and "part highlight".
  *
  * WHY FOOTAGE AND NOT A POSE. Three of these four cards make a claim about MOTION - an omni drive
  * moves in any direction without turning to face it, the IMU holds orientation while the controller
@@ -92,6 +94,17 @@ const ANATOMY_CAMERA = {
  * standing still under a slow orbit demonstrates none of them. Each beat below names the seconds of
  * the real tracker log where bot 8 is doing the thing its card claims, so every claim is made over
  * footage of the machine making it.
+ *
+ * WHY THERE IS ONE SHOT AND NOT FOUR, which is round 7 and the only structural change here. The four
+ * per-beat shots this replaces ran 0.82 m down to 0.38 m on a machine 180 mm across, and three of the
+ * four ended as hull details: a card about a capacitor bank over a curved band of hull, a card about
+ * a roller over a bar and a ball, with no robot around either. On this mission that is the worst
+ * version of the problem, because the parts these cards name are NOT distinct meshes - they are four
+ * regions of a 180 mm hull - so a close shot of a region is a close shot of a plain surface. The
+ * camera now holds one wide framing that keeps the whole robot, its wheels and the carpet it is
+ * driving on in frame for the whole tour, and the part the live card names is marked in the scene by
+ * the highlight's anchored halo (`viewer.js`, "part highlight"), which is drawn without depth test
+ * exactly so a part INSIDE a hull can still be pointed at honestly.
  *
  * WHY THESE SECONDS, from the decoded tracker (metres, m/s, rad/s; every number here is measured
  * off the payload, not authored):
@@ -101,112 +114,94 @@ const ANATOMY_CAMERA = {
  *                        all is the omni claim, and this is the only stretch in the log that is
  *                        both fast and yaw-free for a full 1.8 s.
  *   imu       0.70-1.62  the hard spin: yaw rate reaches -6.5 rad/s, about one revolution a second,
- *                        while the robot creeps at 0.1-0.9 m/s. Shot in the WORLD frame, or a
- *                        camera bolted to the hull would turn with it and the spin would vanish.
- *   kicker    4.42-5.92  the deceleration out of that run, 2.44 -> 1.04 m/s, shot square on the
- *                        forward hull, which is where the bank sits. The card states a hardware
- *                        fact rather than an event, so the beat is a hull detail on a moving robot
- *                        and claims no kick.
- *   dribbler  53.50-54.45  the ball closes from 0.40 m to 0.08 m of the hull centre while sitting
+ *                        while the robot creeps at 0.1-0.9 m/s. The wide shot is in WORLD axes, so
+ *                        the hull turns inside a frame that does not turn with it - which is the
+ *                        only way a spin is visible at all, and the reason the framing is not bolted
+ *                        to the hull.
+ *   kicker    4.42-5.92  the deceleration out of that run, 2.44 -> 1.04 m/s. The card states a
+ *                        hardware fact rather than an event, so the beat is a working robot with the
+ *                        bank marked inside its forward hull, and it claims no kick.
+ *   dribbler  53.50-54.08  the ball closes from 0.40 m to 0.08 m of the hull centre while sitting
  *                        within 20 deg of the dribbler's own bearing - the ball in the mouth - and
- *                        leaves on bot 8's real attributed kick at 53.977 s.
+ *                        leaves on bot 8's real attributed kick at 53.977 s. The window ends 0.1 s
+ *                        after the kick, which is what makes the release legible without spending
+ *                        the tail on a robot with no ball in frame.
  *
  * WHY THE DRIBBLER BEAT IS SOMEWHERE ELSE ENTIRELY, and why it is inside a finding window when the
  * other three are not. Bot 8 and the ball are within 0.32 m of each other, with the ball inside
  * 40 deg of the mouth, for exactly two stretches in 110 s: this one, and 6.9-7.5 s, where the ball
  * is not being carried at all - it is blue 10's shot rebounding off the hull - and where four other
- * robots sit inside 0.9 m, so a close shot is a wall of hulls with no ball in it. The rest of the
- * log has this robot a metre or more off the ball. A card that says a roller keeps the ball under
- * control, over 2.9 s of a robot nowhere near the ball, is the failure the first version of this
- * tour shipped, and no camera fixes it.
+ * robots sit inside 0.9 m. The rest of the log has this robot a metre or more off the ball. A card
+ * that says a roller keeps the ball under control, over 2.9 s of a robot nowhere near the ball, is
+ * the failure the first version of this tour shipped, and no camera fixes it.
  *
  * The cost is that these seconds sit inside `kicker-charge`'s 46.34-62.74 s window. That window is
  * a SYNTHESIZED capacitor-voltage overlay: nothing in the replayed motion here is a fault, the kick
  * at 53.977 s is real tracker data the finding's own honesty note calls out as real, and this card
  * is about the roller, not the charge circuit. Showing footage the failure step later re-reads is a
  * narrative cost. Showing a dribbler card over a robot with no ball is a truth cost, and that is
- * the one worth avoiding.
+ * the one worth avoiding. The failure step loops `kicker-charge.loop`, 53.48-54.63 s, which is these
+ * seconds plus half a second either side, so the visitor meets one kick twice on purpose: once as a
+ * card about a roller, once under a synthesized charge trace, and neither says the kick was faulty.
  *
- * ROUND 5 MADE THAT RE-READ LITERAL, and it is worth writing down. The failure step no longer loops
- * the whole 16.4 s window: it loops `kicker-charge.loop`, 53.48-54.63 s, which is these seconds
- * plus half a second either side. So step 1 shows this kick from 0.5 m off the roller and step 3
- * shows the same kick from 0.92 m off the hull with the capacitor trace under it. The truth
- * position is unchanged - one is a card about a roller, the other is a synthesized charge overlay,
- * and neither claims the kick was faulty - but the visitor now sees one kick twice on purpose,
- * which is a better reason to be here than the coincidence this paragraph used to describe.
+ * THE WIDE SHOT. Offsets in metres, resolved against the live rig every frame; in WORLD axes, so
+ * `pos` is [along the pitch's +x, toward -y, up] from the point the camera looks at. Hung off the
+ * `imu` anchor - the centre of the top plate, which is the hull's own vertical axis - and aimed
+ * 0.05 m under it, at the middle of a 147 mm hull.
  *
- * SHOTS. Offsets in metres, resolved against the live rig every frame: `pos` is [towards the
- * dribbler face, to the robot's right, up] from the point the camera looks at, `aim` nudges that
- * point off the part's own anchor, and the `End` pair is where each is by the end of the beat - the
- * difference between them is the camera move. Stand-offs run 0.82 m down to 0.38 m on a machine
- * 180 mm across, which is inside OrbitControls' own `minDistance` and is why the tour writes the
- * camera after `controls.update()` rather than through it.
+ * HOW FAR OUT, arithmetically. `viewer.js` holds a 42 deg vertical fov on the desktop column and
+ * widens it to about 65-70 deg on a phone, so the frame is 0.77x the stand-off tall on the desktop
+ * and about 1.4x tall by 0.9x wide on a phone. At 0.48 m the 180 mm hull is 42 per cent of the
+ * desktop panel's height and 43 per cent of the phone panel's width, with the wheels, the carpet
+ * and a field line or two around it - a machine on a pitch rather than a cropped surface, and still
+ * far enough back that the four corner cards have their corners. That distance is inside
+ * OrbitControls' `minDistance`, which is why the tour writes the camera after `controls.update()`
+ * rather than through it.
  *
- * WHY EVERY SHOT LOOKS DOWN AT LEAST 30 DEG. This scene has no sky: above the far boarding there is
- * the background colour and nothing else. A camera 0.2 m off the carpet on a 0.8 m stand-off is
- * pitched about 16 deg down, and on a portrait phone panel with a ~68 deg vertical fov that puts
- * the horizon a third of the way down - so a third of the panel is flat black, and the pitch the
- * robot is supposed to be driving across gets what is left. Every beat is pitched to 30 deg, which
- * lands the horizon just under the top edge and spends the whole panel on carpet and machine. The
- * stand-off DISTANCES are unchanged: each pos was rotated about its aim point, not moved away from
- * it, so the robot is the same size in frame as it was at the angle that had it floating on black.
+ * WHERE IT STANDS, and why it is a world bearing rather than a hull-relative one. Bot 8's recorded
+ * heading over these four passages runs 44 deg, 136 -> 10 deg (the spin), 56 -> 71 deg and 17 -> 21
+ * deg, so there is no single hull-relative bearing to stand on: the spin beat would drag the camera
+ * round the pitch at a revolution a second. A world bearing of 55 deg easing to 25 deg (measured from
+ * the pitch's +x axis, toward +y) sits ahead and to the left of the robot on three of the four
+ * passages - including the dribbler beat, where the ball arrives along +x and the nearest other
+ * robot spends the window 0.19 to 0.45 m off bot 8's RIGHT, which is the side this bearing is not on.
+ *
+ * THE DRIFT eases those 30 degrees of azimuth and 4 of elevation and back on a raised cosine over
+ * 13 s, at a constant 0.48 m radius, against an 11.6 s tour cycle so the two clocks never lock. It
+ * is what gives a 180 mm cylinder parallax, and it never cuts.
+ *
+ * WHY IT LOOKS DOWN 30 TO 34 DEG. This scene has no sky: above the far boarding there is the
+ * background colour and nothing else. A camera 0.2 m off the carpet at half a metre out is pitched
+ * about 16 deg down, and on a portrait phone panel that puts the horizon a third of the way down the
+ * frame - a third of the panel is flat black. At 30 to 34 deg the horizon sits just under the top
+ * edge and the whole panel is carpet and machine.
+ *
+ * THE HALO RADII. This scene models no wheel, capacitor, IMU or roller as its own mesh, so the
+ * highlight has no meshes to sleeve and falls back to an anchored marker per part - and its size is
+ * therefore authored here rather than measured off geometry. Each is about the size of the real part
+ * on a 180 mm robot: a 45 mm wheel, a 35 mm IMU board, a 45 mm bank, a 35 mm roller.
  */
 const ANATOMY_TOUR = {
   hold: 2900,
   // Two anchors that are already on the overlay: the top-plate centre and the dribbler bar. Their
-  // difference in the ground plane IS the direction the robot is facing, so the shots need no
-  // scene API the labels do not already use.
+  // difference in the ground plane IS the direction the robot is facing. The wide shot is in world
+  // axes and does not use it, but the viewer validates the basis before it will run a tour, and a
+  // hull-relative frame stays one line away if a later round wants one.
   basis: { origin: 'imu', forward: 'dribbler' },
+  glow: 0.04,
+  wide: {
+    anchor: 'imu',
+    frame: 'world',
+    pos: [0.23, -0.33, 0.27],
+    posEnd: [0.38, -0.18, 0.24],
+    aim: [0, 0, -0.05],
+    drift: 13000,
+  },
   beats: [
-    {
-      // Broadside, half a metre off the base ring, drifting forward along the hull as the run
-      // builds: the carpet and the field lines stream across the frame and the robot holds still
-      // in it, which is what a crab-walk looks like from a chase camera.
-      part: 'omni',
-      window: [2.62, 4.42],
-      pos: [-0.25, 0.56, 0.35],
-      posEnd: [0.19, 0.5, 0.31],
-      aim: [0.02, 0, 0.05],
-    },
-    {
-      // Above the top plate, pushing in while the machine spins under it. World frame: the point
-      // of the beat is that the robot turns and the camera does not.
-      part: 'imu',
-      window: [0.7, 1.62],
-      frame: 'world',
-      pos: [-0.36, 0.3, 0.36],
-      posEnd: [-0.24, 0.2, 0.26],
-    },
-    {
-      // Square on the forward face, dollying in from two-thirds of a metre to a hull detail.
-      part: 'kicker',
-      window: [4.42, 5.92],
-      pos: [0.52, 0.22, 0.32],
-      posEnd: [0.31, 0.1, 0.19],
-      aim: [0, 0, 0.012],
-    },
-    {
-      // Broadside, aimed ahead of the mouth so the carpet the ball is crossing is in shot,
-      // then settling back onto the hull as the ball arrives. Square-on rather than off the front
-      // quarter: the ball approaches along the robot's own heading, so a camera in front of the
-      // mouth has the ball flying at the lens and the gap between ball and roller - the thing the
-      // card is about - collapses to nothing. Broadside keeps that gap across the frame. The side
-      // is the robot's LEFT because the nearest other robot spends this beat between 0.19 and
-      // 0.45 m off its RIGHT, and would otherwise be the biggest object in the shot.
-      part: 'dribbler',
-      // Ends ON the kick, not a third of a second after it. The ball is at the mouth from 53.5 s
-      // and leaves on bot 8's attributed kick at 53.977 s, so the old 54.45 s tail spent the last
-      // third of the card's hold on a robot with no ball anywhere in frame - the exact reading the
-      // beat was moved here to avoid, arriving at the end instead of the beginning. 54.08 s keeps
-      // 0.1 s of the ball travelling away, which is what makes the roller's release legible, and
-      // stops before the ball is out of shot. Shorter beat, same hold: the passage simply plays
-      // slower, which at a 0.5 m stand-off it can afford to.
-      window: [53.5, 54.08],
-      pos: [0.09, -0.7, 0.41],
-      posEnd: [0.045, -0.5, 0.29],
-      aim: [0.08, 0, 0.03],
-      aimEnd: [-0.03, 0, 0.03],
-    },
+    { part: 'omni', window: [2.62, 4.42], glow: 0.045 },
+    { part: 'imu', window: [0.7, 1.62], glow: 0.035 },
+    { part: 'kicker', window: [4.42, 5.92], glow: 0.045 },
+    { part: 'dribbler', window: [53.5, 54.08], glow: 0.035 },
   ],
 };
 

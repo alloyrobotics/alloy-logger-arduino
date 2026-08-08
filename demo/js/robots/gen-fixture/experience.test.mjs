@@ -97,6 +97,41 @@ for (const mission of MISSIONS) {
       new Set((tour.beats || []).map((beat) => beat.part)).size === (tour.beats || []).length,
       `${mission} tour beats name distinct cards`,
     );
+    // ROUND 7 GRAMMAR. The camera holds ONE wide framing for the whole tour and the part the live
+    // card names is highlighted in the scene; the four per-beat close-ups are gone. Both halves are
+    // gated here, because both are the kind of thing that fails silently on a screenshot: a tour
+    // with no `wide` block is refused by `viewer.setAnatomy()` and falls back to the plain orbit, and
+    // a part with neither mesh handles nor a glow radius is a card whose highlight is invisible.
+    const wide = tour.wide || {};
+    const wideAnchor = typeof wide.anchor === 'string' && wide.anchor ? wide.anchor : (tour.basis || {}).origin;
+    ok(
+      Array.isArray(wide.pos) && wide.pos.length === 3 && wide.pos.every(Number.isFinite),
+      `${mission} tour ships one wide shot with a finite camera offset`,
+    );
+    ok(resolves(wideAnchor), `${mission} tour wide shot hangs off an anchor that resolves ("${wideAnchor}")`);
+    ok(
+      wide.frame === undefined || wide.frame === 'robot' || wide.frame === 'world',
+      `${mission} tour wide shot names a known frame`,
+    );
+    for (const key of ['pos', 'posEnd', 'aim', 'aimEnd']) {
+      if (wide[key] === undefined) continue;
+      ok(
+        Array.isArray(wide[key]) && wide[key].length === 3 && wide[key].every(Number.isFinite),
+        `${mission} tour wide shot ${key} is three finite metres`,
+      );
+    }
+    // The two ends of the drift are a DRIFT and not a dolly: a wide shot that halves its stand-off
+    // over 15 seconds is four close-ups with extra steps. Both ends inside 25 per cent of each other.
+    if (Array.isArray(wide.posEnd) && wide.posEnd.every(Number.isFinite)) {
+      const len = (v) => Math.hypot(v[0], v[1], v[2]);
+      const a = len(wide.pos);
+      const b = len(wide.posEnd);
+      ok(
+        Math.abs(a - b) <= 0.25 * Math.max(a, b),
+        `${mission} tour drift holds its stand-off (${a.toFixed(2)} m -> ${b.toFixed(2)} m)`,
+      );
+    }
+    const meshes = scene && typeof scene.partMeshes === 'function' ? scene.partMeshes() || {} : {};
     for (const beat of tour.beats || []) {
       const part = anchorOf(beat.part);
       ok(!!part, `${mission} tour beat "${beat.part}" names a card on the overlay`);
@@ -106,13 +141,18 @@ for (const mission of MISSIONS) {
           beat.window[1] <= def.duration,
         `${mission} tour beat "${beat.part}" window is ordered inside 0..${def.duration}`,
       );
-      for (const key of ['pos', 'posEnd', 'aim', 'aimEnd']) {
-        if (beat[key] === undefined) continue;
-        ok(
-          Array.isArray(beat[key]) && beat[key].length === 3 && beat[key].every(Number.isFinite),
-          `${mission} tour beat "${beat.part}" ${key} is three finite metres`,
-        );
-      }
+      ok(
+        beat.pos === undefined && beat.posEnd === undefined && beat.aim === undefined &&
+          beat.aimEnd === undefined && beat.frame === undefined,
+        `${mission} tour beat "${beat.part}" carries no camera of its own`,
+      );
+      const handles = meshes[beat.part];
+      const lit = Array.isArray(handles) ? handles.filter((m) => m && m.isMesh).length : handles && handles.isMesh ? 1 : 0;
+      const radius = Number.isFinite(beat.glow) ? beat.glow : tour.glow;
+      ok(
+        lit > 0 || (Number.isFinite(radius) && radius > 0),
+        `${mission} tour beat "${beat.part}" has something to light: ${lit} mesh(es) or a glow radius`,
+      );
     }
   }
 

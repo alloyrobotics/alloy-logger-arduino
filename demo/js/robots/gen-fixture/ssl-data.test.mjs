@@ -793,14 +793,38 @@ section('anatomy tour beats');
   const parts = (EXPERIENCE.anatomy.parts || []).map((p) => p.id);
 
   ok(beats.size === parts.length && parts.every((id) => beats.has(id)), 'every anatomy card has exactly one beat');
+  // ROUND 7: the camera is ONE wide shot held for the whole tour and the beats carry no framing at
+  // all - the part the live card names is highlighted in the scene instead. So the pose assertions
+  // move onto `wide`, and a beat that grows a `pos` back is a beat that has re-learned to cut.
+  const wide = tour.wide || {};
+  ok(
+    Array.isArray(wide.pos) && wide.pos.length === 3 && wide.pos.every(Number.isFinite),
+    'the tour ships one wide shot with a finite camera offset',
+  );
+  ok(
+    wide.frame === undefined || wide.frame === 'robot' || wide.frame === 'world',
+    'the wide shot names a known frame',
+  );
+  ok(
+    Math.hypot(wide.pos[0], wide.pos[1], wide.pos[2]) > 0.34,
+    `the wide shot stands far enough back to hold a 180 mm robot (${Math.hypot(...wide.pos).toFixed(3)} m)`,
+  );
   for (const beat of tour.beats || []) {
     const w = beat.window;
     ok(
       Array.isArray(w) && w[0] >= 0 && w[1] > w[0] && w[1] <= D.duration,
       `${beat.part} window is ordered inside 0..${D.duration} (${JSON.stringify(w)})`,
     );
-    ok(Array.isArray(beat.pos) && beat.pos.length === 3 && beat.pos.every(Number.isFinite), `${beat.part} has a finite start pose`);
-    ok(beat.frame === undefined || beat.frame === 'robot' || beat.frame === 'world', `${beat.part} names a known frame`);
+    ok(
+      beat.pos === undefined && beat.aim === undefined && beat.frame === undefined,
+      `${beat.part} carries no camera of its own: the wide shot owns the framing`,
+    );
+    // Nothing in this scene is a distinct mesh for these four parts, so every beat has to say how
+    // big its highlight marker is - a part with no mesh and no radius is an invisible highlight.
+    ok(
+      Number.isFinite(beat.glow) ? beat.glow > 0 : Number.isFinite(tour.glow) && tour.glow > 0,
+      `${beat.part} has a highlight radius, its own or the tour's default`,
+    );
   }
 
   // The subject, and the samples of it inside a beat. `present` matters: a card held over seconds

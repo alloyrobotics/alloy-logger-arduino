@@ -1,5 +1,6 @@
-// flow-roster.test.mjs - the public mission library and role routing contract.
+// flow-roster.test.mjs - the public mission library, seat metadata and entry-order contract.
 
+import { readFile } from 'node:fs/promises';
 import { ROBOTS, PICKER_ROBOTS, ROBOTS_BY_ID } from '../index.js';
 import { ROLES, missionFor, normalizeRoleId, DEFAULT_MISSION, LEGACY_ROLE_IDS } from '../../core/role.js';
 
@@ -33,7 +34,7 @@ ok(
 ok(ROBOTS_BY_ID.size === expectedCanned.length, `the canned registry starts with seven entries (${ROBOTS_BY_ID.size})`);
 ok(new Set(cannedIds).size === expectedCanned.length, 'the canned registry contains no duplicate id');
 
-section('role routing');
+section('role suggestion metadata');
 const expectedRoles = {
   hobbyist: 'arm6',
   engineer: 'ssl',
@@ -41,8 +42,8 @@ const expectedRoles = {
   marketing: 'donna',
 };
 for (const role of ROLES) {
-  ok(expectedRoles[role.id] === role.mission, `${role.id} is authored to ${expectedRoles[role.id]} (${role.mission})`);
-  ok(missionFor(role.id) === expectedRoles[role.id], `${role.id} resolves through missionFor()`);
+  ok(expectedRoles[role.id] === role.mission, `${role.id} retains ${expectedRoles[role.id]} as suggestion metadata (${role.mission})`);
+  ok(missionFor(role.id) === expectedRoles[role.id], `${role.id} suggestion resolves through missionFor()`);
   ok(PICKER_ROBOTS.some((def) => def.id === role.mission), `${role.id}'s mission is in the public roster`);
 }
 ok(DEFAULT_MISSION === 'arm6', `the unknown-role default is arm6 (${DEFAULT_MISSION})`);
@@ -54,6 +55,22 @@ ok(normalizeRoleId('hobbyist') === 'hobbyist', 'normalizeRoleId keeps the hobbyi
 ok(normalizeRoleId('marketing') === 'marketing', 'normalizeRoleId keeps the marketing canonical id');
 ok(normalizeRoleId('operator') === 'engineer', 'normalizeRoleId resolves the operator legacy alias');
 ok(normalizeRoleId('nonsense') === null, 'normalizeRoleId rejects garbage');
+
+section('entry order');
+const appSource = await readFile(new URL('../../app.js', import.meta.url), 'utf8');
+ok(
+  appSource.includes("location.replace(location.pathname + location.search + '#/missions')"),
+  'the default and unknown-hash doorway replaces into the mission library',
+);
+ok(
+  appSource.includes("location.hash = roleKnown ? connectTarget(def) : `#/start/${def.id}`"),
+  'a fresh mission pick carries the pending mission into the seat route',
+);
+ok(
+  appSource.includes("location.hash = pending ? connectTarget(pending) : '#/missions'"),
+  'Continue opens the pending mission and direct #/start returns to the library',
+);
+ok(!appSource.includes('missionForRole('), 'role suggestion metadata no longer drives app navigation');
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures) process.exit(1);

@@ -36,9 +36,9 @@ New public route table (parseHash):
 
 | Hash | Screen |
 | --- | --- |
-| `#/` | doorway: stored role -> `#/connect/<roleMission>/robot`; else `#/start` |
-| `#/start` | seat fork |
-| `#/missions` | mission library (4 cards) |
+| `#/` | doorway: always the mission library (round 7; a stored role skips the later seat fork, it no longer picks the mission) |
+| `#/start` | seat fork; `#/start/:id` carries the mission picked one screen earlier (round 7: the library now comes FIRST, fork second, Continue -> `#/connect/:id/robot`) |
+| `#/missions` | mission library (4 cards, the landing screen since round 7) |
 | `#/connect/:id` | legacy brief for non-experience defs (sbr, rescue, battle, g-*); experience defs redirect (location.replace) to `#/connect/:id/robot` |
 | `#/connect/:id/robot` | step 1/3 Understand the robot |
 | `#/connect/:id/mission` | step 2/3 Understand the mission |
@@ -132,6 +132,18 @@ cards in corner slots (2x2 rows on mobile); the leader lines tie each card to it
 projected anchor per the build contract (wall art had none; task requires them).
 ROUND 6 sized the cards up: desktop max-width 420px, 18.5px headings, 14.5px body
 (was 300/14/12); <=700px panels get 15px headings, 13px body.
+ROUND 7 changed the tour SHOT grammar: no more per-beat close-up cuts. The camera holds one
+wide authored framing that keeps the whole robot in frame for the entire tour, and the live
+card's part is highlighted in the scene (emissive/pulse on the part's meshes, anchored glow
+fallback) while its beat's mission seconds play. Parts a card names that had no distinct
+geometry now have small representational modules at their anchors (IMU boards, driver box,
+battery pack) so the highlight lights something real. Beat windows, one-live-card, leader
+lines, reduced-motion behaviour all unchanged.
+ROUND 7 also replaced the SSL hull: Ø180 mm x 147 mm from the log's own geometry packet,
+flat front chord with dribbler roller + kicker plate in the mouth, 4 omni wheels at
++/-60 and +/-120 deg, IMU board on the top plate; ID dot patterns unchanged. The ssl
+eager ceiling is now a documented flat 61440 B (raised from 59904 in
+ssl-eager-size.test.mjs, ~219 B margin at landing).
 
 ## 4. File ownership (exclusive, one writer per path)
 

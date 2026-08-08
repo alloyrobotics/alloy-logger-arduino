@@ -36,7 +36,7 @@ const SSL_DIR = path.join(HERE, '..', 'ssl');
 const ENTRY = path.join(SSL_DIR, 'script.js');
 
 /**
- * 57 KB. Growth past this belongs behind the lazy match-data boundary, not in front of it.
+ * 60 KB. Growth past this belongs behind the lazy match-data boundary, not in front of it.
  *
  * RAISED BY 1 KB FROM 57344 B ON 2026-07-29, for review-mandated honesty copy and for nothing else.
  * The graph stood at 57168 B - 176 B of margin nobody had noticed - and round 5 of the artifact
@@ -59,8 +59,21 @@ const ENTRY = path.join(SSL_DIR, 'script.js');
  * datapoints/channels (190 B, the volume line), cardProblem (50 B, picker), port (101 B),
  * the show-me suggestion chip (183 B) and chatProvenance (186 B). Removing every one of these puts
  * the graph 16 B under the old ceiling; there is no lazy-boundary configuration that closes it.
+ *
+ * RAISED BY 1536 B FROM 59904 B TO A FLAT 60 KB ON 2026-08-08, for the SSL robot's real geometry and
+ * for nothing else. Round 7 asked for an accurate robot instead of a banded cylinder: the shell now
+ * starts 46 mm up over an open wheel bay, with four omni wheels on their real +/-60 / +/-120 deg
+ * mounts, the dribbler mouth (two cheeks, a 66 mm roller, a flat kicker plate at ball height) and an
+ * IMU board on the top plate. That is +1369 B gzipped on the graph, and it cannot move behind the
+ * lazy boundary because the PICKER CARD and the brief pose a robot off the eager preview slice -
+ * the same property the preview-data.js assertion below exists to protect. It was paid for where it
+ * could be: the per-instance dribbler bar and its InstancedMesh went away (the roller is part of the
+ * shared mechanics geometry now, which also fixes a bar that held full opacity in front of a ghosted
+ * hull), the four per-robot materials collapsed onto one factory, and a dead `meshes` field went with
+ * them. GEOMETRY, unlike copy, does not grow again on its own: this is one hull and one set of
+ * mechanics, built once and shared by all nineteen robots. 219 B of margin is left.
  */
-const CEILING_BYTES = 59904;
+const CEILING_BYTES = 61440;
 
 let failures = 0;
 let checks = 0;

@@ -444,21 +444,38 @@ async function assertClean(tape, label) {
 async function fullWalk(viewport, label) {
   const run = await newPage(viewport);
   const { page, ctx, tape } = run;
-  await page.goto(`${server.origin}/demo/#/start`, { waitUntil: 'domcontentloaded' });
-  H.section(`${label}: seat, library and complete flow`);
-  H.ok(await waitFor(page, () => document.body.dataset.screen === 'start', 10000, 'seat fork'), `${label} opens the seat fork`);
-  H.ok((await page.locator('#screen-start .wordmark').count()) === 0, `${label} seat fork removes redundant AlloyLogger branding`);
-  H.ok((await page.locator('#screen-start .st-escape').count()) === 0, `${label} seat fork removes the bottom-center escape link`);
-  await page.click('.st-card[data-role="engineer"]');
-  H.ok((await page.locator('.st-continue:not(:disabled)').count()) === 1, `${label} seat fork has one enabled Continue CTA`);
-  await page.click('.st-continue');
-  H.ok(await waitStep(page, 'ssl', 'robot'), `${label} seat choice routes to the engineer mission`);
-  await page.click('#screen-flow:not([hidden]) .flow-id');
-  H.ok(await waitFor(page, () => document.body.dataset.screen === 'picker', 15000, 'mission library'), `${label} reaches the mission library`);
+  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
+  H.section(`${label}: library, seat and complete flow`);
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions', 10000, 'mission library'),
+    `${label} fresh entry opens the mission library`,
+  );
   H.ok((await page.locator('.rcard').count()) === 4, `${label} mission library contains four cards`);
   await page.click('.rcard[data-robot="ssl"]');
   await page.click('#picker-open');
-  H.ok(await waitStep(page, 'ssl', 'robot'), `${label} opens SSL at step 1`);
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'start' && location.hash === '#/start/ssl', 10000, 'pending SSL seat fork'),
+    `${label} mission choice opens the seat fork with SSL pending`,
+  );
+  H.ok((await page.locator('#screen-start .wordmark').count()) === 0, `${label} seat fork removes redundant AlloyLogger branding`);
+  H.ok((await page.locator('#screen-start .st-escape').count()) === 0, `${label} seat fork removes the bottom-center escape link`);
+  H.ok(
+    (await page.locator('.st-sub').textContent()).includes('SSL soccer fleet mission'),
+    `${label} seat fork names the pending mission`,
+  );
+
+  await page.goBack();
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions', 10000, 'library after Back'),
+    `${label} Back from the seat fork returns to the mission library`,
+  );
+  await page.click('.rcard[data-robot="ssl"]');
+  await page.click('#picker-open');
+  H.ok(await waitFor(page, () => document.body.dataset.screen === 'start', 10000, 'seat fork after repick'), `${label} can pick SSL again`);
+  await page.click('.st-card[data-role="engineer"]');
+  H.ok((await page.locator('.st-continue:not(:disabled)').count()) === 1, `${label} seat fork has one enabled Continue CTA`);
+  await page.click('.st-continue');
+  H.ok(await waitStep(page, 'ssl', 'robot'), `${label} Continue opens the pending SSL mission`);
   H.ok((await primaryCount(page)) === 1, `${label} robot step has one primary CTA`);
   if (label === 'mobile') await assertNoOverflow(page, 'mobile SSL robot step');
 
@@ -475,11 +492,53 @@ async function fullWalk(viewport, label) {
 await fullWalk({ width: 1440, height: 900 }, 'desktop');
 await fullWalk({ width: 390, height: 844 }, 'mobile');
 
+H.section('default, direct-start and adopted-role routing');
+{
+  const run = await newPage({ width: 1440, height: 900 });
+  const { page, ctx, tape } = run;
+  await page.goto(`${server.origin}/demo/#/not-a-route`, { waitUntil: 'domcontentloaded' });
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions', 10000, 'unknown-hash library'),
+    'an unknown hash resolves to the mission library',
+  );
+  await page.evaluate(() => { location.hash = '#/start'; });
+  H.ok(await waitFor(page, () => document.body.dataset.screen === 'start', 10000, 'direct start'), 'the direct #/start deep link still opens the seat fork');
+  await page.click('.st-card[data-role="hobbyist"]');
+  await page.click('.st-continue');
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions', 10000, 'library after direct start'),
+    'a direct seat change without a pending mission returns to the library',
+  );
+  await assertClean(tape, 'default and direct-start routing');
+  await ctx.close();
+}
+{
+  const run = await newPage({ width: 1440, height: 900 });
+  const { page, ctx, tape } = run;
+  await page.goto(`${server.origin}/demo/?role=engineer`, { waitUntil: 'domcontentloaded' });
+  H.ok(
+    await waitFor(page, () => document.body.dataset.screen === 'picker' && location.hash === '#/missions', 10000, 'role deep-link library'),
+    '?role=engineer still adopts silently and opens the mission library',
+  );
+  H.ok(
+    await page.evaluate(() => localStorage.getItem('alloy_demo_role') === 'engineer'),
+    '?role=engineer persists the canonical role at boot',
+  );
+  await page.click('.rcard[data-robot="drone"]');
+  await page.click('#picker-open');
+  H.ok(await waitStep(page, 'drone', 'robot'), 'an adopted role skips the repeated seat fork after mission pick');
+  H.ok(await page.evaluate(() => !location.hash.startsWith('#/start')), 'the adopted-role mission never lands on a start hash');
+  await page.evaluate(() => { location.hash = '#/start/arm6'; });
+  H.ok(await waitStep(page, 'arm6', 'robot'), 'a preset-role pending-start deep link is streamlined into its mission');
+  await assertClean(tape, 'adopted-role routing');
+  await ctx.close();
+}
+
 H.section('all 16 role and mission copy variants render in the live DOM');
 for (const role of ROLES) {
   const run = await newPage({ width: 1440, height: 900 }, { role });
   const { page, ctx, tape } = run;
-  await page.goto(`${server.origin}/demo/#/start`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${server.origin}/demo/`, { waitUntil: 'domcontentloaded' });
   for (const mission of MISSIONS) {
     const copy = getFlowCopy(mission, role);
     H.ok(await go(page, `#/connect/${mission}/mission`, 'flow'), `${role}/${mission} mission route opens`);

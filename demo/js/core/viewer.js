@@ -1088,44 +1088,295 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     }
   }
 
+  // ---------- part highlight ----------
+  //
+  // The tour's job is to say WHICH PART the live card is about, and a leader line is not enough on
+  // its own: a hairline ending in a 2.5 px dot on a 180 mm robot is findable if you already know
+  // where to look. So while a beat runs, the part it names is LIT in the scene, and it goes out
+  // when the beat does. That is what lets the camera stop cutting: a wide frame plus a lit part
+  // reads as "this bit of that machine", where a close-up reads as "some machine, cropped".
+  //
+  // THE MECHANISM, and why it is the viewer's rather than each scene's. Two layers, both owned here:
+  //
+  //   the shell   one additive copy of each of the part's own meshes, scaled 7 per cent about its
+  //               geometry's centre and parented TO that mesh, so it rides every joint, gait and
+  //               prop rotation for free and needs no per-frame bookkeeping. It is depth-tested
+  //               like any other surface, so a part behind the hull is correctly hidden - the shell
+  //               is a glow ON the part, and a glow that shines through a robot is a lie about
+  //               where the part is.
+  //   the halo    ONE billboarded sprite at the part's anatomy anchor, sized to the part, drawn
+  //               without depth test. This is the layer that survives a part that is INSIDE the
+  //               machine (an ssl capacitor bank behind a hull band, a computer in a torso cage) and
+  //               it is the whole highlight for a scene that exposes no mesh handles. It reads as a
+  //               marker rather than as geometry, which is the honest register for "the thing this
+  //               card names is in here".
+  //
+  // Scenes opt into the first layer with one additive, optional call, keyed by the same part ids the
+  // anchors already use:
+  //     sceneApi.partMeshes?.() -> { [partId]: THREE.Mesh | THREE.Mesh[] }
+  // Absent, or missing an id, or naming something that is not a plain mesh (an InstancedMesh, a
+  // sprite, a line) and that part gets the halo alone, at `beat.glow` or `tour.glow` metres. Nothing
+  // is cloned but the shell object itself: the geometry is shared with the mesh it belongs to, and
+  // the two materials are shared by every part, because exactly one part is ever lit.
+  //
+  // WHY NOT `sceneApi.setHighlight()`, which already exists. That is the FAULT highlight: every
+  // scene paints it alert red and the failure step means it as "this is the part that broke". A
+  // tour lighting parts red would tell a visitor on step 1 that four things are wrong with a robot
+  // that is working. This is a separate channel, in a separate colour, and the two never overlap -
+  // `flow.js` nulls the fault highlight when it opens the anatomy step.
+  const HILITE = 0x8ec6ff; // instrument blue: reads on all four scenes, and is not the alert red
+  const GLOW_SHELL = 1.07;
+  const GLOW_PULSE_MS = 1150;
+  const GLOW_FLASH_MS = 260; // the arrival brightening, so a beat change reads as a change
+  const GLOW_FALLBACK_R = 0.06;
+  let glowMap = null; // partId -> { shells: THREE.Mesh[], radius: number }
+  let glowShellMat = null;
+  let glowHaloMat = null;
+  let glowHaloTex = null;
+  let glowHalo = null;
+  let glowPart = null;
+  let glowFrom = 0;
+  let partMeshSrc = null; // memoised sceneApi.partMeshes()
+
+  /** A soft round falloff, drawn once. Additive, so the transparent edge costs nothing. */
+  function haloTexture() {
+    const size = 96;
+    const cv = document.createElement('canvas');
+    cv.width = size;
+    cv.height = size;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    // A ring rather than a filled dot: the middle of the falloff is where the PART is, and a solid
+    // core would wash the part out at exactly the moment the card asks you to look at it.
+    g.addColorStop(0, 'rgba(255,255,255,0.38)');
+    g.addColorStop(0.4, 'rgba(255,255,255,0.88)');
+    g.addColorStop(0.62, 'rgba(255,255,255,0.34)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.Texture(cv);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function ensureGlowAssets() {
+    if (glowShellMat) return;
+    glowShellMat = new THREE.MeshBasicMaterial({
+      color: HILITE,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    glowHaloTex = haloTexture();
+    glowHaloMat = new THREE.SpriteMaterial({
+      map: glowHaloTex,
+      color: HILITE,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+    });
+    glowHalo = new THREE.Sprite(glowHaloMat);
+    glowHalo.renderOrder = 6;
+    glowHalo.visible = false;
+    scene.add(glowHalo);
+  }
+
+  /** The part's meshes as an array, from the scene's optional map. */
+  function partMeshesOf(id) {
+    if (partMeshSrc === null) {
+      partMeshSrc =
+        typeof sceneApi.partMeshes === 'function' ? sceneApi.partMeshes() || false : false;
+    }
+    const raw = partMeshSrc ? partMeshSrc[id] : null;
+    if (!raw) return [];
+    return Array.isArray(raw) ? raw.filter(Boolean) : [raw];
+  }
+
+  /**
+   * Build (once) the shells for a part and measure how big its halo has to be.
+   *
+   * The radius comes off the geometry the part actually is, so a 26 mm driver chip and a 180 mm
+   * hull get markers in proportion to themselves rather than one authored number that is wrong for
+   * one of them. A part with no mesh handles falls back to what its beat asked for.
+   */
+  function glowFor(id, authored) {
+    if (!glowMap) glowMap = new Map();
+    const cached = glowMap.get(id);
+    if (cached) return cached;
+    ensureGlowAssets();
+    const shells = [];
+    const scaleV = new THREE.Vector3();
+    let radius = 0;
+    for (const obj of partMeshesOf(id)) {
+      if (!obj.isMesh || obj.isInstancedMesh || obj.isSkinnedMesh || !obj.geometry) continue;
+      const geom = obj.geometry;
+      if (!geom.boundingSphere) geom.computeBoundingSphere();
+      const bs = geom.boundingSphere;
+      if (!bs || !Number.isFinite(bs.radius)) continue;
+      const shell = new THREE.Mesh(geom, glowShellMat);
+      // Local transform that maps every vertex p to c + s(p - c): the shell grows about the
+      // geometry's own centre, so a mesh whose origin is off in its parent's frame (a fin, a jaw)
+      // is sleeved rather than dragged sideways.
+      shell.scale.setScalar(GLOW_SHELL);
+      shell.position.set(
+        bs.center.x * (1 - GLOW_SHELL),
+        bs.center.y * (1 - GLOW_SHELL),
+        bs.center.z * (1 - GLOW_SHELL),
+      );
+      shell.renderOrder = (obj.renderOrder || 0) + 1;
+      shell.frustumCulled = false;
+      shell.visible = false;
+      obj.add(shell);
+      shells.push(shell);
+      obj.updateWorldMatrix(true, false);
+      obj.getWorldScale(scaleV);
+      const s = Math.max(Math.abs(scaleV.x), Math.abs(scaleV.y), Math.abs(scaleV.z)) || 1;
+      radius = Math.max(radius, bs.radius * s);
+    }
+    const entry = {
+      shells,
+      radius: Number.isFinite(authored) && authored > 0 ? authored : radius || GLOW_FALLBACK_R,
+    };
+    glowMap.set(id, entry);
+    return entry;
+  }
+
+  /**
+   * Light one part, or none. Idempotent, so a re-entered beat does not restart the flash.
+   *
+   * A scene MAY also want to know which part the live card is about, for treatment the viewer
+   * cannot author from the outside - arm6 paints an instrument panel next to the part whose card
+   * makes a claim about a NUMBER, and only that one may be on screen. That is one more additive,
+   * optional call:
+   *     sceneApi.setSubject?.(partId|null)
+   * and it is deliberately the same channel as the glow rather than a second clock: the card, the
+   * leader, the highlight and anything the scene hangs off this all change on one frame.
+   */
+  function setGlowPart(id, authored) {
+    if (id === glowPart) return;
+    if (glowPart && glowMap) {
+      const prev = glowMap.get(glowPart);
+      if (prev) prev.shells.forEach((s) => (s.visible = false));
+    }
+    glowPart = id || null;
+    if (typeof sceneApi.setSubject === 'function') sceneApi.setSubject(glowPart);
+    if (!glowPart) {
+      if (glowHalo) glowHalo.visible = false;
+      if (glowShellMat) glowShellMat.opacity = 0;
+      if (glowHaloMat) glowHaloMat.opacity = 0;
+      return;
+    }
+    const entry = glowFor(glowPart, authored);
+    entry.shells.forEach((s) => (s.visible = true));
+    glowFrom = nowMs();
+  }
+
+  /** Breathe the lit part, and keep its halo on the anchor. Runs inside the tour's frame step. */
+  function stepGlow(now) {
+    if (!glowPart || !glowMap) return;
+    const entry = glowMap.get(glowPart);
+    if (!entry) return;
+    const phase = ((now - glowFrom) % GLOW_PULSE_MS) / GLOW_PULSE_MS;
+    const pulse = 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+    const flash = 1 + 0.85 * (1 - clamp((now - glowFrom) / GLOW_FLASH_MS, 0, 1));
+    glowShellMat.opacity = clamp((0.3 + 0.32 * pulse) * flash, 0, 1);
+    glowHaloMat.opacity = clamp((0.34 + 0.28 * pulse) * flash, 0, 1);
+    const get = anatomyAnchors ? anatomyAnchors[glowPart] : null;
+    const p = typeof get === 'function' ? get() : null;
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) {
+      glowHalo.visible = false;
+      return;
+    }
+    glowHalo.position.set(p.x, p.y, p.z);
+    const r = entry.radius * (3 + 0.4 * pulse);
+    glowHalo.scale.set(r, r, 1);
+    glowHalo.visible = true;
+  }
+
+  function clearGlow() {
+    setGlowPart(null);
+    if (glowMap) {
+      glowMap.forEach((entry) => {
+        entry.shells.forEach((shell) => {
+          if (shell.parent) shell.parent.remove(shell);
+        });
+      });
+      glowMap = null;
+    }
+    if (glowHalo && glowHalo.parent) glowHalo.parent.remove(glowHalo);
+    glowHalo = null;
+    // The shells share the SCENE's geometries and must never dispose them; these two materials and
+    // the one texture are the only GPU objects this layer owns.
+    if (glowShellMat) glowShellMat.dispose();
+    if (glowHaloMat) glowHaloMat.dispose();
+    if (glowHaloTex) glowHaloTex.dispose();
+    glowShellMat = null;
+    glowHaloMat = null;
+    glowHaloTex = null;
+    partMeshSrc = null;
+  }
+
   // ---------- directed anatomy tour ----------
   //
   // The anatomy step used to be a machine turning on the spot under four labels that all arrived at
   // once. A visitor learning what an omni drive IS gets nothing from a slow revolution: the claim is
   // that the machine moves in any direction without turning to face it, and a stationary robot
-  // cannot demonstrate it. So a def MAY ship `anatomyTour` and the step becomes four SHOTS. Each
-  // shot owns one card, one passage of the mission, and one camera move, and they run in sequence.
+  // cannot demonstrate it. So a def MAY ship `anatomyTour` and the step becomes four BEATS: one
+  // card, one passage of the mission that proves that card's claim, and one lit part, in sequence.
   //
   //   def.anatomyTour = {
-  //     hold: 2900,                                   // ms a shot is held, and its card is live
+  //     hold: 2900,                                   // ms a beat is held, and its card is live
   //     basis: { origin: partId, forward: partId },    // two anchors -> the robot's own frame
-  //     beats: [{
-  //       part:   partId,          // which card this shot belongs to
-  //       window: [t0, t1],        // the seconds of the mission it plays, replayed once per hold
-  //       frame:  'robot'|'world', // whose axes the offsets below are read in
-  //       pos:    [fwd, side, up], // camera offset from the aim point, metres, at the shot's start
-  //       posEnd: [fwd, side, up], // and at its end: the move. Omitted = a locked-off shot.
-  //       aim:    [fwd, side, up], // aim point, offset from the part's own anchor
+  //     glow: 0.05,                                    // default halo radius for a part with no meshes
+  //     wide: {                    // ONE shot, held for the whole tour. No cuts, ever.
+  //       anchor: partId,          // what the framing is built around; defaults to basis.origin
+  //       frame:  'world'|'robot', // whose axes the offsets are read in; defaults to 'world'
+  //       pos:    [fwd, side, up], // camera offset from the aim point, metres, at one end of a drift
+  //       posEnd: [fwd, side, up], // and at the other. Omitted = locked off.
+  //       aim:    [fwd, side, up], // aim point, offset from the anchor
   //       aimEnd: [fwd, side, up],
+  //       drift:  14000,           // ms for one there-and-back between the two ends
+  //     },
+  //     beats: [{
+  //       part:   partId,          // which card this beat belongs to, and which part is lit
+  //       window: [t0, t1],        // the seconds of the mission it plays, replayed once per hold
+  //       glow:   0.05,            // halo radius override for this part, when the scene has no mesh
   //     }],
   //   }
   //
-  // WHY EACH BEAT CARRIES ITS OWN WINDOW. The first version ran one contiguous passage and split it
-  // into four equal quarters. That makes the footage an accident of where the quarter boundaries
-  // fall: the dribbler card ended up over 2.9 s in which the subject was never closer than 1.87 m
-  // to the ball, which is a card claiming ball control over footage of a robot nowhere near it.
-  // A log is not obliged to demonstrate four mechanisms in a row. Naming the passage per beat means
-  // each card is over the seconds that actually show its claim, and the cut between beats is a cut,
-  // which is the ordinary grammar for changing what a shot is about.
+  // WHY ONE WIDE SHOT AND NOT FOUR CLOSE ONES, which is what rounds 4 to 6 shipped. Each beat used
+  // to carry its own `pos`/`aim` and the camera CUT between them, ending each beat 0.3 to 0.5 m off
+  // the part its card named. Every one of those shots was solved carefully and the sequence still
+  // failed the screen it exists for: at a hull detail's stand-off there is no robot in the frame, so
+  // four cards in a row each described a component of a machine the visitor could no longer see, and
+  // a visitor who arrived mid-beat had no way to place the part on anything. The fix is the grammar
+  // an exploded CAD view has always used: hold the WHOLE machine in frame and light the part being
+  // talked about. The camera holds one authored wide framing for the entire tour, drifting slowly
+  // between two ends of a gentle arc so the shot is alive without ever cutting, and the beat change
+  // is carried by the card, the part highlight and the passage on the timeline instead.
   //
-  // WHY THE SHOTS ARE OFFSETS IN A FRAME AND NOT WORLD POSES. The subject is driving at up to
-  // 3 m/s. A world pose is a shot of the patch of carpet the robot was standing on when the pose was
-  // written; an offset resolved against the live rig every frame is a camera bolted to the machine,
-  // which is what "tracks the robot as it moves" means. `frame: 'robot'` bolts it to the hull, so
-  // the world sweeps past a robot that holds still in frame - a chase shot, and the reading that
-  // makes a crab-walk legible. `frame: 'world'` bolts it to the robot's POSITION only, so the robot
-  // visibly turns inside the frame; a beat about the machine's own rotation has to use it, or the
-  // camera turns with the robot and the rotation disappears.
+  // WHY EACH BEAT STILL CARRIES ITS OWN WINDOW. The first version ran one contiguous passage and
+  // split it into four equal quarters. That makes the footage an accident of where the quarter
+  // boundaries fall: the dribbler card ended up over 2.9 s in which the subject was never closer
+  // than 1.87 m to the ball, which is a card claiming ball control over footage of a robot nowhere
+  // near it. A log is not obliged to demonstrate four mechanisms in a row. Naming the passage per
+  // beat means each card is over the seconds that actually show its claim - the one thing the close
+  // shots got right, and the reason the beat clock survived losing them.
+  //
+  // WHY THE SHOT IS OFFSETS IN A FRAME AND NOT A WORLD POSE. The subject is driving at up to 3 m/s.
+  // A world pose is a shot of the patch of carpet the robot was standing on when the pose was
+  // written; an offset resolved against the live rig every frame is a camera that tracks the machine,
+  // which is what keeps the WHOLE robot in frame for a whole tour rather than for a first beat.
+  // `frame: 'world'` follows the robot's POSITION and holds a fixed world bearing, so the machine
+  // visibly turns inside the frame - the default, because a wide tracking shot that also shows the
+  // hull rotating is what makes a spin or a bank legible. `frame: 'robot'` bolts the bearing to the
+  // hull as well, so the world sweeps past a robot that holds still: right for a fixed-base machine
+  // whose own frame IS the world, and for a subject whose recorded heading swings so far that a
+  // fixed bearing would end the tour behind it.
   //
   // The basis comes from two of the anatomy anchors the overlay already resolves - no new scene API,
   // and it stays correct through a presence gap, because the anchors hold their last observed pose
@@ -1134,17 +1385,42 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   // WHY THE BEAT CLOCK IS THE WALL CLOCK AND THE MOTION CLOCK IS THE TIMELINE. The first version
   // derived the beat index from `timeline.t`, which sounds tidier - one clock - but ties how long a
   // card is readable to how fast its passage happens to be replayed, and breaks entirely once each
-  // beat has its own window. Here the wall clock decides WHICH shot, and the timeline decides what
-  // the world is doing inside it: the beat's window is handed to the timeline as a loop whose speed
+  // beat has its own window. Here the wall clock decides WHICH card, and the timeline decides what
+  // the world is doing under it: the beat's window is handed to the timeline as a loop whose speed
   // is derived so the passage plays through exactly once per hold. Nothing to keep in sync by hand,
-  // and a passage that needs slow motion to be legible at 0.4 m gets it by being short.
+  // and a passage that needs slow motion to be legible gets it by being short. The camera drift is
+  // a THIRD clock on purpose - its own period, unrelated to the hold - because a drift that turned
+  // over once per beat would be a cut with extra steps.
   const TOUR_HOLD_MS = 2900;
+  const TOUR_DRIFT_MS = 14000;
   const WORLD_UP = new THREE.Vector3(0, 1, 0);
   const WORLD_FWD = new THREE.Vector3(1, 0, 0);
   const tourSpec =
     robotDef.anatomyTour && typeof robotDef.anatomyTour === 'object' ? robotDef.anatomyTour : null;
   const tourHold =
     tourSpec && Number.isFinite(tourSpec.hold) && tourSpec.hold > 400 ? tourSpec.hold : TOUR_HOLD_MS;
+  // The wide shot is read through the same resolver a beat used to be, so `tourPose()` needs no
+  // second code path: it is a beat-shaped object whose `part` is whatever the framing hangs off.
+  const wideSpec =
+    tourSpec && tourSpec.wide && typeof tourSpec.wide === 'object' ? tourSpec.wide : null;
+  const wideShot = wideSpec
+    ? {
+        part:
+          typeof wideSpec.anchor === 'string' && wideSpec.anchor
+            ? wideSpec.anchor
+            : (tourSpec.basis || {}).origin,
+        // Default 'world': a wide tracking shot wants the machine's own rotation visible in it.
+        frame: wideSpec.frame === 'robot' ? 'robot' : 'world',
+        pos: wideSpec.pos,
+        posEnd: wideSpec.posEnd,
+        aim: wideSpec.aim,
+        aimEnd: wideSpec.aimEnd,
+      }
+    : null;
+  const wideDrift =
+    wideSpec && Number.isFinite(wideSpec.drift) && wideSpec.drift > 2000
+      ? wideSpec.drift
+      : TOUR_DRIFT_MS;
   let tourOn = false;
   let tourStart = 0; // rAF handle for the deferred start
   let tourFrom = 0; // wall ms the sequence started at
@@ -1163,7 +1439,14 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     return anatomySlots.findIndex((slot) => slot.id === (beat && beat.part));
   }
 
-  /** Every beat names a card that exists, a window and a start offset, and the basis resolves. */
+  /**
+   * The wide shot resolves, the basis resolves, and every beat names a card and a window.
+   *
+   * The framing is now the tour's single point of failure - there is no per-beat pose to fall back
+   * on - so a spec with no usable `wide` block is refused outright and the step keeps the orbit it
+   * had before tours existed, rather than running four cards over whatever pose the camera was left
+   * in.
+   */
   function tourUsable() {
     if (!tourSpec || !anatomySlots.length) return false;
     const beats = tourSpec.beats;
@@ -1172,11 +1455,11 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     const resolves = (id) =>
       typeof id === 'string' && anatomyAnchors && typeof anatomyAnchors[id] === 'function';
     if (!resolves(basis.origin) || !resolves(basis.forward)) return false;
+    if (!wideShot || !Array.isArray(wideShot.pos) || !resolves(wideShot.part)) return false;
     return beats.every((beat) => {
       const w = beat && beat.window;
       return (
         tourSlotOf(beat) >= 0 &&
-        Array.isArray(beat.pos) &&
         resolves(beat.part) &&
         Array.isArray(w) &&
         Number.isFinite(w[0]) &&
@@ -1193,7 +1476,10 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   }
 
   /**
-   * The camera pose for a beat at phase `k`, resolved against the rig as it is posed RIGHT NOW.
+   * The camera pose for a shot at phase `k`, resolved against the rig as it is posed RIGHT NOW.
+   *
+   * Called with the ONE wide shot every frame of the tour; `k` is the drift phase rather than a
+   * beat phase, so the same resolver that used to fly four shots now holds one.
    *
    * @returns {boolean} false when the rig cannot answer this frame, which leaves the camera where
    *   the last good frame put it rather than snapping it to the origin.
@@ -1233,12 +1519,15 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   }
 
   /**
-   * Hand the beat's passage to the timeline, and light its card.
+   * Hand the beat's passage to the timeline, light its card, and light its PART.
    *
-   * Exactly one card is on the overlay: the one whose shot is running. `revealed` is what
+   * Exactly one card is on the overlay: the one whose beat is running. `revealed` is what
    * `projectAnatomy()` reads, so turning it off for every other slot retires their leader lines
    * with them - a leader drawn to an invisible card is a hairline across the shot pointing at
    * nothing. `seen` is only ever a class, and only decides which way a card leaves.
+   *
+   * The part highlight switches here and nowhere else, which is what keeps it in lockstep with the
+   * card and the leader: three ways of saying the same thing, all changing on the same frame.
    */
   function tourEnterBeat(idx) {
     const beat = tourSpec.beats[idx];
@@ -1247,6 +1536,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     timeline.setLoop([beat.window[0], beat.window[1]], { speed: seconds / (tourHold / 1000) });
     timeline.seek(beat.window[0]);
     timeline.play();
+    setGlowPart(beat.part, Number.isFinite(beat.glow) ? beat.glow : tourSpec.glow);
     for (let i = 0; i < anatomySlots.length; i++) {
       const slot = anatomySlots[i];
       const isLive = i === live;
@@ -1264,12 +1554,12 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
    * Applied LAST in the frame, for the same reason the commanded ease is: OrbitControls' damped
    * `update()` is still adding a decaying slice of rotation, and it clamps the radius to
    * `minDistance`, which is a metre out from a robot 180 mm across. Writing after it is what lets
-   * the shot sit where the beat asked for.
+   * the shot sit where the wide framing asked for.
    */
   function stepTour(now) {
     const beats = tourSpec.beats;
     // `tourFrom` is the origin of the whole SEQUENCE and is never moved: the beat index has to be a
-    // function of time since the tour opened, or the shot that just started immediately reads as
+    // function of time since the tour opened, or the beat that just started immediately reads as
     // beat 0 again on the next frame and the sequence never leaves its first card.
     const slot = Math.floor(Math.max(0, now - tourFrom) / tourHold);
     const idx = slot % beats.length;
@@ -1278,8 +1568,12 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       tourBeatAt = tourFrom + slot * tourHold;
       tourEnterBeat(idx);
     }
-    const k = clamp((now - tourBeatAt) / tourHold, 0, 1);
-    if (!tourPose(beats[idx], k, tourPos, tourAim)) return;
+    stepGlow(now);
+    // A raised cosine, not a saw: the drift arrives at each end of its arc with zero velocity and
+    // turns around, so the shot never snaps back to where it started. That is the whole difference
+    // between one continuous shot and a cut every `drift` milliseconds.
+    const k = 0.5 - 0.5 * Math.cos((Math.PI * 2 * ((now - tourFrom) % wideDrift)) / wideDrift);
+    if (!tourPose(wideShot, k, tourPos, tourAim)) return;
     camera.position.copy(tourPos);
     controls.target.copy(tourAim);
     camera.lookAt(controls.target);
@@ -1320,6 +1614,9 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     tourStart = 0;
     tourOn = false;
     tourIdx = -1;
+    // Every card is about to be on the overlay at once, so no single part is the one being talked
+    // about any more and nothing may stay lit: a highlight with four live cards points at nothing.
+    setGlowPart(null);
     if (anatomyEl) anatomyEl.classList.remove('is-tour');
     anatomySlots.forEach((slot) => {
       slot.revealed = true;
@@ -1351,6 +1648,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 
   function clearAnatomy() {
     stopTour();
+    clearGlow();
     anatomyTick = null;
     anatomySlots = [];
     anatomyAnchors = null;

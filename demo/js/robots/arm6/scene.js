@@ -149,6 +149,9 @@ export function buildScene(THREE, mount) {
   const drvChip = mesh(new THREE.BoxGeometry(0.006, 0.026, 0.026), M.chip, false);
   drvChip.position.set(0.05, 0.03, 0.05);
   drvBay.add(drvChip);
+  // Kept for `partMeshes()`: the bay's heatsink is part of the driver the card names, so the tour's
+  // highlight sleeves the whole module rather than the box with its fins left dark beside it.
+  const drvFins = drvBay.children.filter((c) => c !== drvBox && c !== drvChip);
 
   // ------------------------------------------------------------------- turret
   const turret = new THREE.Group();
@@ -242,6 +245,7 @@ export function buildScene(THREE, mount) {
   roll.add(gripRail);
 
   const jaws = [];
+  const jawMeshes = []; // the moving half of the gripper, for `partMeshes()`
   for (const side of [-1, 1]) {
     const j = new THREE.Group();
     j.position.y = 0.058;
@@ -253,6 +257,7 @@ export function buildScene(THREE, mount) {
     tip.position.set(-side * 0.001, 0.082, 0);
     j.add(tip);
     jaws.push({ g: j, side });
+    jawMeshes.push(finger, tip);
   }
 
   // TCP anchor: exactly LINKS.L4 out from the J4 pivot, i.e. the point /ee logs
@@ -309,6 +314,28 @@ export function buildScene(THREE, mount) {
     });
   }
 
+  // --------------------------------------------------------------- part meshes
+  //
+  // The anatomy tour's own highlight channel (`sceneApi.partMeshes()`, documented in viewer.js).
+  // Every one of the four cards names something this scene already builds - a shoulder housing, a
+  // pair of jaws, a driver bay, a turret - so nothing is added here; this map is just the handles,
+  // so the viewer can sleeve the part the live card is about in its own additive glow.
+  //
+  // Distinct from `PARTS` above, which is the FAULT highlight and only covers the two parts a
+  // finding ever points at, in alert red, by swapping their materials. The tour never touches these
+  // meshes' materials: it parents one extra additive copy to each, which is what lets a joint that
+  // is already mid-swap for a finding be lit for a card without the two treatments fighting.
+  const PART_MESHES = {
+    j2: [j2House, j2Ring, j2Ring2],
+    gripper: [gripBody, gripRail, ...jawMeshes],
+    drv3: [drvBox, drvChip, ...drvFins],
+    base: [turretHouse, turretRing],
+  };
+  /** @returns {Record<string, import('three').Mesh[]>} */
+  function partMeshes() {
+    return PART_MESHES;
+  }
+
   // ------------------------------------------------------------------ anchors
   // Label anchors for the anatomy step. The offsets are in the anchor node's OWN local frame, so
   // each one rides the joint it belongs to: j2 swings with the shoulder, gripper travels with the
@@ -354,48 +381,58 @@ export function buildScene(THREE, mount) {
   // data.js and the thermal span is the run's own min and max, read off the built array.
   //
   // WHY THEY ARE SPRITES DRAWN OVER THE TOP. A decal is an instrument reading, not a sticker on
-  // the casting: at the tour's 0.30 m stand-off on the driver bay, a plane bolted to the bay's
-  // face is a parallelogram of unreadable text, and at 0.92 m on the shoulder the upper arm swings
-  // in front of it twice a cycle. A billboard with `depthTest` off holds square to the lens and
-  // stays legible, which is the whole point of putting a number on the screen.
+  // the casting: a plane bolted to the driver bay's face is a parallelogram of unreadable text, and
+  // one on the shoulder has the upper arm swing in front of it twice a cycle. A billboard with
+  // `depthTest` off holds square to the lens and stays legible, which is the whole point of putting
+  // a number on the screen.
   //
-  // WHY THEY GATE ON THE SHOT AND NOT ON A FLAG. The scene is handed no beat index - the tour is
-  // the viewer's, and `setHighlight()` is null for the whole anatomy step - so "is this part the
-  // subject right now" is MEASURED rather than declared: a decal lights only while its own anchor
-  // is in front of the camera, near the middle of the frame, and inside the stand-off band its
-  // panel was sized for. That is true of exactly one beat each, measured off the live page over a
-  // full tour cycle rather than reasoned about: J2 sits at 0.99 m and ndc -0.51 on its own beat,
-  // 1.52 m away on the turret beat, 0.22 m away (inside the near band, so under its floor) on the
-  // driver beat, and off the left edge at ndc -3.5 on the gripper beat. The TCP sits at 0.37-0.47 m
-  // and ndc -0.05 on the gripper beat, 1.37 m away on the J2 beat, 1.02-1.29 m on the turret beat,
-  // and swings past the driver beat's lens at ndc -2.3 to -43. The bay sits at 0.30 m on its own
-  // beat and no nearer than 0.98 m on any other. All three gates are false at every other framing
-  // in the flow, where the camera is 2.4 m out and a panel sized to be read from 0.3 m would be an
-  // illegible smear across the machine.
+  // WHY THEY GATE ON THE SUBJECT AND NOT ON THE STAND-OFF ANY MORE, which is what round 6 did. The
+  // gate used to be geometric: a decal lit while its own anchor sat inside the distance band its
+  // panel was sized for, which was true of exactly one of the four close-up beats each. Round 7
+  // replaced those four shots with ONE wide framing held for the whole tour (see viewer.js), so
+  // every anchor now sits at the same ~2 m stand-off for every beat: the old bands are false on all
+  // four, and any band wide enough to catch one catches all three panels at once. The tour instead
+  // says which part the live card is about, through the additive `setSubject()` call the viewer
+  // makes on the same frame it lights that part, and a decal lights only for its own part. That is
+  // declared rather than measured, which is what it should have been - the geometric gate was a way
+  // of inferring the beat index from the camera because the scene was not told it.
+  //
+  // The framing half of the gate survives, because it is still true that a panel over a part which
+  // is off frame or behind the lens is worse than no panel: the anchor must be in front of the
+  // camera and inside the frame. What is gone is the distance band.
+  //
+  // WHY THE PANELS ARE SIZED IN ANGLE. A 0.34 m panel is right at 0.9 m and a smear at 0.3 m, so
+  // each used to be sized for one beat's stand-off and could only ever be shown at it. The wide
+  // shot drifts, and its stand-off is ~6x the old close ones, so the sizes are now given as a
+  // fraction of the stand-off and multiplied by the live distance every frame: the panel holds the
+  // same share of the frame wherever the drift is, which is what "legible" actually means. The lift
+  // - where the panel sits relative to its part - is in the same units for the same reason.
   //
   // The camera is captured from the pedestal's own `onBeforeRender`, which is the only per-frame
-  // camera the scene interface exposes. One frame of lag, on a gate that only changes at a cut.
+  // camera the scene interface exposes. One frame of lag, on a gate that only changes at a beat.
   //
-  // WHY A DECAL WAITS BEFORE IT LIGHTS. That gate is geometric and the tour's camera CUTS, so a
-  // panel arrives on the first frame of its own beat. The card does not:
-  // `.v-anat.is-tour .v-anat-card` crossfades over 0.4 s, so for the first fifth of a second after
-  // every cut the card still lit is the OUTGOING one. Measured on the live page 25 ms into the cut
-  // from the J2 beat to the gripper beat: the J2 card at opacity 1.00, the gripper card at 0.00,
-  // and between them an EE GRIP panel reading "logged 0 or 1" - the gripper card's own words -
-  // stating the incoming card's claim under the outgoing card's heading. A FRAMING that has moved
-  // on ahead of its label is ordinary film grammar and the ssl tour has it too; a NUMBER belonging
-  // to a claim nobody has made yet is not, which is why the settle is on the decals and the camera
-  // still cuts. 440 ms clears the 0.4 s fade with a frame or two of slack and costs the panel an
-  // eighth of a 3500 ms hold it has no use for: every reading here - the torque arriving at its
-  // clamp, the grip bit stepping, the heatsink climbing 30 C - develops across the whole beat, not
-  // in its first fifth of a second.
+  // WHY A DECAL WAITS BEFORE IT LIGHTS. `setSubject()` fires on the frame the beat changes. The card
+  // does not: `.v-anat.is-tour .v-anat-card` crossfades over 0.4 s, so for the first fifth of a
+  // second the card still lit is the OUTGOING one. Measured on the live page 25 ms into the change
+  // from the J2 beat to the gripper beat: the J2 card at opacity 1.00, the gripper card at 0.00, and
+  // between them an EE GRIP panel reading "logged 0 or 1" - the gripper card's own words - stating
+  // the incoming card's claim under the outgoing card's heading. A NUMBER belonging to a claim
+  // nobody has made yet is a false statement, which is why the settle is here. 440 ms clears the
+  // 0.4 s fade with a frame or two of slack and costs the panel an eighth of a 3500 ms hold it has
+  // no use for: every reading here - the torque arriving at its clamp, the grip bit stepping, the
+  // heatsink climbing 30 C - develops across the whole beat, not in its first fifth of a second.
   //
-  // Hiding is immediate, in the other direction, and deliberately: an OLD panel over the new shot
-  // is the same false statement the other way round. The 120 ms grace only stops a one-frame gate
-  // dropout - an anchor grazing the ndc limit - from costing a panel a fresh settle mid-beat. A
-  // real cut leaves the gate false for a whole 3.5 s beat and always gets one.
+  // Hiding is immediate, in the other direction, and deliberately: an OLD panel over the new beat is
+  // the same false statement the other way round. The 120 ms grace only stops a one-frame gate
+  // dropout - an anchor grazing the frame limit - from costing a panel a fresh settle mid-beat.
   const DECAL_SETTLE_MS = 440;
   const DECAL_GATE_GRACE_MS = 120;
+  // Which part the live anatomy card is about, straight off the tour. Null everywhere else in the
+  // flow, which is what keeps these panels off the mission and failure steps.
+  let subject = null;
+  function setSubject(partId) {
+    subject = partId || null;
+  }
   const decalNow = () =>
     typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
@@ -461,17 +498,18 @@ export function buildScene(THREE, mount) {
   /**
    * One decal: a canvas panel on a billboard, repainted only when the digits it shows change.
    *
-   * @param {number} worldWidth  metres across, sized for the stand-off of the beat that shows it
-   * @param {[number,number]} lift  where the panel sits relative to the part's anchor, in metres
-   *   ACROSS and UP THE FRAME rather than across the world. A panel is a thing you read, so where
-   *   it belongs is a fact about the picture - clear of the callout card, clear of the part it
-   *   points at - and an offset in world axes only lands there from the azimuth it was written
-   *   for. Read off the live camera basis, it lands there from any of them.
-   * @param {[number,number]} band  the stand-off window, metres, in which this decal is lit
+   * @param {string} partId  the anatomy card this panel belongs to; it is lit for that beat only
+   * @param {number} spanFrac  panel width as a fraction of the live stand-off, so it holds its share
+   *   of the frame wherever the wide shot's drift has the camera
+   * @param {[number,number]} lift  where the panel sits relative to the part's anchor, ACROSS and UP
+   *   THE FRAME rather than across the world, in the same per-stand-off units. A panel is a thing you
+   *   read, so where it belongs is a fact about the picture - clear of the callout card, clear of the
+   *   part it points at - and an offset in world axes only lands there from the azimuth it was
+   *   written for. Read off the live camera basis, it lands there from any of them.
    * @param {() => import('three').Vector3} anchorOf  the part's own anchor, posed now
    * @param {(ctx:CanvasRenderingContext2D, ...args:any[]) => void} paint
    */
-  function makeDecal(worldWidth, lift, band, anchorOf, paint) {
+  function makeDecal(partId, spanFrac, lift, anchorOf, paint) {
     let ctx = null;
     let tex = null;
     // buildScene() is constructed under plain `node` by experience.test.mjs, where there is no
@@ -492,36 +530,39 @@ export function buildScene(THREE, mount) {
     });
     materials.push(mat);
     const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(worldWidth, (worldWidth * DECAL_CANVAS_H) / DECAL_CANVAS_W, 1);
     sprite.renderOrder = 20;
     sprite.frustumCulled = false;
     sprite.visible = false;
     root.add(sprite);
 
     let key = null;
-    // Wall ms the geometric gate has been continuously true since, and the last frame it was true
-    // at all. Two clocks, because the settle has to survive a dropped frame and not a cut.
+    // Wall ms the gate has been continuously true since, and the last frame it was true at all. Two
+    // clocks, because the settle has to survive a dropped frame and not a beat change.
     let gateSince = 0;
     let gateLast = 0;
     const decal = {
       sprite,
-      /** Position on the part, and decide whether this shot is the one this decal belongs to. */
+      /** Position on the part, and decide whether this beat is the one this decal belongs to. */
       place() {
         const a = anchorOf();
         sprite.position.copy(a);
-        if (!lastCamera) {
+        if (!lastCamera || subject !== partId) {
           sprite.visible = false;
           return;
         }
+        const d = lastCamera.position.distanceTo(a);
         decalRight.setFromMatrixColumn(lastCamera.matrixWorld, 0);
         decalUp.setFromMatrixColumn(lastCamera.matrixWorld, 1);
-        sprite.position.addScaledVector(decalRight, lift[0]).addScaledVector(decalUp, lift[1]);
-        const d = lastCamera.position.distanceTo(a);
+        sprite.position
+          .addScaledVector(decalRight, lift[0] * d)
+          .addScaledVector(decalUp, lift[1] * d);
+        const w = spanFrac * d;
+        sprite.scale.set(w, (w * DECAL_CANVAS_H) / DECAL_CANVAS_W, 1);
         decalTmp.copy(a);
         lastCamera.worldToLocal(decalTmp);
         decalNdc.copy(a).project(lastCamera);
         const off = Math.max(Math.abs(decalNdc.x), Math.abs(decalNdc.y));
-        const framed = decalTmp.z < -0.02 && d >= band[0] && d <= band[1] && off <= 0.92;
+        const framed = decalTmp.z < -0.02 && off <= 0.92;
         if (!framed) {
           sprite.visible = false;
           return;
@@ -747,24 +788,30 @@ export function buildScene(THREE, mount) {
   // gripper beat: its card holds the top RIGHT, the part hangs below the TCP, so the readout takes
   // the empty left. 0.15 m across at a 0.37-0.47 m stand-off is 38 per cent of the phone frame's,
   // which is the same share of the picture the torque panel takes on its own beat.
+  // The three widths and lifts are per metre of stand-off. 0.30 puts a panel across 18 per cent of
+  // the desktop panel's width and 33 per cent of a phone's - the same share at either end of the
+  // drift - and the lifts stand each one about a quarter of the stand-off off its own part, on the
+  // side of it the wide framing leaves empty: the shoulder's out to the RIGHT (measured on the live
+  // page, a panel lifted straight up from the shoulder slid under the top-left card), and the
+  // gripper's and the driver bay's out to the left, away from the arm.
   const torqueDecal = makeDecal(
-    0.34,
-    [0.02, 0.19],
-    [0.62, 1.22],
+    'j2',
+    0.3,
+    [0.28, 0.16],
     () => anchorWorld(ANCHOR_NODES.j2),
     paintTorque,
   );
   const gripDecal = makeDecal(
-    0.15,
-    [-0.085, 0.075],
-    [0.30, 0.58],
+    'gripper',
+    0.3,
+    [-0.24, 0.14],
     () => anchorWorld(ANCHOR_NODES.gripper),
     paintGrip,
   );
   const tempDecal = makeDecal(
-    0.132,
-    [-0.058, 0.034],
-    [0.17, 0.52],
+    'drv3',
+    0.3,
+    [-0.26, 0.16],
     () => anchorWorld(ANCHOR_NODES.drv3),
     paintTemp,
   );
@@ -1044,8 +1091,8 @@ export function buildScene(THREE, mount) {
 
     // The three decals: same samples the LED, the jaws and the chip already run on, spelled out in
     // figures for the three cards that make a claim about a number. `place()` also decides whether
-    // this frame's shot is the one that decal belongs to, so the panel is only ever on screen at
-    // the stand-off it was sized for.
+    // this frame's beat is the one that decal belongs to, so a panel is only ever on screen while
+    // its own card is live.
     torqueDecal.place();
     if (torqueDecal.sprite.visible) {
       const pinned = Math.abs(tau2) >= TAU2_CLAMP - 0.005;
@@ -1089,5 +1136,5 @@ export function buildScene(THREE, mount) {
     lastCamera = null;
   }
 
-  return { update, setHighlight, anchors, dispose, cameraHome };
+  return { update, setHighlight, setSubject, anchors, partMeshes, dispose, cameraHome };
 }

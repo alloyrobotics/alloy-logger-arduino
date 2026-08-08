@@ -210,6 +210,8 @@ export function buildScene(THREE, mount) {
   lower.castShadow = true;
   lower.receiveShadow = true;
   body.add(lower);
+  // eslint-disable-next-line no-unused-vars -- kept named for readability; the FC board below is
+  // what the `imu` anchor now reads, because the card names a board and not the plate under it.
   const upper = new THREE.Mesh(plateGeo, carbonMat);
   upper.position.y = 0.023;
   upper.castShadow = true;
@@ -236,6 +238,38 @@ export function buildScene(THREE, mount) {
   const stripe = new THREE.Mesh(G(new THREE.BoxGeometry(0.132, 0.004, 0.014)), accentMat);
   stripe.position.set(0.012, 0.0855, 0);
   body.add(stripe);
+
+  // ---------- the flight controller ----------
+  //
+  // WHY THIS EXISTS AT ALL. One of the four anatomy cards is "Flight controller - closes the
+  // attitude loop from roll, pitch and yaw", and until round 7 its anchor was the centre plate: the
+  // card named a board this aircraft did not have, and the tour's highlight had a carbon plate to
+  // light. Round 7's rule is that a card whose part has no geometry gets geometry, so the board is
+  // here - a 24 x 20 mm PCB with its processor and a status LED, which is what an FC on a 0.45 m
+  // survey quad is.
+  //
+  // WHY IT IS ON THE REAR-LEFT CORNER OF THE TOP DECK AND NOT IN THE MIDDLE OF IT, which is where a
+  // real stack goes. The canopy is an ellipse 0.176 x 0.124 centred at x 0.012 and it covers the
+  // whole middle of a 0.148 plate: a board under it is a board nobody can see, and the point of
+  // adding it is that the highlight has something to light. The plate CORNERS are outside that
+  // ellipse - at z = 0.048 the dome skirt reaches x = -0.044, and this board's inner edge stops at
+  // -0.046 - so the corner is the one part of the deck that is both real airframe and in shot. Left
+  // and rear, which is the quarter the tour's wide shot stands on and the same side motor 3 is on,
+  // so the two parts the mission cares most about are never on the far side of the hull.
+  //
+  // The `imu` anchor below moves onto this board, because the anchor's job is to be where the part
+  // is: a leader line and a highlight halo both belong on the board, not on the plate under it.
+  const fcBoard = new THREE.Mesh(G(new THREE.BoxGeometry(0.024, 0.005, 0.02)), shellMat);
+  fcBoard.position.set(-0.057, 0.0315, -0.057);
+  fcBoard.castShadow = true;
+  body.add(fcBoard);
+  const fcChip = new THREE.Mesh(G(new THREE.BoxGeometry(0.009, 0.0022, 0.009)), metalMat);
+  fcChip.position.set(-0.057, 0.035, -0.057);
+  body.add(fcChip);
+  // The one lit element on it, in the same sage the front arms carry: an FC that is powered says so.
+  const fcLed = new THREE.Mesh(G(new THREE.BoxGeometry(0.0035, 0.0022, 0.0035)), ledFrontMat);
+  fcLed.position.set(-0.0475, 0.035, -0.0635);
+  body.add(fcLed);
 
   // ---------- the 4S pack ----------
   //
@@ -271,10 +305,12 @@ export function buildScene(THREE, mount) {
 
   // three seams at the quarter points of the 0.105 length: four cells, in a row, end to end
   const seamGeo = G(new THREE.BoxGeometry(0.0018, 0.0326, 0.0566));
+  const battParts = [wrap]; // the pack's own solid geometry, for `partMeshes()`
   for (let i = 1; i <= 3; i++) {
     const seam = new THREE.Mesh(seamGeo, carbonMat);
     seam.position.x = -0.0525 + (0.105 * i) / 4;
     batt.add(seam);
+    battParts.push(seam);
   }
 
   // Four segments a side, on both long faces, so the gauge is readable from either quarter. One
@@ -528,16 +564,41 @@ export function buildScene(THREE, mount) {
   // The ids are the part ids the def declares. Only 'm3' is also a setHighlight target; the other
   // three are label anchors only, and setHighlight is unchanged. Every call hands back a fresh
   // vector, so the caller can project it in place without corrupting the next frame's reading.
+  //
+  // `imu` moved in round 7, from the centre plate to the flight-controller board that round added
+  // to the top deck: the anchor is where the leader line lands and where the tour's highlight halo
+  // sits, and both belong on the part the card names rather than on the plate it is bolted to.
   const anchorMap = {
     m3: () => m3Bell.getWorldPosition(new THREE.Vector3()), // motor 3 bell, rear-left corner
     battery: () => batt.getWorldPosition(new THREE.Vector3()), // pack under the lower plate
     camera: () => lens.getWorldPosition(new THREE.Vector3()), // survey lens on the nose gimbal
-    imu: () => upper.getWorldPosition(new THREE.Vector3()), // body centre plate
+    imu: () => fcBoard.getWorldPosition(new THREE.Vector3()), // the FC board on the top deck
   };
 
   /** @returns {Record<string, () => import('three').Vector3>} same object every call */
   function anchors() {
     return anchorMap;
+  }
+
+  // ---------- part meshes ----------
+  // The anatomy tour's highlight channel (`sceneApi.partMeshes()`, documented in viewer.js): the
+  // meshes each card's part actually IS, so the tour can sleeve the live one in its own additive
+  // glow while the camera holds the whole aircraft in frame. Separate from `setHighlight()` above,
+  // which is the fault channel and paints motor 3 alert red on the failure step.
+  //
+  // The prop disc and the blades are deliberately not in `m3`: the disc is a blur whose opacity is
+  // driven by rpm, and lighting a transparent quad would put a glowing plate over the motor rather
+  // than on it. What is lit is the arm, the bell, its cap and the accent ring - the motor and the
+  // boom it is bolted to.
+  const PART_MESHES = {
+    m3: m3Parts.map((p) => p.mesh),
+    battery: battParts,
+    camera: [gimbal, lens],
+    imu: [fcBoard, fcChip, fcLed],
+  };
+  /** @returns {Record<string, import('three').Mesh[]>} */
+  function partMeshes() {
+    return PART_MESHES;
   }
 
   function dispose() {
@@ -546,5 +607,5 @@ export function buildScene(THREE, mount) {
     mats.forEach((m) => m.dispose());
   }
 
-  return { update, setHighlight, dispose, cameraHome, cameraFocus, anchors };
+  return { update, setHighlight, dispose, cameraHome, cameraFocus, anchors, partMeshes };
 }

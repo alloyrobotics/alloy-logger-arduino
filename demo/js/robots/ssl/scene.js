@@ -7,6 +7,12 @@
 // the printed vision-pattern art (see patterns.js), matte-black tops, white-inside/black-outside
 // goal walls, green felt.
 //
+// The robot BELOW the shell is league convention too: a tracker reports a pose, a radius and a
+// height, never a wheel. Modelled here is only what the rules constrain and every robot in the
+// division has - four omni wheels inside the 180 mm cylinder, the flat face with a dribbler roller
+// and kicker plate in it, an IMU on the top plate - never one team's hardware. The four anatomy
+// labels in ssl/experience.js attach to exactly these parts.
+//
 // The scene is built LAZILY, on the first update() that arrives with a decoded MatchData.
 // buildScene() is called by the viewer before any data exists, and match-data.js is ~700 KB, so
 // importing it here would drag the whole match payload onto the picker's boot path. update() is
@@ -32,11 +38,29 @@ import { bracket, inPlayTimes } from './in-play.js';
 // ---------------------------------------------------------------------------- constants
 
 export const ROBOT_H = 0.147; // team heights are uniform (rulebook: <= 150 mm, within 20 mm per team)
-const HULL_SPLIT = 0.095; // primary hull band below, secondary above; both well over 20% of the side
+const HULL_SPLIT = 0.095; // primary hull band below, secondary above; both over 20% of the side
 const DRIBBLER_FRONT = 0.0725; // flat face, 72.5 mm from centre (rulebook window 71.5-75 mm)
-const ARC_SEGMENTS = 30; // ~192 tris/robot; below ~28 the 180 mm hull reads as a visible polygon
-// Where the dribbler bar sits in its robot's own frame. On the instance matrix rather than baked
-// into the geometry, so the per-instance scale is a fade in place. See buildRobots.
+const ARC_SEGMENTS = 30; // below ~28 the 180 mm hull reads as a visible polygon
+// The team-coloured shell starts 46 mm up, because the bottom of an SSL robot's envelope is
+// MECHANISM, not bodywork: wheels, dribbler mouth and kicker plate all live in that band. A
+// shell drawn to the carpet is what made these read as banded bins. Under it is a narrower chassis
+// core, so the bay is open at the rim and the wheels are visible instead of tucked inside.
+const BAY_H = 0.046;
+const CORE_R = 0.07;
+// Omni wheels: 48 mm across, 15 mm wide, hubs 78 mm out, which puts the outermost corner of the
+// tread at 88.8 mm, inside the 180 mm cylinder the rules measure and clear of the hull rim. Mounts
+// at +/-60 and +/-120 deg off the dribbler face, as sixths of a turn: the front pair straddles the
+// mouth, which is why a real four-wheel SSL base does not sit on the diagonals.
+const WHEEL_R = 0.024;
+const WHEEL_W = 0.015;
+const WHEEL_HUB = 0.078;
+const WHEEL_SIXTHS = [1, 2, -2, -1];
+// IMU board on the top plate, as close to the centre of rotation as the printed pattern allows: the
+// clear gap behind the centre team dot and inboard of the two rear id dots (patterns.js has the
+// geometry that gap comes out of). Nothing here may cover a dot.
+const IMU_X = -0.0395;
+// Where the dribbler roller sits in its robot's own frame. Exported because the anatomy overlay's
+// `dribbler` anchor is this same point (ssl/experience.js).
 export const DRIB_OFF_X = DRIBBLER_FRONT + 0.0035;
 export const DRIB_OFF_Y = 0.028;
 
@@ -282,6 +306,21 @@ Batch.prototype.disc = function disc(cx, cy, r, seg, y) {
     );
   }
 };
+/**
+ * Fold a three geometry into this batch, so the round parts of a robot (wheels, the dribbler
+ * roller, the chassis core) can be authored as cylinders and still land in one buffer with the
+ * boxes. The source is transformed and thrown away here: it is never uploaded, so there is nothing
+ * to dispose, and what the scene keeps is the merged result.
+ */
+Batch.prototype.mesh = function mesh(src) {
+  const g = src.index ? src.toNonIndexed() : src;
+  const p = g.attributes.position.array;
+  const n = g.attributes.normal.array;
+  for (let i = 0; i < p.length; i++) {
+    this.p.push(p[i]);
+    this.n.push(n[i]);
+  }
+};
 Batch.prototype.build = function build(THREE) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
@@ -422,7 +461,6 @@ export function buildScene(THREE, mount) {
   let placeCorridorFarCap = null;
   let halo = null;
   let contacts = null;
-  let dribblers = null;
   let venue = null;
   let venueDraw = null;
   let heroFocus = null;
@@ -583,9 +621,46 @@ export function buildScene(THREE, mount) {
     return s;
   }
 
+  /**
+   * Everything that is neither the team-coloured shell nor the printed top plate, in the robot's
+   * own frame (+x the dribbler face, +y up). Two geometries, built once and shared by all nineteen:
+   * `dark` is the chassis core, the four tyres, the dribbler cheeks and its roller and the IMU
+   * board; `metal` is the machined aluminium (wheel hubs, the kicker plate standing in the mouth,
+   * the IMU's chip), which is also what a black tyre needs beside it to read as a wheel at all.
+   * Only the MATERIALS are per robot: a ghost fade or a highlight may not leak onto a team-mate.
+   */
+  function mechanics() {
+    const dark = new Batch();
+    const metal = new Batch();
+    const cyl = (r, len, seg) => new THREE.CylinderGeometry(r, r, len, seg);
+    dark.mesh(cyl(CORE_R, BAY_H, 22).translate(0, BAY_H / 2, 0));
+    // Wheel and hub share one mount, so the machined hub reads as a hub and a black tyre in a
+    // shadowed bay still reads as a wheel. Under the rim there is no other light to catch.
+    WHEEL_SIXTHS.forEach((k) => {
+      const a = (k * Math.PI) / 3;
+      const mount = (g) =>
+        g
+          .rotateZ(Math.PI / 2)
+          .rotateY(a)
+          .translate(WHEEL_HUB * Math.cos(a), WHEEL_R, -WHEEL_HUB * Math.sin(a));
+      dark.mesh(mount(cyl(WHEEL_R, WHEEL_W, 10)));
+      metal.mesh(mount(cyl(0.0105, WHEEL_W + 0.002, 8)));
+    });
+    // The mouth: two mounting cheeks with the 66 mm roller across them, then the flat kicker plate
+    // behind it at ball height (a 43 mm ball sits at 21.5 mm). Cheek corners sit at 89.5 mm and the
+    // roller's own surface at 89.8 mm, both inside the same 180 mm cylinder.
+    [1, -1].forEach((s) => dark.box(0.0655, 0.027, s * 0.0375, 0.027, 0.038, 0.009));
+    dark.mesh(cyl(0.0075, 0.066, 8).rotateX(Math.PI / 2).translate(DRIB_OFF_X, DRIB_OFF_Y, 0));
+    metal.box(0.0695, 0.027, 0, 0.005, 0.034, 0.054);
+    dark.box(IMU_X, ROBOT_H + 0.0025, 0, 0.026, 0.0035, 0.022);
+    metal.box(IMU_X, ROBOT_H + 0.0047, 0, 0.011, 0.004, 0.009);
+    return { dark: keep(dark.build(THREE)), metal: keep(metal.build(THREE)) };
+  }
+
   function buildRobots(data) {
     const R = data.geometry.maxRobotRadius || 0.09;
     const shape = hullShape(R, DRIBBLER_FRONT);
+    const mech = mechanics();
     // shape x = forward, shape y = left; extruded along +z then laid flat, so shape y -> world -z
     const mkBand = (h0, h1) => {
       const g = new THREE.ExtrudeGeometry(shape, {
@@ -597,22 +672,12 @@ export function buildScene(THREE, mount) {
       g.translate(0, h0, 0);
       return keep(g);
     };
-    const geoLo = mkBand(0, HULL_SPLIT);
+    const geoLo = mkBand(BAY_H, HULL_SPLIT);
     const geoHi = mkBand(HULL_SPLIT, ROBOT_H);
     const plateGeo = keep(new THREE.PlaneGeometry(2 * R, 2 * R));
     plateGeo.rotateX(-Math.PI / 2);
     plateGeo.translate(0, ROBOT_H + 0.0007, 0);
 
-    // One instanced draw for every dribbler bar, and one for every contact patch. The bar's offset
-    // to the hull front is deliberately NOT baked into the geometry: it rides on the per-instance
-    // matrix (DRIB_OFF_X/Y). One opaque material covers all nineteen bars, so a bar cannot take its
-    // robot's opacity, and a ghosted robot used to keep a solid black bar in front of a body faded
-    // to 0.28. With the offset on the matrix the instance scales about the BAR's own centre, so
-    // scaling with the tracking alpha shrinks it out of the shot in place.
-    const dribGeo = keep(new THREE.BoxGeometry(0.008, 0.015, 0.074));
-    const dribMat = keep(
-      new THREE.MeshStandardMaterial({ color: 0x0d0e10, roughness: 0.55, metalness: 0.4 })
-    );
     const contactTex = keep(contactTexture(THREE));
     const contactGeo = keep(new THREE.PlaneGeometry(R * 2.9, R * 2.9));
     contactGeo.rotateX(-Math.PI / 2);
@@ -629,10 +694,6 @@ export function buildScene(THREE, mount) {
 
     const out = [];
     const n = data.robots.length;
-    dribblers = new THREE.InstancedMesh(dribGeo, dribMat, n);
-    dribblers.frustumCulled = false;
-    dribblers.castShadow = false;
-    root.add(dribblers);
     contacts = new THREE.InstancedMesh(contactGeo, contactMat, n);
     contacts.frustumCulled = false;
     contacts.castShadow = false;
@@ -650,29 +711,21 @@ export function buildScene(THREE, mount) {
       g.name = `bot_${rb.refereeColor[0]}${rb.id}`;
       root.add(g);
 
-      // per-robot materials: highlight writes emissive and the tracking treatments write
-      // opacity, and neither may leak onto a team-mate
-      const matLo = keep(
-        new THREE.MeshStandardMaterial({
-          color: new THREE.Color(primary),
-          roughness: 0.44,
-          metalness: 0.34,
-          emissive: 0x000000,
-        })
-      );
-      const matHi = keep(
-        new THREE.MeshStandardMaterial({
-          color: new THREE.Color(secondary),
-          roughness: 0.5,
-          metalness: 0.28,
-          emissive: 0x000000,
-        })
-      );
+      // Per-robot materials: highlight writes emissive and the tracking treatments write opacity,
+      // and neither may leak onto a team-mate. The mechanics get their own pair for the same reason
+      // and go in `mats` below, which is what fades a ghosting robot whole rather than leaving it a
+      // solid black roller in front of a hull at 0.28.
+      const mat = (color, rough, metal) =>
+        keep(
+          new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive: 0 })
+        );
+      const matLo = mat(primary, 0.44, 0.34);
+      const matHi = mat(secondary, 0.5, 0.28);
+      const matDark = mat(0x22262b, 0.58, 0.3);
+      const matMetal = mat(0xbfc5cb, 0.34, 0.55);
       const lo = new THREE.Mesh(geoLo, matLo);
       const hi = new THREE.Mesh(geoHi, matHi);
-      lo.castShadow = false;
-      hi.castShadow = false;
-      g.add(lo, hi);
+      g.add(lo, hi, new THREE.Mesh(mech.dark, matDark), new THREE.Mesh(mech.metal, matMetal));
 
       const tex = new THREE.CanvasTexture(
         paintPattern(document, rb.id, rb.refereeColor, R, DRIBBLER_FRONT, PATTERN_PX)
@@ -688,7 +741,6 @@ export function buildScene(THREE, mount) {
         })
       );
       const plate = new THREE.Mesh(plateGeo, matPlate);
-      plate.castShadow = false;
       g.add(plate);
 
       // A ghosting robot loses its solid read, so the top rim is drawn as a line the moment the
@@ -718,8 +770,7 @@ export function buildScene(THREE, mount) {
         def: rb,
         key: g.name,
         group: g,
-        meshes: [lo, hi, plate],
-        mats: [matLo, matHi, matPlate],
+        mats: [matLo, matHi, matPlate, matDark, matMetal],
         outline,
         alpha: 1,
         visible: true,
@@ -1025,17 +1076,15 @@ export function buildScene(THREE, mount) {
       const r = robots[i];
       const rb = r.def;
       // Nothing tracked yet: there is no pose to draw, only a hold-filled zero. Hide the whole
-      // robot rather than stand it on the centre spot, and clear its instanced bar/patch so a
-      // stale matrix does not leave either behind at the origin.
+      // robot rather than stand it on the centre spot, and clear its instanced contact patch so a
+      // stale matrix does not leave one behind at the origin.
       if (r.firstPresent < 0 || j < r.firstPresent) {
         if (r.group.visible) r.group.visible = false;
         if (r.outline) r.outline.visible = false;
         r.visible = false;
         dummy.position.set(0, 0, 0);
-        dummy.rotation.set(0, 0, 0);
         dummy.scale.setScalar(0);
         dummy.updateMatrix();
-        dribblers.setMatrixAt(i, dummy.matrix);
         contacts.setMatrixAt(i, dummy.matrix);
         continue;
       }
@@ -1117,21 +1166,11 @@ export function buildScene(THREE, mount) {
       }
       r.visible = show;
 
-      // The bar, posed about its own centre so its scale is a fade and not a slide to the axle.
-      const cy = Math.cos(yaw);
-      const sy = Math.sin(yaw);
-      dummy.position.set(x + DRIB_OFF_X * cy, DRIB_OFF_Y, -y - DRIB_OFF_X * sy);
-      dummy.rotation.set(0, yaw, 0);
-      dummy.scale.setScalar(show ? alpha : 0);
-      dummy.updateMatrix();
-      dribblers.setMatrixAt(i, dummy.matrix);
       dummy.position.set(x, 0, -y);
-      dummy.rotation.set(0, 0, 0);
       dummy.scale.setScalar(show ? 0.5 + 0.5 * alpha : 0);
       dummy.updateMatrix();
       contacts.setMatrixAt(i, dummy.matrix);
     }
-    dribblers.instanceMatrix.needsUpdate = true;
     contacts.instanceMatrix.needsUpdate = true;
 
     // ---- ball, on its own (much finer) grid, with z for chips

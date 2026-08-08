@@ -1,7 +1,7 @@
 // start.js - the seat fork at #/start.
 //
 // A card selects a work function. The single Continue button persists it, records role_selected,
-// and advances.
+// and returns control to the router, which continues the already selected mission.
 
 import { ROLES, getRoleId, setRole, roleById } from './role.js';
 import { track } from './analytics.js';
@@ -25,6 +25,7 @@ const LABELS = Object.freeze({
  *   onPick?: (role:object) => void,
  *   persist?: boolean,
  *   copy?: object,
+ *   mission?: string|null,
  * }} [maybeOpts]
  * @returns {{el:HTMLElement, focus:()=>void, current:()=>string|null,
  *   select:(id:string)=>object|null, pick:(id:string)=>object|null, dispose:()=>void}}
@@ -103,7 +104,7 @@ export function createStart(mountOrOpts, maybeOpts) {
     el.classList.add('st-picked');
     renderSelection();
     if (persist) setRole(role.id);
-    track.roleSelected(role, { returning: role.id === arrivalId, mission: role.mission });
+    track.roleSelected(role, { returning: role.id === arrivalId, mission: opts.mission || null });
     onPick(role);
     return role;
   }
