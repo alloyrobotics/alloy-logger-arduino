@@ -552,6 +552,26 @@ materials; arm6, drone and donna share one engine (`core/anatomy-wireframe.js`) 
 scene's own robot as the same faint-hull / brighter-part wireframe grammar, so all four missions
 speak one visual language on this step.
 
+**The mechanisms move from the log, not from a loop (round 10, ssl + drone).** A robot crossing the
+carpet at 2.9 m/s under a card that says four wheels move it in any direction, with the wheels welded
+still, is the one claim on this step a visitor can catch out. So the CAD's four wheel groups turn, and
+the rate is derived rather than dialled in: the tracker's own pose is finite-differenced into a planar
+body velocity and a yaw rate, and standard omni inverse kinematics resolves those onto each wheel's
+measured axle, drive radius and rolling radius. Direction, the ratio between the four wheels and the
+ratio between one moment and the next are all exact. ONE uniform visual rate scale slows the common
+rate, because 25 rollers per wheel alias into a backwards crawl at the true rate; nothing is capped
+and nothing is per wheel, so the sprint still reads faster than the spin. The drone is the same
+argument on its own channel: the prop hubs keep integrating phase from logged `/motors` rpm, slowed
+by a second uniform factor ONLY while the wireframe is standing in for the solid aircraft (a line
+drawing has no blur disc to hide a strobe behind), with the blur discs receding to match. Every wrap
+and seek RESAMPLES instead of integrating: the anatomy tour and the flow both run the viewer inside a
+loop window, so mission time jumps backward every couple of seconds, and integrating those jumps
+lurched all four wheels or rotors by a whole window at once. Only a forward step of a plausible size
+turns anything. The motion runs through the solid intro and the settled wireframe alike, and
+prefers-reduced-motion skips the intro and nothing else, because these are readouts of the same
+logged channels the step is about: freezing them would be hiding telemetry, and a machine sliding on
+frozen wheels is a stronger motion illusion than the one the visitor asked to avoid.
+
 **The mission step shows the goal (round 6).** `EXPERIENCE.success.window` loops the match's only
 goal (61.78-63.6 s) under an explicit 2.40 m / 60 deg elevation / 40 deg azimuth goal-mouth follow
 camera, not the near hull framing. Honesty rule: it is an OWN GOAL off our keeper (Polaris 6 by

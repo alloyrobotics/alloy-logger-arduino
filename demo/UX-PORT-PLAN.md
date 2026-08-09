@@ -142,7 +142,7 @@ lines, reduced-motion behaviour all unchanged.
 ROUND 8 (ssl robot step only): the tour draws RoboTeam Twente's published v2024 CAD
 (github.com/RoboTeamTwente/mechanics, MIT) as a transparent feature-edge wireframe, with the
 live card's part group rendered solid + emissive. The mesh ships as
-`demo/js/robots/ssl/rtt-model.mesh` (865 KB, 184 parts / 99,384 tris, groups omni/hull/imu/
+`demo/js/robots/ssl/rtt-model.mesh` (867 KB, 184 parts / 99,384 tris, groups omni/hull/imu/
 kicker/dribbler), fetched lazily on that step only; on any fetch failure the round-7
 procedural hull runs the tour unchanged. Attribution: MIT text in
 `demo/js/robots/ssl/RTT-MODEL-NOTICE.md` + a credit line in the step's provenance block.
@@ -159,6 +159,22 @@ register; `userData.anatomySkip` opts a subtree out, e.g. the drone's rpm blur d
 contract: `{ setSubject, step(nowMs), settled(), dispose }`, clocked only by the viewer's
 frame step; prefers-reduced-motion skips the intro. Timing lever: SOLID_HOLD_MS / FADE_MS,
 restated in BOTH anatomy-wireframe.js and rtt-model.js - move them together.
+ROUND 10 (anatomy motion; ssl + drone): the mechanisms a card names now MOVE, and every rate is
+derived from the mission rather than looped. ssl's four CAD wheel groups are spun by omni inverse
+kinematics off the tracker's own pose: the posed body translation and yaw rate are
+finite-differenced per frame and resolved onto each wheel's measured axle, drive radius and
+rolling radius, so direction, the ratio between the four wheels and the ratio between one moment
+and the next are exact. ONE uniform visual rate scale (`SPIN_SCALE`, ssl/rtt-model.js) slows the
+common rate under the roller-pitch aliasing limit; nothing is capped and nothing is per wheel, so
+a faster moment still draws faster. The drone reuses its existing logged `/motors` rpm phase
+integrator, moved onto a permanent prop hub (`userData.anatomyForce`, replicated by
+core/anatomy-wireframe.js so the drawing carries the scene's one phase), uniformly slowed ONLY
+while the wireframe stands in for the solid aircraft, with the rpm blur discs receding to match.
+Both readouts integrate FORWARD mission-time steps of a plausible size only: a replay loop wrap,
+a scrub, a chart click, a repeated frame and a backward drag all RESAMPLE and integrate nothing,
+so no wheel or prop earns phase a seek did not. Motion runs through the solid intro and the
+settled wireframe alike, and prefers-reduced-motion still skips only the intro: these are
+telemetry readouts, so suppressing them would draw a machine moving on frozen wheels.
 ROUND 7 also replaced the SSL hull: Ø180 mm x 147 mm from the log's own geometry packet,
 flat front chord with dribbler roller + kicker plate in the mouth, 4 omni wheels at
 +/-60 and +/-120 deg, IMU board on the top plate; ID dot patterns unchanged. The ssl

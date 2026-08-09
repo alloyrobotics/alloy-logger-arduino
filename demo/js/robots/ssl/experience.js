@@ -505,7 +505,7 @@ export function applyExperience(def) {
    * A DYNAMIC IMPORT INSIDE A LAZY MODULE, for two separate reasons. The eager budget is the first:
    * `ssl-eager-size.test.mjs` walks static imports from `script.js` and holds them under 60 KB with
    * about two hundred bytes spare, and while this file is already behind that boundary, the reader and
-   * its 865 KB asset have no business being fetched by a visitor who opens the picker and leaves. The
+   * its 867 KB asset have no business being fetched by a visitor who opens the picker and leaves. The
    * second is the honest one: the fetch can fail, and a failure here has to cost nothing. This
    * promise rejecting - a 404, an offline visitor, a truncated asset, a payload whose roster has no
    * bot 8 - leaves the step exactly as round 7 shipped it, with the procedural robot posed under four

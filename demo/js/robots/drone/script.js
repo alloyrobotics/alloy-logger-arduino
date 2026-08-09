@@ -102,10 +102,12 @@ const ANATOMY_TOUR = {
   beats: [
     {
       // Motor 3 holds 6049 to 6180 rpm at 59.8 to 60.6 percent throttle over these 2.9 s, which is
-      // the card's claim running normally: scene.js hides the blades and runs the blur disc at its
-      // full value above 2600 rpm, so what is on screen is rpm that high. The lit arm, bell, cap and
-      // accent ring are one of four identical corners, which is the other half of the claim and the
-      // half the old 0.42 unit close-up could not make.
+      // the card's claim running normally. On the solid aircraft that rpm reads as a blur disc with
+      // the blades hidden under it, because two bars turning 103 times a second cannot be drawn at
+      // 60 fps; from round 10 the anatomy step's wireframe draws them anyway, turning at a slowed but
+      // proportional rate off the same rpm, and the disc recedes to let the drawing be read. The lit
+      // arm, bell, cap and accent ring are one of four identical corners, which is the other half of
+      // the claim and the half the old 0.42 unit close-up could not make.
       part: 'm3',
       window: [18.6, 21.5],
       glow: 0.085,

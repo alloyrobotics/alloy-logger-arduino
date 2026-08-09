@@ -1429,7 +1429,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
           return;
         }
         anatomyModel = handle;
-        // A beat is very likely already live by the time an 865 KB asset lands, so the model is told
+        // A beat is very likely already live by the time an 867 KB asset lands, so the model is told
         // which part it arrived into rather than waiting for the next beat change to look right.
         if (glowPart && typeof handle.setSubject === 'function') handle.setSubject(glowPart);
       })

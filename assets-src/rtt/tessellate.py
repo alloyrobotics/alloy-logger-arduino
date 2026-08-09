@@ -110,8 +110,12 @@ DROP_PATH = ("golfball",)
 # `motorassembly/motormount` is the same decision for the same reason. The mount is a 74 mm bracket,
 # four of them, and drawn solid they are the biggest flat things on the machine: the "four wheels move
 # in any direction" beat rendered as four bright plates with the wheels showing through them as line
-# work. The bracket is context; the WHEEL - frame, cap, twenty-five rollers - and the motor that drives
-# it are the subject, because "wheels" is the word on the card. The dribbler's own front mount
+# work. The bracket is context; the WHEEL and the motor that drives it are the subject, because
+# "wheels" is the word on the card. What the group SHIPS is narrower than that intent, and it is worth
+# stating plainly because the demo rotates these groups: after the per-part triangle budget below, the
+# four rotating wheel groups hold 108 parts between them - 100 roller bodies, four hub nuts and four
+# shaft couplers, so 27 parts per wheel - and the wheel frames, the caps and the four motors are all
+# dropped by that budget rather than by any rule here. The dribbler's own front mount
 # (`frontassembly/motormountfrontassembly`) is a different part and this pattern does not match it.
 GROUPS = [
     ("hull", ("big_foot_1_0_board", "motorassembly/motormount")),

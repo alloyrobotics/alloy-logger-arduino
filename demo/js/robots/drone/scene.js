@@ -18,6 +18,14 @@ const ARM_R = 0.175; // motor offset on each body axis; 0.495 diagonal, ~3.6x tr
 const GEAR = 0.075; // skid drop below the centre plate
 const DEG = Math.PI / 180;
 
+// Visual blade rate as a fraction of the logged one, and the second fraction the anatomy step's
+// drawing gets on top of it. Both are argued at the prop hub below; both are rates, never a rate
+// this aircraft did not report.
+const BLADE_RATE = 0.16;
+const WIRE_BLADE_RATE = 0.065;
+// And how far the blur discs recede while that drawing is standing in for the solid aircraft.
+const WIRE_DISC = 0.2;
+
 const COL = {
   carbon: 0x15171b,
   shell: 0x1c2026,
@@ -206,6 +214,10 @@ export function buildScene(THREE, mount) {
 
   const plateGeo = G(new THREE.BoxGeometry(0.148, 0.012, 0.148));
   const lower = new THREE.Mesh(plateGeo, carbonMat);
+  // Named because `update()` reads its visibility to tell whether the anatomy step's wireframe is
+  // standing in for this aircraft (see the `solid` probe below), which makes it a contract rather
+  // than a detail. Not a subtree anything resolves BY name - `script.js` asks for `drone-craft`.
+  lower.name = 'drone-lower-plate';
   lower.position.y = -0.011;
   lower.castShadow = true;
   lower.receiveShadow = true;
@@ -394,23 +406,51 @@ export function buildScene(THREE, mount) {
     disc.position.set(m.x, 0.045, m.z);
     // Left alone by the anatomy step's wireframe (`core/anatomy-wireframe.js` reads this flag). The
     // disc is not hardware: it is a READOUT, a blur whose opacity and cone are written every frame from
-    // logged rpm, and it is the only thing on screen that says the props are turning. Drawn as edges it
-    // would be two frozen circles per corner, and hidden with the rest of the solid it would leave four
-    // still props over an aircraft that is flying.
+    // logged rpm. Drawn as edges it would be two frozen circles per corner, and hidden with the rest of
+    // the solid it used to leave four still props over an aircraft that is flying, which is why round 9
+    // let it keep drawing at full strength over the drawing.
+    //
+    // Round 10 takes that back, because the drawing now has turning blades in it and the disc's job has
+    // moved. It was the only thing on screen saying the props were turning; it is now a solid smoke
+    // plate, wider than the whole airframe, sitting on top of a line drawing of the mechanism a card is
+    // pointing at. So `update()` takes it down to WIRE_DISC of its value for exactly as long as the
+    // drawing is standing in. Nothing is restored on the way out because nothing is stored: this
+    // opacity is recomputed from `/motors` on every single frame, so the frame after the drawing goes
+    // away is a full-strength disc again.
     disc.userData.anatomySkip = true;
     body.add(disc);
 
-    // two blades, only shown while the motor is slow enough to actually see them
+    // ---------- the prop hub ----------
+    //
+    // Two blades, only SHOWN while the motor is slow enough to actually see them, on a hub that always
+    // turns and is always there. The split between those two sentences is round 10's whole change, and
+    // it is a change about who owns what.
+    //
+    // Until now the group WAS the toggle: `blades.visible` went false above ~2 krpm and the hub went
+    // with it. That reads correctly on the solid aircraft and it deletes the props from the anatomy
+    // step's drawing, because a wireframe replica is parented under the live group it rides and three.js
+    // draws nothing under an invisible parent. Hugh's note is that the rotors should turn in that
+    // drawing, so the hub is now permanent - it carries the phase and the replica pieces - and the
+    // per-frame visibility moved down onto the two blade MESHES, which is the layer that was ever
+    // really conditional.
+    //
+    // `anatomyForce` on the hub is the other half: it tells `core/anatomy-wireframe.js` to replicate
+    // this subtree even on a frame where the blades are hidden, which at survey rpm is every frame. The
+    // blades are real hardware and the hiding is a photographic decision, so the drawing takes them and
+    // the photograph keeps its decision. The stamp is inherited, so the two meshes come with it.
     const bladeMat = M(new THREE.MeshStandardMaterial({ color: 0x0d0f12, roughness: 0.7, metalness: 0.2, transparent: true, opacity: 1 }));
     const blades = new THREE.Group();
     blades.position.set(m.x, 0.044, m.z);
+    blades.userData.anatomyForce = true;
     body.add(blades);
+    const bladeMeshes = [];
     for (let b = 0; b < 2; b++) {
       const blade = new THREE.Mesh(bladeGeo, bladeMat);
       blade.rotation.y = b * Math.PI;
       blade.rotation.x = (m.cw ? 1 : -1) * 0.14;
       blade.castShadow = true;
       blades.add(blade);
+      bladeMeshes.push(blade);
     }
 
     const led = new THREE.Mesh(ledGeo, front ? ledFrontMat : ledRearMat);
@@ -424,7 +464,7 @@ export function buildScene(THREE, mount) {
     leg.castShadow = true;
     body.add(leg);
 
-    props.push({ disc, discMat, blades, bladeMat, cw: m.cw, phase: m.id * 1.1 });
+    props.push({ disc, discMat, blades, bladeMeshes, bladeMat, cw: m.cw, phase: m.id * 1.1 });
     if (m.id === 3) {
       m3Bell = bell;
       m3Parts.push({ mesh: arm, base: carbonMat }, { mesh: bell, base: metalMat }, { mesh: bellTop, base: metalMat });
@@ -466,6 +506,23 @@ export function buildScene(THREE, mount) {
 
   // ---------- per-frame ----------
   let lastT = 0;
+  let haveT = false;
+  /**
+   * The longest mission-time step the prop phase will integrate, and it is derived rather than felt
+   * out. `core/timeline.js` clamps its own wall step to 0.1 s before scaling it by the transport
+   * speed, and the fastest button in the viewer is 2x, so ONE tick of playback can never advance
+   * mission time by more than 0.2 s however badly the frame rate is behaving. Anything past 0.25 s is
+   * therefore a seek by construction - a scrubber drag, a chart click, a jump to a finding - and not
+   * a slow frame, which is the distinction the props care about: a slow frame is motion that has to
+   * keep integrating, and a seek is not motion at all.
+   *
+   * Deliberately looser than the 0.1 s this used to clamp to, because clamping and refusing are not
+   * the same decision and 0.1 s was sized for the first. A visitor at 2x on a 15 fps phone hands this
+   * 0.133 s steps of real playback: the old code integrated 0.1 of each one and the props kept
+   * turning slightly slow, and refusing at the same threshold would stop them dead, which on this
+   * mission is a readout saying the motors quit.
+   */
+  const MAX_PHASE_DT = 0.25;
 
   function update(tSec, data) {
     const pos = data && data['/pos'];
@@ -487,25 +544,77 @@ export function buildScene(THREE, mount) {
     craft.rotation.z = pitch * DEG;
     craft.rotation.x = roll * DEG;
 
-    const dt = Math.min(Math.abs(tSec - lastT), 0.1);
+    /**
+     * How much MISSION time passed since the last frame, signed, and the sign is the whole point.
+     *
+     * This used to be `Math.min(Math.abs(tSec - lastT), 0.1)`, and the `Math.abs` is a bug with a
+     * plausible reason behind it: a negative step looks like something to make safe, so it was
+     * folded into a positive one. But every negative step here means the timeline went BACKWARD -
+     * and it goes backward constantly on this mission, because `core/flow.js` and the anatomy tour
+     * both run the viewer inside a loop window, so mission time wraps from the end of the window to
+     * its start every couple of seconds. Absolute value turned each of those wraps into a forward
+     * step the size of the whole window and spun the props by it: on the anatomy tour that is a
+     * lurch on all four props, in the same direction, once per loop, on a step whose entire subject
+     * is that these four rpm traces are the truth. A backward scrub did the same thing, only bigger.
+     *
+     * So the rule is the one the SSL wheels use (`ssl/rtt-model.js`, and the reasoning there is
+     * worth reading): integrate a forward step of a plausible size, integrate NOTHING otherwise,
+     * and resample either way. `lastT` is written unconditionally on the line below, so a wrap, a
+     * seek, a repeated frame and a backward drag all leave the props exactly where they are and the
+     * next frame carries on from the new time. Nothing is clamped, because a clamped seek is still
+     * a seek that turned the props by 0.1 s of phase it never earned.
+     *
+     * The first frame has no previous time to difference (`lastT` starts at 0 and the first tick can
+     * arrive anywhere in the mission, including inside the success step's loop at 18.6 s), so it is
+     * a resample too rather than one enormous integration.
+     */
+    const tStep = haveT ? tSec - lastT : 0;
+    const dt = tStep > 0 && tStep <= MAX_PHASE_DT ? tStep : 0;
     lastT = tSec;
+    haveT = true;
     const rpms = [
       sampleAt(mot.t, mot.rpm1, tSec),
       sampleAt(mot.t, mot.rpm2, tSec),
       sampleAt(mot.t, mot.rpm3, tSec),
       sampleAt(mot.t, mot.rpm4, tSec),
     ];
+    // Is this aircraft being drawn as ITSELF on this frame, or is the anatomy step's wireframe standing
+    // in for it? `core/anatomy-wireframe.js` hides every mesh it replicated on its settle frame and
+    // writes each one back verbatim on dispose, so any replicated mesh answers the question, and the
+    // lower centre plate is the steadiest one to ask: it is in the replica set on every install (no skip
+    // stamp, visible on every step of the mission) and nothing else in this file ever writes to it.
+    // Reading the graph rather than being told is deliberate - the module has no channel back into a
+    // scene, and inventing one so this file could be notified would be a second source of truth about a
+    // flag that is already sitting there.
+    const solid = lower.visible;
+    // The visual blade rate, which is the one number on this aircraft that has to be stylised.
+    //
+    // At the anatomy tour's 6.0 to 6.2 krpm a prop is turning 103 times a second. BLADE_RATE draws that
+    // at 16.5, which is 99 degrees per frame at 60 fps against a two-blade prop's 180 degree symmetry:
+    // past the aliasing limit, so it reads as a slow backwards flicker, which is exactly why the solid
+    // aircraft hides its blades up there and shows a blur disc instead. A line drawing has no blur to
+    // hide behind, so WIRE_BLADE_RATE takes it to 1.07 turns a second, 6.4 degrees per frame, a prop a
+    // visitor watches go round. Proportional and not capped: the four corners keep their relative rates,
+    // spin-up still spins up, and a motor that stops draws as a stopped prop, which is the mechanism
+    // this whole mission is about. Slowed, never invented - direction, ratio and rpm are all `/motors`.
+    const spin = solid ? BLADE_RATE : BLADE_RATE * WIRE_BLADE_RATE;
     props.forEach((p, i) => {
       const rpm = rpms[i];
-      // Visual blade rate is scaled down hard. Above ~2 krpm the blades are hidden and the blur
-      // disc carries the read, so nothing strobes at 60 fps; below that you watch them spin up.
-      p.phase += (p.cw ? -1 : 1) * (rpm / 60) * dt * 2 * Math.PI * 0.16;
+      // The ONLY place a blade phase is written, on the hub, so the solid blades and the drawing's
+      // replica of them are the same rotation by construction and cannot drift apart.
+      p.phase += (p.cw ? -1 : 1) * (rpm / 60) * dt * 2 * Math.PI * spin;
       p.blades.rotation.y = p.phase;
       const fast = Math.min(rpm / 2600, 1);
       const slow = Math.max(0, 1 - rpm / 2100);
-      p.discMat.opacity = 0.05 + 0.22 * fast * fast;
+      p.discMat.opacity = (0.05 + 0.22 * fast * fast) * (solid ? 1 : WIRE_DISC);
       p.bladeMat.opacity = slow;
-      p.blades.visible = slow > 0.02;
+      // Left entirely alone while the drawing is up: the wireframe hid these two meshes on its settle
+      // frame and owns the restore, and a scene writing them back every frame would be fighting it.
+      if (solid) {
+        const show = slow > 0.02;
+        const bm = p.bladeMeshes;
+        for (let b = 0; b < bm.length; b++) bm[b].visible = show;
+      }
       const cone = 0.965 + 0.035 * fast;
       p.disc.scale.set(cone, cone, 1);
     });

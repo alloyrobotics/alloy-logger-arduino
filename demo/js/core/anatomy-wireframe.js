@@ -68,6 +68,17 @@
 //                                       replicated nor hidden. For the things that are readouts
 //                                       rather than machine - a prop's blur disc, whose opacity and
 //                                       scale are written every frame from logged rpm.
+//   obj.userData.anatomyForce = true     replicate this subtree EVEN IF it is invisible on the frame
+//                                       the drawing installs. For the parts a solid look legitimately
+//                                       hides and a technical drawing has to show anyway. The quad's
+//                                       blades are the case that asked for it: above about 2 krpm two
+//                                       solid bars at 60 fps strobe rather than spin, so the scene
+//                                       hides them and lets a blur disc carry the read, which is the
+//                                       right call for a photograph of a flying aircraft and the wrong
+//                                       one for a drawing of its mechanism. Round 10's note is that the
+//                                       props should turn in the drawing, and at flight rpm the drawing
+//                                       had no props in it at all. `anatomySkip` outranks this where a
+//                                       scene somehow says both.
 //
 // THE VIEWER'S OWN GLOW SHELLS, and what happens to them, because it is a real consequence and not an
 // oversight. The viewer sleeves a lit part in an additive copy of its meshes, parented TO those meshes
@@ -218,12 +229,21 @@ export async function installWireframe(THREE, mount, opts) {
   // skipped rather than replicated: a quad's alert halo and a robot that is off the pitch are meshes
   // the scene is deliberately not showing, and a wireframe of them would draw hardware that is not
   // there. It also keeps the restore honest - the only visibility flags this module ever writes are
-  // ones it found true.
+  // ones it found true, and a forced piece is written back the false it was found with.
+  //
+  // `anatomyForce` is the one exception, and it is an opt-in a scene has to argue for: the mesh is
+  // real hardware that the solid look is hiding for a reason of its own, so the drawing takes it and
+  // the scene keeps its reason. Inherited down the subtree, because the thing a scene wants to force
+  // is a mechanism rather than a mesh.
   const sources = [];
-  const walk = (obj, inherited) => {
-    if (!obj || obj.visible === false) return;
+  const walk = (obj, inherited, inheritedForce) => {
+    if (!obj) return;
     const ud = obj.userData || null;
+    // Skip outranks force. A subtree the scene has asked this module to leave alone is left alone,
+    // whatever else is stamped on it.
     if (ud && (ud.anatomySkip === true || ud.viewerGlowShell === true)) return;
+    const forced = inheritedForce || !!(ud && ud.anatomyForce === true);
+    if (!forced && obj.visible === false) return;
     const part = ud && typeof ud.anatomyPart === 'string' ? ud.anatomyPart : inherited;
     // Plain meshes only. An InstancedMesh or a SkinnedMesh does not pose from its own matrix, and a
     // sprite has no edges: both would draw a wireframe somewhere the machine is not.
@@ -231,9 +251,9 @@ export async function installWireframe(THREE, mount, opts) {
       sources.push({ obj, part: part || null });
     }
     const kids = obj.children;
-    for (let i = 0; i < kids.length; i++) walk(kids[i], part);
+    for (let i = 0; i < kids.length; i++) walk(kids[i], part, forced);
   };
-  for (const r of roots) walk(r, null);
+  for (const r of roots) walk(r, null, false);
   if (!sources.length) return null;
 
   // ------------------------------------------------------------- what we own
@@ -324,6 +344,19 @@ export async function installWireframe(THREE, mount, opts) {
   // always the source's own parent and the composition is the identity case, but a mesh bolted to
   // another mesh is a perfectly ordinary way to build a machine, and hanging its drawing off a parent
   // this module is about to hide would be a piece that vanishes with it.
+  //
+  // WHAT THAT SEARCH DELIBERATELY NEVER CLIMBS PAST is a GROUP. `sourceSet` holds meshes and only
+  // meshes, so every group between a piece and the robot root stays the piece's live parent, and every
+  // per-frame transform the scene writes to one of those groups carries the drawing with it for free:
+  // arm6's joint chain, Donna's recorded pose, the quad's airframe, and the quad's prop hubs, which is
+  // the one round 10 needed. A blade replica parented under the hub the scene turns from logged rpm
+  // spins at exactly the rate the scene turns it, so this module runs no integrator of its own and the
+  // drawing cannot disagree with the machine: there is one phase, and it is the scene's.
+  //
+  // The corollary belongs to the SCENE, because this module cannot enforce it: three.js does not draw
+  // the children of an invisible parent, so a scene that forces a piece must keep the group that piece
+  // hangs off visible. Hiding a whole prop group would hide its drawing with it. Put the per-frame
+  // visibility on the meshes and leave the group that rotates alone.
   const sourceSet = new Set(sources.map((s) => s.obj));
   const local = new THREE.Matrix4();
   const pieces = [];
