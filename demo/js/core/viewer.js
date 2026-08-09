@@ -1136,6 +1136,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   let glowHalo = null;
   let glowPart = null;
   let glowFrom = 0;
+  let glowIntroHeld = false; // the highlight is being held back for a display model's intro
   let partMeshSrc = null; // memoised sceneApi.partMeshes()
 
   /** A soft round falloff, drawn once. Additive, so the transparent edge costs nothing. */
@@ -1230,6 +1231,13 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       shell.renderOrder = (obj.renderOrder || 0) + 1;
       shell.frustumCulled = false;
       shell.visible = false;
+      // Marked as the viewer's, because it is now sitting in a scene graph another module reads. An
+      // anatomy display model that redraws the robot walks the robot's own subtree, and a shell is a
+      // 7 per cent copy of a part mesh parented TO that mesh: unmarked it would be picked up as one
+      // more piece of the machine, drawn twice in the wireframe and hidden with the original, which
+      // is a highlight layer quietly switched off by a module that never meant to touch it.
+      shell.name = 'v-glow-shell';
+      shell.userData.viewerGlowShell = true;
       obj.add(shell);
       shells.push(shell);
       obj.updateWorldMatrix(true, false);
@@ -1278,11 +1286,45 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     glowFrom = nowMs();
   }
 
+  /**
+   * True while an installed anatomy display model is still ARRIVING - a solid hold and a dissolve
+   * into its wireframe - and the highlight therefore has nothing to land on yet.
+   *
+   * False in every other case, and that is the load-bearing half: a def with no display model, a def
+   * whose model failed to install, and a model that ships no `settled()` all answer false, so the
+   * halo behaves exactly as it did before this existed.
+   */
+  function anatomyIntroPending() {
+    return !!(anatomyModel && typeof anatomyModel.settled === 'function' && !anatomyModel.settled());
+  }
+
   /** Breathe the lit part, and keep its halo on the anchor. Runs inside the tour's frame step. */
   function stepGlow(now) {
     if (!glowPart || !glowMap) return;
     const entry = glowMap.get(glowPart);
     if (!entry) return;
+    // A part cannot pop out of a drawing that is itself still arriving. While the display model is
+    // in its intro the machine on screen is the scene's own solid robot, and lighting one bit of it
+    // would say "look at this" a second and a half before the picture that makes that legible - the
+    // transparent hull, the part drawn solid inside it - exists. So both layers stay dark, and the
+    // beat that is already live is picked up on the frame the model settles rather than being lost:
+    // the model applies its remembered subject on that same frame, off the same channel.
+    if (anatomyIntroPending()) {
+      entry.shells.forEach((s) => (s.visible = false));
+      glowShellMat.opacity = 0;
+      glowHaloMat.opacity = 0;
+      glowHalo.visible = false;
+      glowIntroHeld = true;
+      return;
+    }
+    if (glowIntroHeld) {
+      glowIntroHeld = false;
+      entry.shells.forEach((s) => (s.visible = true));
+      // The arrival flash belongs to the frame the part actually lights, not to the frame a beat
+      // whose whole highlight was suppressed began on: without this the first lit part fades UP from
+      // an already-decayed flash, which reads as a part going out rather than coming on.
+      glowFrom = now;
+    }
     const phase = ((now - glowFrom) % GLOW_PULSE_MS) / GLOW_PULSE_MS;
     const pulse = 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
     const flash = 1 + 0.85 * (1 - clamp((now - glowFrom) / GLOW_FLASH_MS, 0, 1));
@@ -1302,6 +1344,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
 
   function clearGlow() {
     setGlowPart(null);
+    glowIntroHeld = false;
     if (glowMap) {
       glowMap.forEach((entry) => {
         entry.shells.forEach((shell) => {
@@ -1328,7 +1371,26 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
   // A def MAY ship a richer robot for the anatomy step alone, loaded only when that step opens:
   //
   //     robotDef.anatomyModel = (THREE, mount) => Promise<handle|null>
-  //     handle = { setSubject?(partId|null), dispose?() }
+  //     handle = { setSubject?(partId|null), step?(nowMs), settled?():boolean, dispose?() }
+  //
+  // THE INTRO, and why the viewer drives it rather than the model. A display model redraws the robot:
+  // a solid machine becomes a transparent drawing with one part solid inside it. Round 9's note is
+  // that it may not START there - a visitor shown a ghost has nothing to have made transparent - so
+  // the model opens on the scene's own solid robot, dissolves into its wireframe, and is only then a
+  // drawing. That is a timed transition, and it needs a clock and an opinion about the highlight:
+  //
+  //   step(nowMs)   called once per rendered frame while this step is open and the handle installed,
+  //                 with the same `nowMs()` the tour, the glow pulse and the camera drift read. The
+  //                 first call is t0. The model owns no rAF, no timer and no `Date.now`, so its intro
+  //                 cannot drift against the beats, and leaving mid-intro is just a dispose.
+  //   settled()     false while that intro runs. The part highlight - the glow shells AND the halo -
+  //                 is held back for exactly that long (see `anatomyIntroPending()`), because a part
+  //                 lit inside a machine that is still solid is a marker on bodywork. On the frame it
+  //                 flips true the live beat's highlight lands, and the model applies the `setSubject`
+  //                 it was handed during the intro on that same frame.
+  //
+  // Both are OPTIONAL, and a model without them behaves exactly as round 8's did: no intro, and the
+  // halo up on the first beat.
   //
   // WHY THE STEP AND NOT THE SCENE. The scene is whatever the mission is - for ssl it is a whole
   // match, nineteen robots on a 12 by 9 m pitch, where a 180 mm machine is forty pixels and real CAD
@@ -2078,6 +2140,12 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       controls.update();
     }
     if (camTween) applyCameraTween(nowMs());
+    // The anatomy display model's only clock, and it is read BEFORE the tour on purpose: `stepGlow()`
+    // asks `settled()` inside `stepTour()`, so advancing the intro first is what makes the frame the
+    // wireframe arrives on the same frame the live part lights. Driven here rather than from inside
+    // the tour because a model is installed whenever the anatomy step is open, and a def can have a
+    // model without a usable tour (an anchor that never resolved), where the intro still has to run.
+    if (anatomyModel && typeof anatomyModel.step === 'function') anatomyModel.step(nowMs());
     // After the ease and after `update()`, and it outranks both: while a tour is running the
     // choreography owns the shot. `startTour()` has already cleared the ease, so the two only ever
     // coexist for the single frame a hand-drag takes to cancel it.

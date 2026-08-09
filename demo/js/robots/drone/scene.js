@@ -392,6 +392,12 @@ export function buildScene(THREE, mount) {
     const disc = new THREE.Mesh(discGeo, discMat);
     disc.rotation.x = -Math.PI / 2;
     disc.position.set(m.x, 0.045, m.z);
+    // Left alone by the anatomy step's wireframe (`core/anatomy-wireframe.js` reads this flag). The
+    // disc is not hardware: it is a READOUT, a blur whose opacity and cone are written every frame from
+    // logged rpm, and it is the only thing on screen that says the props are turning. Drawn as edges it
+    // would be two frozen circles per corner, and hidden with the rest of the solid it would leave four
+    // still props over an aircraft that is flying.
+    disc.userData.anatomySkip = true;
     body.add(disc);
 
     // two blades, only shown while the motor is slow enough to actually see them
@@ -596,6 +602,16 @@ export function buildScene(THREE, mount) {
     camera: [gimbal, lens],
     imu: [fcBoard, fcChip, fcLed],
   };
+  // The same four groupings, stamped on the meshes themselves, which is the channel the anatomy step's
+  // wireframe reads (`core/anatomy-wireframe.js`): it walks the aircraft's subtree from the outside and
+  // cannot be handed this map, so the map marks its own members. Stamped here rather than restated over
+  // there so a mesh that joins a card's part joins its drawing's brighter register in the same edit.
+  Object.keys(PART_MESHES).forEach((id) => {
+    PART_MESHES[id].forEach((m) => {
+      m.userData.anatomyPart = id;
+    });
+  });
+
   /** @returns {Record<string, import('three').Mesh[]>} */
   function partMeshes() {
     return PART_MESHES;

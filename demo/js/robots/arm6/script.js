@@ -249,6 +249,23 @@ export default {
   // Read by `viewer.setAnatomy()` off the def rather than out of the parts array: it is one spec
   // for the whole step, and the flow hands the viewer only the parts.
   anatomyTour: ANATOMY_TOUR,
+  // The anatomy step's display model (`viewer.js`, "anatomy display model"): this same arm, opened as
+  // the solid machine every other step draws and then dissolved into a transparent feature-edge
+  // drawing with the live card's part solid inside it. Two of these four cards name something a solid
+  // arm hides - the J2 driver inside its bay, and the chip on the board inside that - so the card used
+  // to point at a closed casting and the halo had to carry the whole claim.
+  //
+  // ONE DYNAMIC IMPORT, deliberately, even though this mission has no eager-size gate of its own:
+  // `core/anatomy-wireframe.js` is a step's worth of code that a visitor who opens the picker and
+  // leaves has no use for, and the import keeps it out of every mission's eager graph including the two
+  // that are gated. It is also allowed to fail - the promise rejecting or resolving null leaves the
+  // step exactly as round 8 shipped it, solid arm, working tour, anchored halo - and the viewer
+  // swallows it for that reason. `arm6-machine` is the named subtree in `scene.js` that IS the robot;
+  // the pads, the reach arc and the payload are not drawn.
+  anatomyModel: (THREE, mount) =>
+    import('../../core/anatomy-wireframe.js').then((m) =>
+      m.installWireframe(THREE, mount, { robot: 'arm6-machine' }),
+    ),
   firstQuestion: 'Why did the arm drop the payload?',
   suggested: [
     'Show me exactly where it failed',

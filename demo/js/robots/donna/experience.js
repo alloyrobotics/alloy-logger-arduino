@@ -316,4 +316,31 @@ export function applyExperience(def) {
   // reads `anatomyTour` once, when it is constructed, so the tour that runs is the one built on the
   // full 250 s recording - and a session where this module never loads simply has no tour.
   def.anatomyTour = ANATOMY_TOUR;
+  /**
+   * The anatomy step's display model (`viewer.js`, "anatomy display model"): Donna herself, opened as
+   * the solid machine the rest of the mission draws and then dissolved into a transparent feature-edge
+   * drawing with the live card's part solid inside it.
+   *
+   * WHY SHE NEEDS IT MOST of the four. Two of her cards name boxes bolted inside a printed chest frame
+   * - the torso IMU and the onboard computer - and the cage is closed enough from the tour's bearing
+   * that round 7 had to add geometry for them at all. A drawing is the only view in which a card about
+   * a computer in a torso points at the computer rather than at the torso.
+   *
+   * `donna:robot` is her own group, which is what keeps Jack and Rory solid: three bodies drawn as
+   * three diagrams would be a wireframe of a match, and the card is about ONE machine. Her group is
+   * also what scene.js poses from the recording, so the drawing walks, turns and falls with her.
+   *
+   * 26 degrees rather than the module's 24 because this body is tessellated CAD, not primitives: the
+   * Bit-Bots meshes carry the same coarse facet boundaries the SSL asset does, and the lower threshold
+   * draws them all and turns a printed shell into grey mesh.
+   *
+   * ONE DYNAMIC IMPORT, which is also what keeps `core/anatomy-wireframe.js` out of the eager graph
+   * `donna-eager-size.test.mjs` measures - though this file is already behind the lazy boundary, so
+   * the honest reason is the other one: a rejection or a null costs nothing, and leaves the step
+   * exactly as round 8 shipped it with a solid Donna, a working tour and an anchored halo.
+   */
+  def.anatomyModel = (THREE, mount) =>
+    import('../../core/anatomy-wireframe.js').then((m) =>
+      m.installWireframe(THREE, mount, { robot: 'donna:robot', edgeAngle: 26 }),
+    );
 }

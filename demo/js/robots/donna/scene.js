@@ -176,6 +176,31 @@ const RIG = [
 
 const ROOT_BUCKET = 'ROOT/TORSO';
 
+/**
+ * Which CAD buckets each anatomy card's part is made of, and which anatomy card each of the two
+ * electronics boxes IS.
+ *
+ * Stated once because it is read twice: `partMeshes()` hands these meshes to the viewer's part
+ * highlight, and `buildRobot()` stamps the same grouping onto the meshes themselves as
+ * `userData.anatomyPart`, which is how the anatomy step's wireframe knows which pieces of Donna the
+ * live card is about (`core/anatomy-wireframe.js` walks her subtree from the outside and cannot be
+ * handed a map). Two statements of one grouping is exactly the kind of pair that drifts.
+ *
+ * Head is the head link with its pan bracket; servos are both legs' thigh and shank, which is what the
+ * leg servos drive and where the CAD's own Dynamixel housings are.
+ */
+const PART_BUCKETS = {
+  head: ['HeadTilt', 'HeadPan'],
+  servos: ['LHipPitch', 'LKnee', 'RHipPitch', 'RKnee'],
+};
+/** The reverse lookup, bucket -> part, for the stamp. */
+const BUCKET_PART = {};
+for (const part of Object.keys(PART_BUCKETS)) {
+  for (const bucket of PART_BUCKETS[part]) BUCKET_PART[bucket] = part;
+}
+/** `modules[0]` is the torso IMU and `modules[1]` the onboard computer, in build order. */
+const MODULE_PARTS = ['imu', 'compute'];
+
 // ---------------------------------------------------------------------------- palette
 //
 // House 3D style: the CAD's own two material classes (a light printed/milled shell and the dark
@@ -1011,6 +1036,7 @@ export function buildScene(THREE, mount) {
       for (const cls of Object.keys(lib[bucket].geo)) {
         const mesh = new THREE.Mesh(lib[bucket].geo[cls], mats[cls] || light);
         mesh.name = `${spec.key}:${bucket}:${cls}`;
+        if (BUCKET_PART[bucket]) mesh.userData.anatomyPart = BUCKET_PART[bucket];
         mesh.castShadow = false;
         mesh.receiveShadow = false;
         node.add(mesh);
@@ -1033,9 +1059,10 @@ export function buildScene(THREE, mount) {
     const modules = [
       [0.056, 0, 0.15, 0.014, 0.036, 0.026],
       [0.06, 0, 0.045, 0.022, 0.054, 0.038],
-    ].map(([x, y, z, dx, dy, dz]) => {
+    ].map(([x, y, z, dx, dy, dz], i) => {
       const m = new THREE.Mesh(keep(new THREE.BoxGeometry(dx, dy, dz)), dark);
       m.position.set(x, y, z);
+      m.userData.anatomyPart = MODULE_PARTS[i];
       torsoNode.add(m);
       return m;
     });
@@ -1855,9 +1882,9 @@ export function buildScene(THREE, mount) {
         ['light', 'dark'].map((cls) => bot.group.getObjectByName(`${bot.key}:${b}:${cls}`)).filter(Boolean),
       );
     partMeshMap = {
-      head: pick('HeadTilt', 'HeadPan'),
+      head: pick(...PART_BUCKETS.head),
       imu: [bot.modules[0]],
-      servos: pick('LHipPitch', 'LKnee', 'RHipPitch', 'RKnee'),
+      servos: pick(...PART_BUCKETS.servos),
       compute: [bot.modules[1]],
     };
     return partMeshMap;

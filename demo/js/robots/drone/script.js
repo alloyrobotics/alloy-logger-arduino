@@ -211,6 +211,21 @@ export default {
   // Read by `viewer.setAnatomy()` off the def rather than out of the parts array: it is one spec
   // for the whole step, and the flow hands the viewer only the parts.
   anatomyTour: ANATOMY_TOUR,
+  // The anatomy step's display model (`viewer.js`, "anatomy display model"): this same aircraft, opened
+  // as the solid machine every other step draws and then dissolved into a transparent feature-edge
+  // drawing with the live card's part solid inside it. Three of these four cards name something the
+  // hull hides from the tour's own bearing - the pack under the lower plate, the FC board in the deck's
+  // rear-left corner, the gimbal behind the canopy - which is the case the drawing exists for.
+  //
+  // ONE DYNAMIC IMPORT, so a step's worth of code is fetched by the visitors who reach the step and by
+  // nobody else, and so `core/anatomy-wireframe.js` stays out of every mission's eager graph. Allowed
+  // to fail: a rejection or a null leaves the step exactly as round 8 shipped it, solid aircraft,
+  // working tour, anchored halo. `drone-craft` is the named subtree that IS the aircraft - the field
+  // dress, the flown track and the ground footprint are not drawn.
+  anatomyModel: (THREE, mount) =>
+    import('../../core/anatomy-wireframe.js').then((m) =>
+      m.installWireframe(THREE, mount, { robot: 'drone-craft' }),
+    ),
   firstQuestion: 'What went wrong on the survey flight?',
   suggested: [
     'Show me exactly where it failed',

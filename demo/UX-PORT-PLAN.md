@@ -148,6 +148,17 @@ procedural hull runs the tour unchanged. Attribution: MIT text in
 `demo/js/robots/ssl/RTT-MODEL-NOTICE.md` + a credit line in the step's provenance block.
 `.assetsignore` excludes `assets-src/` (the local CAD pipeline: 92 MB STEP + venv, never
 shipped); `.gitignore` note: `*.bin` is globally ignored, which is why the asset is `.mesh`.
+ROUND 9 (all four missions): the anatomy step OPENS on the solid robot, holds it 1500 ms,
+cross-fades 900 ms into the transparent wireframe, and only then does the live card's part
+light (solid + emissive + halo; the viewer holds the highlight back until the model reports
+settled). ssl's solid phase is the RTT CAD with authored engineering materials; arm6, drone
+and donna get the same treatment from a new shared engine, `demo/js/core/anatomy-wireframe.js`
+(dynamic import only, nothing in any eager graph), which replicates the scene's own robot as a
+feature-edge wireframe (scene meshes stamped `userData.anatomyPart` join the brighter part
+register; `userData.anatomySkip` opts a subtree out, e.g. the drone's rpm blur discs). Handle
+contract: `{ setSubject, step(nowMs), settled(), dispose }`, clocked only by the viewer's
+frame step; prefers-reduced-motion skips the intro. Timing lever: SOLID_HOLD_MS / FADE_MS,
+restated in BOTH anatomy-wireframe.js and rtt-model.js - move them together.
 ROUND 7 also replaced the SSL hull: Ø180 mm x 147 mm from the log's own geometry packet,
 flat front chord with dribbler roller + kicker plate in the mouth, 4 omni wheels at
 +/-60 and +/-120 deg, IMU board on the top plate; ID dot patterns unchanged. The ssl

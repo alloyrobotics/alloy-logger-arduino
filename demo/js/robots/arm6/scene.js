@@ -92,6 +92,10 @@ export function buildScene(THREE, mount) {
   const env = new THREE.Line(geo(new THREE.BufferGeometry().setFromPoints(envPts)), lineEnv);
   root.add(env);
 
+  // Pad A's top plate, kept for the camera sniff below: it is a surface that is drawn on every frame
+  // of every step, which the machine's own meshes are not once the anatomy step's wireframe is up.
+  let padPlate = null;
+
   function buildPad(world, lineMat) {
     const g = new THREE.Group();
     g.position.set(world.x, 0, world.z);
@@ -110,19 +114,32 @@ export function buildScene(THREE, mount) {
     );
     g.add(nest);
     root.add(g);
+    if (!padPlate) padPlate = plate;
     return g;
   }
   buildPad(PAD_A, lineA);
   buildPad(PAD_B, lineB);
 
+  // ------------------------------------------------------------------- machine
+  //
+  // The ARM, as its own subtree, and the only thing in this scene that is the robot: everything above
+  // is the room it works in (the reach arc, the two pads) and the payload below is the thing it
+  // carries. The group is transform-free and changes nothing about how any of this is posed or drawn;
+  // it exists to be nameable. `core/anatomy-wireframe.js` draws exactly one named subtree on the
+  // anatomy step, and a wireframe that included the floor and the pads would be a drawing of a work
+  // cell rather than of a machine.
+  const machine = new THREE.Group();
+  machine.name = 'arm6-machine';
+  root.add(machine);
+
   // ----------------------------------------------------------------- pedestal
   const base = mesh(new THREE.CylinderGeometry(0.21, 0.23, 0.05, 36), M.casting);
   base.position.y = 0.025;
-  root.add(base);
+  machine.add(base);
 
   const plinth = mesh(new THREE.CylinderGeometry(0.155, 0.185, 0.09, 30), M.shell);
   plinth.position.y = 0.09;
-  root.add(plinth);
+  machine.add(plinth);
 
   const boltGeo = geo(new THREE.CylinderGeometry(0.011, 0.011, 0.014, 8));
   for (let i = 0; i < 8; i++) {
@@ -130,13 +147,13 @@ export function buildScene(THREE, mount) {
     const b = new THREE.Mesh(boltGeo, M.trim);
     b.position.set(Math.cos(a) * 0.185, 0.053, Math.sin(a) * 0.185);
     b.castShadow = true;
-    root.add(b);
+    machine.add(b);
   }
 
   // driver bay (drv3 lives here)
   const drvBay = new THREE.Group();
   drvBay.position.set(-0.235, 0.085, 0.0);
-  root.add(drvBay);
+  machine.add(drvBay);
   const drvBox = mesh(new THREE.BoxGeometry(0.095, 0.15, 0.17), M.casting);
   drvBay.add(drvBox);
   const finGeo = geo(new THREE.BoxGeometry(0.014, 0.13, 0.175));
@@ -156,7 +173,7 @@ export function buildScene(THREE, mount) {
   // ------------------------------------------------------------------- turret
   const turret = new THREE.Group();
   turret.position.y = 0.135;
-  root.add(turret);
+  machine.add(turret);
 
   const turretHouse = mesh(new THREE.CylinderGeometry(0.13, 0.145, 0.105, 28), M.shell);
   turretHouse.position.y = 0.05;
@@ -331,6 +348,17 @@ export function buildScene(THREE, mount) {
     drv3: [drvBox, drvChip, ...drvFins],
     base: [turretHouse, turretRing],
   };
+  // The same four groupings, stamped on the meshes themselves, which is the channel the anatomy step's
+  // wireframe reads (`core/anatomy-wireframe.js`): it walks the machine's subtree from the outside and
+  // has no way to be handed this map, so the map marks its own members. Stamped HERE rather than
+  // restated over there so the two cannot drift: a mesh that joins a card's part joins its drawing's
+  // brighter register in the same edit.
+  Object.keys(PART_MESHES).forEach((id) => {
+    PART_MESHES[id].forEach((m) => {
+      m.userData.anatomyPart = id;
+    });
+  });
+
   /** @returns {Record<string, import('three').Mesh[]>} */
   function partMeshes() {
     return PART_MESHES;
@@ -450,9 +478,17 @@ export function buildScene(THREE, mount) {
   const decalRight = new THREE.Vector3();
   const decalUp = new THREE.Vector3();
   let lastCamera = null;
-  base.onBeforeRender = (renderer, scn, cam) => {
+  const sniffCamera = (renderer, scn, cam) => {
     lastCamera = cam;
   };
+  base.onBeforeRender = sniffCamera;
+  // And on a pad plate as well, which is the round 9 correction. `onBeforeRender` only fires for an
+  // object that is actually DRAWN, and on the anatomy step the wireframe hides the machine's own meshes
+  // - the pedestal included - the moment its drawing settles. With the pedestal as the only host, the
+  // camera these panels are placed against froze at the last frame before that, and three billboards
+  // that size and position themselves off the live stand-off sat at the wrong size in the wrong place
+  // for the rest of the tour. The pads are never hidden by anything.
+  if (padPlate) padPlate.onBeforeRender = sniffCamera;
 
   function roundRectPath(g, x, y, w, h, r) {
     g.beginPath();

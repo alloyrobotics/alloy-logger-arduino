@@ -541,6 +541,17 @@ procedural hull. Credit is visible in the step's provenance block and the MIT te
 RTT-MODEL-NOTICE.md. This does not change "What is real" below: the CAD is the robot's SHAPE, from
 a real team's published design; the fleet faults remain synthesized overlays.
 
+**The step opens solid and dissolves into the drawing (round 9, all four missions).** A visitor
+who lands on "Understand the robot" first sees the machine as a machine: the solid robot holds for
+1.5 s, dissolves over 0.9 s into the transparent wireframe, and only then does the live card's
+part light up. The order is the argument of the step itself: here is the robot, here is how you
+see inside it, here is the part this card is about. The highlight is deliberately held back until
+the dissolve settles because a lit part inside a still-solid machine is the round-7 failure the
+wireframe exists to fix. On ssl the solid phase is the RTT CAD under authored engineering
+materials; arm6, drone and donna share one engine (`core/anatomy-wireframe.js`) that redraws each
+scene's own robot as the same faint-hull / brighter-part wireframe grammar, so all four missions
+speak one visual language on this step.
+
 **The mission step shows the goal (round 6).** `EXPERIENCE.success.window` loops the match's only
 goal (61.78-63.6 s) under an explicit 2.40 m / 60 deg elevation / 40 deg azimuth goal-mouth follow
 camera, not the near hull framing. Honesty rule: it is an OWN GOAL off our keeper (Polaris 6 by
