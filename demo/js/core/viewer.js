@@ -1328,8 +1328,12 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
     const phase = ((now - glowFrom) % GLOW_PULSE_MS) / GLOW_PULSE_MS;
     const pulse = 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
     const flash = 1 + 0.85 * (1 - clamp((now - glowFrom) / GLOW_FLASH_MS, 0, 1));
-    glowShellMat.opacity = clamp((0.3 + 0.32 * pulse) * flash, 0, 1);
-    glowHaloMat.opacity = clamp((0.34 + 0.28 * pulse) * flash, 0, 1);
+    // With a display model up, the live part is already drawn solid and lit, so the halo is only a
+    // locator; at the round-7 weights the two sum into a bloom that swallows the part (round 9
+    // feedback). Without a model (legacy tours), the halo still carries the whole highlight.
+    const soft = !!anatomyModel;
+    glowShellMat.opacity = clamp((soft ? 0.14 + 0.1 * pulse : 0.3 + 0.32 * pulse) * flash, 0, 1);
+    glowHaloMat.opacity = clamp((soft ? 0.13 + 0.1 * pulse : 0.34 + 0.28 * pulse) * flash, 0, 1);
     const get = anatomyAnchors ? anatomyAnchors[glowPart] : null;
     const p = typeof get === 'function' ? get() : null;
     if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) {
@@ -1337,7 +1341,7 @@ function createViewerInner(mount, robotDef, timeline, acquire) {
       return;
     }
     glowHalo.position.set(p.x, p.y, p.z);
-    const r = entry.radius * (3 + 0.4 * pulse);
+    const r = entry.radius * ((soft ? 2.1 : 3) + 0.4 * pulse);
     glowHalo.scale.set(r, r, 1);
     glowHalo.visible = true;
   }

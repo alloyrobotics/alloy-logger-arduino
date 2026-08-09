@@ -276,11 +276,12 @@ export async function installAnatomyModel(THREE, mount, opts) {
       new THREE.MeshStandardMaterial({
         color: LIVE_BODY,
         emissive: LIVE_EMISSIVE,
-        // 0.42, down from the 0.55 the first render used. The beat's halo is additive and lands on the
-        // same part, so the two sum: at 0.55 the middle of the live part blew out to white and the
-        // machining on it - the dribbler's mouth, the wheel frames - stopped reading at exactly the
-        // moment a card asked a visitor to look at it. Lower emissive, same pop, surface intact.
-        emissiveIntensity: 0.42,
+        // 0.3, down from 0.55 (first render) via 0.42 (round 8). The beat's halo is additive and
+        // lands on the same part, so the two sum: too high and the middle of the live part blows out
+        // to white and the machining on it - the dribbler's mouth, the wheel frames - stops reading
+        // at exactly the moment a card asks a visitor to look at it. Round 9 feedback pulled the
+        // pairing down again, in step with the halo's locator weights in viewer.js.
+        emissiveIntensity: 0.3,
         roughness: 0.44,
         metalness: 0.25,
       }),

@@ -262,10 +262,11 @@ export async function installWireframe(THREE, mount, opts) {
       new THREE.MeshStandardMaterial({
         color: LIVE_BODY,
         emissive: LIVE_EMISSIVE,
-        // 0.42, the value the CAD reader settled on: the beat's halo is additive and lands on the same
+        // 0.3, held identical to rtt-model.js: the beat's halo is additive and lands on the same
         // part, so the two sum, and higher blows the middle of the live part out to white at exactly
-        // the moment a card asks a visitor to look at its surface.
-        emissiveIntensity: 0.42,
+        // the moment a card asks a visitor to look at its surface. Round 9 feedback pulled the
+        // pairing down, in step with the halo's locator weights in viewer.js.
+        emissiveIntensity: 0.3,
         roughness: 0.44,
         metalness: 0.25,
       }),
