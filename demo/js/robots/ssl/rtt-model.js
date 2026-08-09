@@ -90,6 +90,23 @@ const LOOK = {
   hull: { fill: 0.045, line: 0.3 },
   part: { fill: 0.075, line: 0.46 },
 };
+/**
+ * How far every NON-live register drops while a card has a part live, as a factor on the settled
+ * weights above. Round 9.2, and the note behind it is about hue and not about brightness. The live
+ * part is instrument blue and the drawing around it is a cool blue-white, so the highlight and its
+ * context are the same hue at nearly the same weight - and on this asset there is a LOT of context,
+ * because real CAD at a 26 degree threshold is a dense drawing full of bright thin lines. A highlight
+ * in the same hue as its context can only separate on VALUE, and the cheap half of a value gap is at
+ * the bottom of it: so a beat dims the drawing rather than shouting over it, and the live part is the
+ * brightest thing on screen because everything else stepped back. 0.45 puts the hull at 0.020 fill and
+ * 0.135 line and the other three anatomy groups at 0.034 and 0.207: the whole machine still reads as a
+ * machine, which is the entire reason it is drawn, but it now reads as the drawing the part sits in.
+ *
+ * A factor rather than a second table, because a factor composes. `paint()` owns these weights all the
+ * way through the dissolve; this only ever multiplies the SETTLED ones, from the settle frame on. Same
+ * name and same value in `core/anatomy-wireframe.js`.
+ */
+const CONTEXT_DIM = 0.55;
 const LINE_COLOR = 0x9dc0e6; // the demo's line grammar: a cool near-white, not a saturated accent
 const FILL_COLOR = 0x86aacd;
 // The live part. Instrument blue, the same channel and the same colour the anatomy tour's halo uses
@@ -97,7 +114,11 @@ const FILL_COLOR = 0x86aacd;
 // statement rather than as two things that happen to have lit up together. NOT the alert red every
 // scene paints a FAULT highlight: nothing is wrong with this robot on this step.
 const LIVE_EMISSIVE = 0x8ec6ff;
-const LIVE_BODY = 0x1c2734;
+// One value step up from round 9's 0x1c2734, at the SAME hue (210 degrees) and the same saturation
+// (0.31), which is the point: the part separates by being lighter than its context, not by a second
+// colour walking into the picture. Still a dark body, because the emissive above it and the beat's
+// additive halo both have to land on this surface without taking the machining off it.
+const LIVE_BODY = 0x263548;
 /**
  * The dihedral angle above which a facet boundary becomes a drawn line.
  *
@@ -276,12 +297,15 @@ export async function installAnatomyModel(THREE, mount, opts) {
       new THREE.MeshStandardMaterial({
         color: LIVE_BODY,
         emissive: LIVE_EMISSIVE,
-        // 0.3, down from 0.55 (first render) via 0.42 (round 8). The beat's halo is additive and
-        // lands on the same part, so the two sum: too high and the middle of the live part blows out
-        // to white and the machining on it - the dribbler's mouth, the wheel frames - stops reading
-        // at exactly the moment a card asks a visitor to look at it. Round 9 feedback pulled the
-        // pairing down again, in step with the halo's locator weights in viewer.js.
-        emissiveIntensity: 0.3,
+        // 0.36. Round 9 pulled this to 0.3 in step with the halo's locator weights in viewer.js and
+        // the part went too quiet to find, so round 9.2 gives a fifth of it back - a nudge, not a
+        // reversal, because the legibility this round buys comes mostly from CONTEXT_DIM taking the
+        // drawing down and not from the part getting louder. The ceiling is unchanged: the beat's halo
+        // is additive and lands on this same part, so the two sum, and too high blows the middle of the
+        // live part out to white and the machining on it - the dribbler's mouth, the wheel frames -
+        // stops reading at exactly the moment a card asks a visitor to look at it. 0.55 was the first
+        // render and 0.42 was round 8, and both did precisely that.
+        emissiveIntensity: 0.36,
         roughness: 0.44,
         metalness: 0.25,
       }),
@@ -445,7 +469,12 @@ export async function installAnatomyModel(THREE, mount, opts) {
     applySubject();
   }
 
-  /** The round 8 treatment, unchanged, applied whenever the drawing is allowed to change. */
+  /**
+   * The round 8 treatment plus round 9.2's context recede, applied whenever the drawing is allowed to
+   * change - which is only ever from the settle frame on: `settle()` calls this after it has flipped
+   * `isSettled` and run `paint(1)`, and `setSubject()` returns early until then. That ordering is what
+   * keeps the dim out of the dissolve, where `paint()` alone owns these opacities.
+   */
   function applySubject() {
     if (wanted === live) return;
     const prev = built.get(live);
@@ -464,6 +493,12 @@ export async function installAnatomyModel(THREE, mount, opts) {
       next.edge.material = mat.liveLine;
       next.fill.renderOrder = 5;
     }
+    // And the context steps back for it. The four faint materials are SHARED by every group that is
+    // not live, so one pass over `fades` recedes the entire drawing in O(1) and cannot touch the part:
+    // the live group was just swapped onto `liveFill`/`liveLine`, which are deliberately not in
+    // `fades`. A null from the tour restores the settled weights on the same frame.
+    const w = live ? CONTEXT_DIM : 1;
+    for (let i = 0; i < fades.length; i++) fades[i][0].opacity = fades[i][1] * w;
   }
 
   /**
