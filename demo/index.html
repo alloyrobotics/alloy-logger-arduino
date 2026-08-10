@@ -950,6 +950,52 @@ input { font: inherit; color: inherit; }
 .flow[data-step="mission"] .flow-viewer-frame .v-hud { display: none; }
 .flow[data-step="mission"] .flow-anatomy, .flow[data-step="mission"] .flow-chart-frame { display: none; }
 #screen-flow[data-flow-mission="ssl"] .flow[data-step="mission"] .flow-context { display: none; }
+
+/* ROUND 11: THE MISSION STEP PLAYS REAL FOOTAGE (js/core/flow.js, `experience.success.footage`).
+   The layer is created by JS on the first footage step and by nobody else, so a mission without
+   footage - and every visitor who never reaches one - carries none of this markup. `has-footage`
+   only ever sits on the root while a video is live, which is what makes every rule below inert on
+   the fail-open path.
+
+   ONE COLUMN, like ssl's mission step already has. The contextual labels stand down beside real
+   footage (they quote numbers measured off THIS log), and an empty 180px aside would otherwise keep
+   its column and take that width off the video.
+
+   16:9, CAPPED AND CENTRED, which is the opposite of the reasoning behind ssl's 4:5 cap below it.
+   That cap exists because a 3D camera's fov compensation needs a panel shaped like the shot; a video
+   has one shape already, and all four clips are 1280x720. Matching the frame to the source is what
+   makes `object-fit: cover` a fill rather than a crop, at every viewport. `max-height: 100%` keeps
+   the cap a cap: where the row is shorter than 16:9, the row wins and cover takes the top and bottom
+   off rather than the panel overflowing it. This rule is AFTER the ssl block and carries the same
+   `#screen-flow` weight on purpose - it has to outrank the 4:5 aspect on ssl's own step. */
+#screen-flow .flow.has-footage[data-step="mission"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "title" "intro" "viewer" "cta";
+}
+#screen-flow .flow.has-footage[data-step="mission"] .flow-context { display: none; }
+#screen-flow .flow.has-footage[data-step="mission"] .flow-viewer-frame {
+  width: 100%; height: auto; aspect-ratio: 16 / 9;
+  max-width: 100%; max-height: 100%; align-self: center; margin-inline: auto;
+}
+/* The sim is not drawn while the footage is up, and neither is the no-WebGL placeholder for it: on a
+   footage step there is nothing WebGL was needed for, so a visitor without it gets the whole step. */
+#screen-flow .flow.has-footage[data-step="mission"] .flow-viewer-mount,
+#screen-flow .flow.has-footage[data-step="mission"] .flow-fallback { display: none; }
+#screen-flow .flow.has-footage[data-step="mission"] .flow-viewer-frame .v-hud { display: none; }
+.flow-footage { position: absolute; inset: 0; z-index: 2; display: none; margin: 0; }
+#screen-flow .flow.has-footage[data-step="mission"] .flow-footage { display: block; }
+.flow-footage-video { width: 100%; height: 100%; display: block; object-fit: cover; background: #101313; }
+/* The honesty chip. Bottom left, over the video's own darkest corner in all four clips, and it wraps
+   rather than truncates: the half that says what the footage is NOT is the half that has to survive
+   a 390px panel. */
+.flow-footage-note {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; max-width: max-content;
+  padding: 5px 9px; border: 1px solid var(--line-hi); border-radius: 60px;
+  background: rgba(17,17,17,.82); backdrop-filter: blur(10px);
+  font-family: 'Geist Mono', ui-monospace, monospace; font-size: 10.5px; line-height: 1.45;
+  letter-spacing: .01em; color: var(--tx-body);
+}
 .flow[data-step="failure"] { grid-template-columns: minmax(300px, .75fr) minmax(0, 1.65fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "title title" "intro chart" "viewer chart" "cta cta"; }
 .flow.has-provenance[data-step="failure"] { grid-template-rows: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "title title" "intro chart" "viewer chart" "provenance provenance" "cta cta"; }
 .flow[data-step="failure"] .flow-intro { padding: 0 4px; align-self: start; }

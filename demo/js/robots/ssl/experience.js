@@ -429,6 +429,21 @@ export const EXPERIENCE = {
     window: [61.78, 63.6],
     camera: MISSION_CAMERA,
     loopLabel: 'success loop',
+    // ROUND 11. This step answers "how does the game work", and the honest answer is a real game.
+    // The clip is a Small Size League match filmed at a live tournament and it is NOT this log: a
+    // different match, a different day, robots that are not the ones replayed anywhere else on this
+    // site. The note says so on the video, because a real match playing under the heading of a
+    // mission the visitor is about to interrogate would otherwise read as the mission. The window,
+    // the camera and the labels below stay exactly as they were: they are what this step falls back
+    // to when the media does not arrive (`core/flow.js`, footage fail-open).
+    //
+    // NO SOURCE IDENTIFIER, HERE OR IN THE FILENAME. Same rule the rest of this mission lives under:
+    // the site carries no mapping from anything it shows to a real team, event or day.
+    footage: {
+      src: new URL('../../../media/flow-ssl.mp4', import.meta.url).href,
+      poster: new URL('../../../media/flow-ssl-poster.jpg', import.meta.url).href,
+      note: 'Real Small Size League footage. Not the logged match.',
+    },
     contextualLabels: [
       { label: '8 vs 11', note: 'What each team had on the field through this passage.' },
       { label: 'Score' },

@@ -268,6 +268,16 @@ export const EXPERIENCE = {
     window: SUCCESS_WINDOW,
     camera: null,
     loopLabel: 'success loop',
+    // ROUND 11. The context beat shows the real world: a humanoid-league match, filmed live, and a
+    // DIFFERENT match from the one these three logs recorded. The note carries that, because three
+    // robots walking on a real pitch under the heading "How the match works" would otherwise be
+    // taken for the replay this mission is about. Everything below survives untouched as the
+    // fallback the step runs when the media does not arrive (`core/flow.js`, footage fail-open).
+    footage: {
+      src: new URL('../../../media/flow-donna.mp4', import.meta.url).href,
+      poster: new URL('../../../media/flow-donna-poster.jpg', import.meta.url).href,
+      note: 'Real humanoid-league match footage. Not the logged match.',
+    },
     // Three terse chips, matching the wall's row of mission-truth labels. Each one is checked
     // against the decoded window above: three live poses, a valid ball estimate on every tick, and
     // nobody down or penalized while the match state reads PLAYING.

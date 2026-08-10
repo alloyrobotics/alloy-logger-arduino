@@ -26,6 +26,14 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  // ROUND 11. The mission step plays a real mp4 off `demo/media/`, and a media element is the one
+  // consumer on this page that will not take `application/octet-stream` on trust. The poster is here
+  // for the same reason. Range requests are still answered with a plain 200 and the whole body,
+  // which is what a 3 MB looping clip on a loopback socket wants anyway.
+  '.mp4': 'video/mp4',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
 };
 
 /**

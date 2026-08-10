@@ -96,13 +96,22 @@ function countAlertPixels(buffer) {
   return count;
 }
 
-function tape(page) {
+/**
+ * @param {import('playwright').Page} page
+ * @param {RegExp|null} [ignore] console text this probe deliberately provokes. One caller uses it:
+ *   the drone structure probe below refuses the mission step's footage on purpose, and a browser
+ *   that will not decode a media response says so on the console.
+ */
+function tape(page, ignore = null) {
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (err) => pageErrors.push(String(err)));
   page.on('crash', () => pageErrors.push('page crashed'));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (ignore && ignore.test(text)) return;
+    consoleErrors.push(text);
   });
   return { pageErrors, consoleErrors };
 }
@@ -181,9 +190,23 @@ try {
   {
     const ctx = await newContext(browser);
     const page = await ctx.newPage();
-    const errors = tape(page);
+    const errors = tape(page, /flow-drone\.mp4|MEDIA_ELEMENT_ERROR|no supported source/i);
+    // ROUND 11 PUT REAL FOOTAGE ON THIS STEP, so this probe now also exercises the fail-open path -
+    // deliberately, and it is the only way to keep the probe's own subject. What is being measured
+    // here is the drone SIM's trail geometry inside the healthy window, and a mission step whose
+    // footage arrives does not draw the sim at all. So the media is answered with something no
+    // browser will decode: `core/flow.js` retires the footage for the session and re-renders the step
+    // as the sim, which is exactly the experience that shipped before this round. If that contract
+    // ever breaks, every assertion below breaks with it, which is the right blast radius.
+    await page.route('**/media/flow-drone.mp4', (route) =>
+      route.fulfill({ status: 200, contentType: 'video/mp4', body: 'not a video' }),
+    );
     await page.goto(`${server.origin}/demo/#/connect/drone/mission`, { waitUntil: 'domcontentloaded', timeout: 70000 });
     H.ok(await waitStep(page, 'drone', 'mission'), 'drone success step renders');
+    H.ok(
+      await waitFor(page, () => !!window.__flow && !window.__flow.footage && Array.isArray(window.__flow.timeline.loopWindow), 20000, 'drone fail-open'),
+      'refused footage falls open to the sim success loop',
+    );
     H.ok(
       await waitFor(page, () => !!window.__flow?.viewer && !!document.querySelector('#flow-viewer-mount canvas.v-canvas'), 15000, 'drone viewer'),
       'drone success viewer mounts',

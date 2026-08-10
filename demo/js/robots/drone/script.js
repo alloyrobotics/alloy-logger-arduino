@@ -195,6 +195,14 @@ export default {
       window: [18.6, 27.7],
       camera: null, // the existing cameraFocus follow already rides with the aircraft
       loopLabel: 'One full survey lane',
+      // ROUND 11. The context beat shows the real world: a survey-class quadcopter actually flying,
+      // not this synthesized flight. The note says which of the two it is. Everything else in this
+      // block stays as the fallback the step runs if the media does not arrive (`core/flow.js`).
+      footage: {
+        src: new URL('../../../media/flow-drone.mp4', import.meta.url).href,
+        poster: new URL('../../../media/flow-drone-poster.jpg', import.meta.url).href,
+        note: 'A survey-class quadcopter in flight. Not the logged flight.',
+      },
       // Terse label, one sentence of evidence, in the register the wall's success rail uses. The
       // three are deliberately the three quantities the failure step then breaks: altitude dips,
       // throttle rails on motor 3, heading swings 18 degrees.

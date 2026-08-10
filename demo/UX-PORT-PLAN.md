@@ -102,7 +102,8 @@ experience: {
     window: [a, b],               // real healthy passage; never overlaps failure finding
     camera: {...} | null,
     loopLabel: '...',             // e.g. "success loop"
-    contextualLabels: [ { label, note? } ]  // mission-truth labels, role-invariant
+    contextualLabels: [ { label, note? } ],  // mission-truth labels, role-invariant
+    footage: { src, poster, note } | undefined  // ROUND 11, optional; see below
   },
   failure: {
     findingId: '...',             // MUST resolve in def.findings
@@ -175,6 +176,52 @@ a scrub, a chart click, a repeated frame and a backward drag all RESAMPLE and in
 so no wheel or prop earns phase a seek did not. Motion runs through the solid intro and the
 settled wireframe alike, and prefers-reduced-motion still skips only the intro: these are
 telemetry readouts, so suppressing them would draw a machine moving on frozen wheels.
+ROUND 11 (the mission step, all four public missions): THE CONTEXT BEAT SHOWS THE REAL WORLD. The
+middle step is the one that answers "how does the game / the survey / the transfer work", and a
+synthesized replay is the weakest available answer to it: it asks a visitor to take the sim's word
+for a world they have never seen. A def may now declare `experience.success.footage`
+(`{ src, poster, note }`) and the step plays real footage of that CLASS of robot doing that kind of
+work instead. The sim is unchanged on the two steps where it is the evidence rather than the
+illustration: the anatomy step, where it IS the machine, and the failure step, where it is the
+finding. Declarations live with each mission's existing experience block, which means the two lazy
+missions declare theirs in `ssl/experience.js` and `donna/experience.js`, not in either `script.js`
+under an eager gzip gate. Media is `demo/media/flow-<id>.{mp4,jpg}`, 1280x720 H.264, no audio,
+faststart, served as ordinary static assets; `flow-footage.test.mjs` holds the mp4s at or under 5 MB
+and the posters at or under 200 KB.
+
+While footage is live the root carries `has-footage`: the panel is shaped 16:9 to the source and the
+video covers it, the 3D mount, its no-WebGL fallback and the `v-hud` are hidden, the mission clock is
+PAUSED rather than looped (a loop nobody can see is frame budget spent on nothing), and the
+contextual labels stand DOWN, because they quote numbers measured off this log and beside real
+footage of another machine they read as a description of what is on screen. No viewer is built for a
+footage step; one that already exists (the visitor came from the anatomy step) is left mounted and
+idle, so the failure step still reuses the single WebGL context this screen is allowed. Under
+prefers-reduced-motion nothing autoplays: the poster holds the step and the existing `#flow-play`
+button, now step-aware, starts the video instead of the success loop.
+
+FOOTAGE IS OPTIONAL AND IT FAILS OPEN, which are two separate promises. Optional: every def without
+the key - battle, sbr, rescue, the stub, every generated `g-*` def - behaves exactly as it did, and
+`flow-footage.test.mjs` proves it structurally by asserting `flow.js` reads the key exactly once,
+through a guarded chain. Fails open: the video's `error` event, or a `play()` rejection with a media
+error behind it, retires the footage for the session and re-renders the mission step as the sim, with
+its success window, its authored camera and its contextual labels. An autoplay refusal is NOT a
+failure - the media is fine and the browser wants a gesture, so the poster plus the play button is
+the resting state. The worst case a blocked request can produce is the experience that shipped before
+this round, never a black panel. `flow-honesty.test.mjs` refuses the drone clip on purpose and
+asserts the sim comes back, which is also how that probe keeps its own subject.
+
+HONESTY RULES FOR THE NOTES, and they are hard rules. The footage is real, and it is NOT the logged
+mission: same class of machine, same kind of work, different day, and for ssl and donna a different
+match entirely. So each note carries two halves - what the footage IS, in terms of a class of machine
+and a kind of work, and that it is not the logged mission - and it is rendered as a chip ON the video
+rather than anywhere a reader could miss it. The notes name NO team, event, city or year-event pair,
+in the copy, in the comments or in the filenames: `ssl-leak-check.mjs` scans every tracked file
+including its path, and a clip named after where it was filmed would leak by existing. The four
+strings are allowlisted verbatim in `flow-footage.test.mjs`, so changing one is a review rather than
+an edit, and the same gate asserts every note contains the "not the logged" phrase and no
+unsanctioned capitalised phrase (the single sanctioned one names a competition class, never a
+competitor).
+
 ROUND 7 also replaced the SSL hull: Ø180 mm x 147 mm from the log's own geometry packet,
 flat front chord with dribbler roller + kicker plate in the mouth, 4 omni wheels at
 +/-60 and +/-120 deg, IMU board on the top plate; ID dot patterns unchanged. The ssl

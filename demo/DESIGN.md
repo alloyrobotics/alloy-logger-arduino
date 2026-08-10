@@ -416,6 +416,12 @@ Lines derive counts from the robot's actual channel row counts. Skippable via "s
 404ed, because real sessions have that hash in their history. The retired comparison-card copy,
 styles and DOM helpers are deleted with the step.
 
+**ROUND 11: the context beat shows the real world, the sim owns the evidence.** The mission step
+plays real footage of that class of robot doing that kind of work (`experience.success.footage`,
+`demo/media/flow-<id>.mp4`, with an honesty chip on the video saying it is not the logged mission);
+the anatomy and failure steps keep the sim, because that is where it is evidence rather than
+illustration. Footage is optional per def and fails open to the success loop it replaced.
+
 1. **Picker** `#/`: header (AlloyLogger wordmark linking to `/`, "Live demo" chip), headline
    "Replay a mission.", sub "Pick a robot. Ask it why it failed." Seven cards (`repeat(7)`
    at >1000 px, `repeat(2)` below it with the odd last card centred at a normal card's width):

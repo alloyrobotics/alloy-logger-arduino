@@ -61,7 +61,12 @@ function fallbackCopy(def) {
   return {
     missionIntro:
       context.mission ||
-      `Watch ${DISPLAY_NAMES[def.id] || def.name} complete a healthy passage before the failure appears.`,
+      // ROUND 11 stopped this sentence promising a replay. It used to open "Watch <robot> complete a
+      // healthy passage", and the mission step is no longer always a replay of one: a def that
+      // declares `experience.success.footage` answers this step with real footage of that class of
+      // machine instead. What the step is about - the work, and the failure waiting after it - is
+      // true either way, so the copy says that and not which of the two is on screen.
+      `How ${DISPLAY_NAMES[def.id] || def.name} does its work, before the failure appears.`,
     failureIntro:
       context.fault || 'The replay and telemetry now isolate the mission finding against the healthy passage.',
     firstQuestion: def.firstQuestion || 'What failed in this mission?',
@@ -132,6 +137,17 @@ export function createFlow(def, role, mounts, deps) {
   const cta = root.querySelector('#flow-cta');
   const play = root.querySelector('#flow-play');
   const fallback = mounts.fallback || root.querySelector('#flow-fallback');
+  // The panel the replay is drawn in, which is also where the footage layer mounts. NOT the viewer
+  // mount: `disposeViewer()` empties that element, and `refreshPayload()` calls it on every step.
+  const viewerFrame =
+    (viewerMount.closest && viewerMount.closest('.flow-viewer-frame')) || viewerMount.parentElement;
+  /** The play button's authored label, restored whenever the step is the sim again. */
+  const playLabel = play ? play.textContent : '';
+  let footageWrap = null;
+  let footageVideo = null;
+  let footageLive = false;
+  /** Set once, for the session: this flow tried the footage, the media refused, run the sim. */
+  let footageGaveUp = false;
 
   function disposeViewer() {
     if (viewer) viewer.dispose();
@@ -207,6 +223,172 @@ export function createFlow(def, role, mounts, deps) {
     return viewer;
   }
 
+  /**
+   * ROUND 11. THE MISSION STEP IS THE CONTEXT BEAT, AND CONTEXT IS THE REAL WORLD.
+   *
+   * "How the game works", "How the survey works": this is the one step whose whole job is to say
+   * what kind of machine this is and what the work looks like, and a synthesized replay is the
+   * weakest available answer to that question. It asks a visitor to take the sim's word for a world
+   * they have never seen. So a def may declare `experience.success.footage` and the step plays REAL
+   * footage of that CLASS of robot doing that kind of work instead. The sim keeps the two steps
+   * where it is the evidence rather than the illustration: the anatomy step, where it IS the
+   * machine, and the failure step, where it is the finding.
+   *
+   * WHAT THE FOOTAGE IS NOT is as load-bearing as what it is. It is not the logged mission, it
+   * cannot be, and the note chip says so on the video itself - see the honesty rules in
+   * `demo/UX-PORT-PLAN.md`. That is also why the contextual labels stand down for the duration: they
+   * quote numbers measured off THIS log, and beside real footage of another machine they would read
+   * as a description of what is on screen.
+   *
+   * FOOTAGE IS OPTIONAL, AND ITS ABSENCE IS THE OLD BEHAVIOUR EXACTLY. Every def without the key -
+   * battle, sbr, rescue, the stub, every generated g-* def - runs the success loop as it always has,
+   * and every read of it below is guarded.
+   *
+   * AND IT FAILS OPEN. A blocked request, a 404, a codec a browser will not take: the video's own
+   * `error` event, or a play() rejection with a media error behind it, retires the footage for the
+   * session and re-renders this step as the sim - success loop, authored camera, contextual labels.
+   * The worst case is the experience that shipped before this round, never a black panel.
+   *
+   * @param {object|null} experience
+   * @returns {{src:string,poster:string,note?:string}|null}
+   */
+  function footageFor(experience) {
+    if (footageGaveUp) return null;
+    const footage = experience && experience.success && experience.success.footage;
+    if (!footage || !footage.src || !footage.poster) return null;
+    return footage;
+  }
+
+  /**
+   * Build the layer the first time a footage step renders, and never in the boot path: a def that
+   * declares footage and a visitor who never reaches its mission step cost one property read.
+   */
+  function buildFootage(footage) {
+    if (footageVideo) return footageVideo;
+    if (!viewerFrame) return null;
+    const wrap = document.createElement('figure');
+    wrap.className = 'flow-footage';
+    wrap.id = 'flow-footage';
+    const video = document.createElement('video');
+    video.className = 'flow-footage-video';
+    video.muted = true;
+    video.defaultMuted = true;
+    video.loop = true;
+    video.playsInline = true;
+    // The attribute as well as the property: iOS reads the attribute, and without it this goes
+    // fullscreen on tap on the one class of device the panel is narrowest on.
+    video.setAttribute('playsinline', '');
+    video.setAttribute('muted', '');
+    video.preload = 'metadata';
+    video.tabIndex = -1;
+    // Decoration, not content: the note beside it carries the meaning, and the step's own heading
+    // and intro carry the claim. A screen reader gets those rather than an unlabelled video.
+    video.setAttribute('aria-hidden', 'true');
+    video.poster = footage.poster;
+    video.addEventListener('error', onFootageError);
+    const note = document.createElement('figcaption');
+    note.className = 'flow-footage-note';
+    wrap.append(video, note);
+    // Before the play button, which keeps its own z-index above the layer.
+    viewerFrame.insertBefore(wrap, play && play.parentNode === viewerFrame ? play : null);
+    footageWrap = wrap;
+    footageVideo = video;
+    return video;
+  }
+
+  function startFootage(footage) {
+    const video = buildFootage(footage);
+    if (!video) return false;
+    footageWrap.querySelector('.flow-footage-note').textContent = footage.note || '';
+    footageWrap.hidden = false;
+    footageLive = true;
+    root.classList.add('has-footage');
+    // The src is set AFTER the poster and the class, so the first thing painted is the poster in the
+    // layout the video will land in, and re-entering the step does not refetch what is already here.
+    const src = String(footage.src);
+    if (video.dataset.src !== src) {
+      video.dataset.src = src;
+      video.src = src;
+    }
+    if (reducedMotion()) {
+      // The visitor asked for no motion. The poster IS the step for them, and the existing play
+      // button - the one that used to start the success loop - starts the video instead.
+      try {
+        video.pause();
+      } catch (_) {
+        // A media element that will not pause is a media element that never started.
+      }
+      if (play) play.hidden = false;
+      return true;
+    }
+    playFootage();
+    return true;
+  }
+
+  function playFootage() {
+    if (!footageVideo) return;
+    let started = null;
+    try {
+      started = footageVideo.play();
+    } catch (_) {
+      onFootageError();
+      return;
+    }
+    if (!started || typeof started.catch !== 'function') return;
+    started.catch(() => {
+      if (disposed || !footageVideo) return;
+      // TWO DIFFERENT FAILURES WEAR THE SAME REJECTION. A media error means there is no video and
+      // the step has to fall back to the sim. An autoplay refusal means the video is fine and the
+      // browser wants a gesture, and the poster plus the step's own play button is the honest
+      // resting state for that - falling back to the sim there would throw away a working panel.
+      if (footageVideo.error) onFootageError();
+      else if (play && footageLive && step === 'mission') play.hidden = false;
+    });
+  }
+
+  /**
+   * FAIL OPEN. Retire the footage for this flow instance and re-render the step the visitor is on,
+   * which puts the mission step back exactly as it shipped before this round.
+   */
+  function onFootageError() {
+    if (footageGaveUp) return;
+    footageGaveUp = true;
+    hideFootage();
+    if (!disposed && step === 'mission') render('mission', { refresh: true });
+  }
+
+  /**
+   * @param {boolean} [remove] tear the element down as well, which only teardown wants: keeping it
+   *   across steps is what makes returning to the mission step a resume rather than a refetch.
+   */
+  function hideFootage(remove = false) {
+    footageLive = false;
+    root.classList.remove('has-footage');
+    if (footageVideo) {
+      try {
+        footageVideo.pause();
+      } catch (_) {
+        // Nothing to pause is the outcome this wants anyway.
+      }
+    }
+    if (footageWrap) footageWrap.hidden = true;
+    if (!remove) return;
+    if (footageVideo) {
+      footageVideo.removeEventListener('error', onFootageError);
+      // Drop the source before the element goes, so a half-finished fetch is abandoned rather than
+      // left to complete against a node nobody holds.
+      footageVideo.removeAttribute('src');
+      try {
+        footageVideo.load();
+      } catch (_) {
+        // Same as above: a media element that cannot reload has nothing in flight.
+      }
+    }
+    if (footageWrap && footageWrap.parentNode) footageWrap.parentNode.removeChild(footageWrap);
+    footageWrap = null;
+    footageVideo = null;
+  }
+
   function ensureChart() {
     if (chart || disposed) return chart;
     chart = deps.createChart(chartMount, def, timeline);
@@ -257,7 +439,37 @@ export function createFlow(def, role, mounts, deps) {
     root.classList.toggle('has-provenance', visible);
   }
 
-  function applyPlayback(nextStep, experience) {
+  function applyPlayback(nextStep, experience, footage) {
+    if (footage) {
+      // FOOTAGE OWNS THIS STEP, and no viewer is built for it. A hidden WebGL context is a cost with
+      // nothing on the other side of it, and a visitor who lands straight on `#/connect/<id>/mission`
+      // should not pay for one; a viewer that already exists (they came from the anatomy step) is
+      // left mounted and idle behind the layer, so the failure step still reuses the one context
+      // this screen is allowed.
+      if (viewer) {
+        viewer.hideBanner();
+        viewer.setAnatomy(null);
+        viewer.setHighlight(null);
+        setOrbit(viewer, false);
+      }
+      root.classList.remove('has-viewer-anatomy');
+      if (chart) {
+        chart.setDirectLabels(false);
+        chart.setMinimalChrome(false);
+        chart.resetZoom();
+      }
+      if (play) {
+        play.hidden = true;
+        play.textContent = 'Play the footage';
+      }
+      // The timeline is PAUSED rather than looped: the mission clock drives the sim, the sim is not
+      // on screen, and a loop nobody can see is a frame budget spent on nothing.
+      timeline.setLoop(null, { speed: 1 });
+      timeline.pause();
+      startFootage(footage);
+      return;
+    }
+    if (play) play.textContent = playLabel;
     const v = ensureViewer(
       nextStep === 'robot' ? 'anatomy' : 'full',
       nextStep === 'failure' ? (experience.failure && experience.failure.followAnchor) || null : null,
@@ -385,6 +597,7 @@ export function createFlow(def, role, mounts, deps) {
 
     if (!experience) {
       if (nextStep !== 'robot') throw new Error(`Flow experience for ${def.id} did not load.`);
+      hideFootage();
       intro.hidden = true;
       renderAnatomy([]);
       renderContext([]);
@@ -403,13 +616,18 @@ export function createFlow(def, role, mounts, deps) {
     intro.textContent = nextStep === 'mission' ? copy.missionIntro : nextStep === 'failure' ? copy.failureIntro : '';
     intro.hidden = nextStep !== 'mission' && nextStep !== 'failure';
     renderAnatomy(nextStep === 'robot' ? experience.anatomy && experience.anatomy.parts : []);
+    // Resolved once per render and handed to `applyPlayback`, because the same answer decides two
+    // things: whether the panel plays footage, and whether the contextual labels may be shown beside
+    // it. They must not disagree.
+    const footage = nextStep === 'mission' ? footageFor(experience) : null;
+    if (!footage) hideFootage();
     renderContext(
-      nextStep === 'mission' && def.id !== 'ssl'
+      nextStep === 'mission' && def.id !== 'ssl' && !footage
         ? experience.success && experience.success.contextualLabels
         : [],
     );
     cta.querySelector('span').textContent = CTA[nextStep];
-    applyPlayback(nextStep, experience);
+    applyPlayback(nextStep, experience, footage);
 
     if (!opts.refresh) track.flowStepShown(def.id, { role: roleId, step: nextStep });
   }
@@ -427,8 +645,18 @@ export function createFlow(def, role, mounts, deps) {
     deps.navigate(nextStep ? `#/connect/${def.id}/${nextStep}` : `#/demo/${def.id}`);
   }
 
+  /**
+   * The mission step's one affordance, and it is STEP-AWARE rather than timeline-aware: on a footage
+   * step it starts the video, on a sim step it starts the success loop. Both are "play what this step
+   * is about", which is what a visitor under reduced motion pressed it for.
+   */
   function onPlay() {
     if (disposed || step !== 'mission') return;
+    if (footageLive && footageVideo) {
+      playFootage();
+      play.hidden = true;
+      return;
+    }
     timeline.play();
     play.hidden = true;
   }
@@ -448,6 +676,10 @@ export function createFlow(def, role, mounts, deps) {
     get step() {
       return step;
     },
+    /** The live footage element, or null when this step is the sim. Read by the browser walk. */
+    get footage() {
+      return footageLive ? footageVideo : null;
+    },
     showStep: render,
     refresh() {
       if (step) render(step, { refresh: true });
@@ -466,7 +698,12 @@ export function createFlow(def, role, mounts, deps) {
       if (disposed) return;
       disposed = true;
       cta.removeEventListener('click', onCta);
-      if (play) play.removeEventListener('click', onPlay);
+      if (play) {
+        play.removeEventListener('click', onPlay);
+        play.textContent = playLabel;
+      }
+      // Element and listener both, because the leak probe counts a listener on any connected node.
+      hideFootage(true);
       if (chart) chart.dispose();
       disposeViewer();
       timeline.dispose();

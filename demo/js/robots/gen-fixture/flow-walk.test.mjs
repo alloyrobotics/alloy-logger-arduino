@@ -181,14 +181,70 @@ async function assertNoOverflow(page, label) {
   H.ok(overflow.doc <= 1 && overflow.body <= 1, `${label} has no horizontal overflow (${overflow.doc}/${overflow.body}px)`);
 }
 
+/**
+ * ROUND 11 GAVE THIS STEP TWO SHAPES, and which one a mission gets is the mission's own declaration.
+ *
+ * The middle step is the CONTEXT beat - "how the game works", "how the survey works" - so a def that
+ * declares `experience.success.footage` answers it with REAL footage of that class of robot doing
+ * that kind of work, and the sim keeps the two steps where it is the evidence rather than the
+ * illustration. Both shapes are asserted below, and which to expect is read off the live def rather
+ * than off a list in this file: a mission that gains or loses footage cannot pass by disagreeing
+ * with the test.
+ *
+ * The footage half also asserts the honesty chip, which is the part of the feature a screenshot
+ * cannot tell you is missing: none of this footage is the logged mission, and the note on the video
+ * has to say so.
+ */
 async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') {
   H.ok(await waitStep(page, mission, 'mission'), `${mission} mission step renders`);
   H.ok((await primaryCount(page)) === 1, `${mission} mission step has one primary CTA`);
+  // A footage step is settled once the video is running, has refused outright, or is holding its
+  // poster for a visitor who asked for reduced motion. Anything else is still a fetch in flight.
+  await waitFor(
+    page,
+    () => {
+      const footage = window.__flow?.def?.experience?.success?.footage;
+      if (!footage) return true;
+      const video = document.querySelector('#flow-footage .flow-footage-video');
+      if (!video) return !window.__flow.footage;
+      return !video.paused || !!video.error || !!video.currentSrc;
+    },
+    20000,
+    `${mission} footage settles`,
+  );
   const state = await page.evaluate(() => {
     const visible = (selector) => [...document.querySelectorAll(selector)].some((el) => {
       const style = getComputedStyle(el);
       return !el.hidden && style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
     });
+    const declared = window.__flow.def.experience?.success?.footage || null;
+    const video = document.querySelector('#flow-footage .flow-footage-video');
+    const frame = document.querySelector('#screen-flow .flow-viewer-frame');
+    const box = video ? video.getBoundingClientRect() : null;
+    const frameBox = frame ? frame.getBoundingClientRect() : null;
+    // THE CONTRACT IS THE PANEL'S CONTENT BOX, not its border box. `.flow-viewer-frame` carries a
+    // 1px border and the layer is `position: absolute; inset: 0`, so a video that fills the panel
+    // perfectly measures 2px smaller than the frame's own rect in both axes - which is the whole
+    // point of the border, and measuring against the wrong box turns correct geometry into a
+    // failure. Everything inside the border is the video, at every viewport, because the layer's
+    // fill is absolute and the `aspect-ratio` rule shapes the FRAME rather than the video.
+    const frameStyle = frame ? getComputedStyle(frame) : null;
+    const inner = frameBox && frameStyle
+      ? {
+        left: frameBox.left + parseFloat(frameStyle.borderLeftWidth || 0),
+        top: frameBox.top + parseFloat(frameStyle.borderTopWidth || 0),
+        width: frameBox.width - parseFloat(frameStyle.borderLeftWidth || 0) - parseFloat(frameStyle.borderRightWidth || 0),
+        height: frameBox.height - parseFloat(frameStyle.borderTopWidth || 0) - parseFloat(frameStyle.borderBottomWidth || 0),
+      }
+      : null;
+    const gaps = box && inner
+      ? {
+        left: box.left - inner.left,
+        top: box.top - inner.top,
+        width: box.width - inner.width,
+        height: box.height - inner.height,
+      }
+      : null;
     return {
       intro: (document.getElementById('flow-intro').textContent || '').trim(),
       evidenceClass: [...document.querySelectorAll('.evidence-on')].filter((el) => {
@@ -199,17 +255,57 @@ async function assertMissionStep(page, mission, expectedCopy, mobileLabel = '') 
       context: visible('#flow-context'),
       chart: !!document.querySelector('#flow-chart-mount .chart-canvas'),
       loop: window.__flow.timeline.loopWindow,
+      declaredNote: declared ? declared.note : null,
+      footageLive: !!window.__flow.footage,
+      hasFootageClass: document.getElementById('flow-mount').classList.contains('has-footage'),
+      videoVisible: visible('#flow-footage .flow-footage-video'),
+      videoSrc: video ? video.currentSrc || video.src : '',
+      videoError: video && video.error ? video.error.code : 0,
+      videoFit: video ? getComputedStyle(video).objectFit : '',
+      // No gap on ANY edge and no overhang either, so a rule that centred the video inside a taller
+      // panel, or one that let it spill past the rounded corners, both fail here.
+      coversFrame:
+        !!gaps &&
+        Math.abs(gaps.left) <= 1 && Math.abs(gaps.top) <= 1 &&
+        Math.abs(gaps.width) <= 1 && Math.abs(gaps.height) <= 1,
+      gaps: gaps
+        ? [gaps.left, gaps.top, gaps.width, gaps.height].map((value) => Math.round(value * 100) / 100)
+        : null,
+      panel: inner ? [Math.round(inner.width), Math.round(inner.height)] : null,
+      note: (document.querySelector('#flow-footage .flow-footage-note')?.textContent || '').trim(),
+      viewerVisible: visible('#flow-viewer-mount'),
+      fallbackVisible: visible('#flow-fallback'),
     };
   });
   H.ok(state.intro === expectedCopy.missionIntro, `${mission} mission intro matches the selected role variant`);
   H.ok(state.evidenceClass === 0, `${mission} success step has no evidence-on failure state`);
   H.ok(!state.banner, `${mission} success step has no overlay chip or finding banner`);
-  H.ok(
-    state.context === (mission !== 'ssl'),
-    `${mission} success step ${mission === 'ssl' ? 'removes' : 'keeps'} its contextual-label block`,
-  );
   H.ok(!state.chart, `${mission} success step has no failure chart or alert shading`);
-  H.ok(Array.isArray(state.loop), `${mission} success step loops its healthy passage`);
+  if (state.declaredNote !== null) {
+    H.ok(state.footageLive && state.hasFootageClass, `${mission} mission step plays its real footage`);
+    H.ok(state.videoError === 0, `${mission} footage loads (media error code ${state.videoError})`);
+    H.ok(
+      state.videoSrc.endsWith(`/media/flow-${mission}.mp4`),
+      `${mission} footage plays this mission's own clip (${state.videoSrc})`,
+    );
+    H.ok(
+      state.videoVisible && state.coversFrame,
+      `${mission} footage fills the replay panel inside its border ` +
+        `(panel ${(state.panel || []).join('x')}, edge gaps ${JSON.stringify(state.gaps)})`,
+    );
+    H.ok(state.videoFit === 'cover', `${mission} footage covers rather than letterboxes (${state.videoFit})`);
+    H.ok(!state.viewerVisible && !state.fallbackVisible, `${mission} footage step hides the 3D mount and its fallback`);
+    H.ok(state.note === state.declaredNote, `${mission} footage carries its declared note ("${state.note}")`);
+    H.ok(/not the logged/i.test(state.note), `${mission} footage note says outright that this is not the logged mission`);
+    H.ok(!state.context, `${mission} footage step stands the contextual labels down`);
+    H.ok(!state.loop, `${mission} footage step pauses the mission clock (${JSON.stringify(state.loop)})`);
+  } else {
+    H.ok(
+      state.context === (mission !== 'ssl'),
+      `${mission} success step ${mission === 'ssl' ? 'removes' : 'keeps'} its contextual-label block`,
+    );
+    H.ok(Array.isArray(state.loop), `${mission} success step loops its healthy passage`);
+  }
   if (mobileLabel) await assertNoOverflow(page, `${mobileLabel} ${mission} mission step`);
 }
 

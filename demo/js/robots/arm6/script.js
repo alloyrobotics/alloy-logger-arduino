@@ -234,6 +234,14 @@ export default {
         target: { x: 0.40, y: 0.42, z: -0.10 },
       },
       loopLabel: 'success loop',
+      // ROUND 11. The context beat shows the real world: a real 6-axis arm running a pick and place,
+      // not this synthesized transfer. The note says which of the two it is. Everything else in this
+      // block stays as the fallback the step runs if the media does not arrive (`core/flow.js`).
+      footage: {
+        src: new URL('../../../media/flow-arm6.mp4', import.meta.url).href,
+        poster: new URL('../../../media/flow-arm6-poster.jpg', import.meta.url).href,
+        note: 'A 6-axis arm sorting parts. Not the logged run.',
+      },
       contextualLabels: [
         { label: '12 cycles' },
         { label: 'Pick at A' },
