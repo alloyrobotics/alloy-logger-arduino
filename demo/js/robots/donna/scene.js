@@ -26,10 +26,28 @@
 // The torso quaternion in the payload is the yaw-FREE tilt quaternion the extractor froze: it
 // rotates world vertical onto the torso up axis and its z component is identically zero. So each
 // robot group carries `rotation.z = poseYaw` and its torso node carries the tilt, and no yaw is
-// ever applied a second time. One honest consequence, recorded here rather than hidden: the tilt
-// quaternion's lean AXIS was expressed in that robot's own drifting IMU yaw reference, which the
-// extractor discarded with the yaw, so the lean is rendered inside the localization heading. The
-// lean ANGLE is exact; the lean AZIMUTH is only as good as the two yaw references agreeing.
+// ever applied a second time.
+//
+// Since the 2026-08-11 azimuth amendment (FORMAT-V2 "Amendment 3") that composition is EXACT rather
+// than merely close. Each recorded attitude splits uniquely as `R = S * Rz(phi)` - a swing S that
+// carries vertical onto the torso up axis, and a twist phi about vertical - and what the payload
+// now stores is `Rz(-phi) * S * Rz(phi)`, the lean expressed against the robot's OWN heading rather
+// than against the IMU world frame's arbitrary, drifting yaw origin. Applying heading phi outside
+// it reproduces R itself. Before the amendment the lean was stored in the IMU's yaw reference and
+// rendered inside the localization heading, so it pointed the wrong way by however far those two
+// references had drifted apart: measured on this payload, the stance foot sat a median 23 degrees
+// off the turf across the hero window, tipped onto a corner by up to 86 mm. It is now 6.
+//
+// What is still approximate, recorded here rather than hidden: the exactness holds when the heading
+// applied outside equals phi, and what this file applies is the LOCALIZATION heading. Those are two
+// different estimators of one physical quantity - phi is the torso's instantaneous yaw, including
+// the yaw it swings through inside every gait cycle, while localization publishes a smoothed base
+// heading - so a bounded, gait-frequency azimuth residual remains, and through an outage the held
+// root pose holds the rendered lean azimuth with it. The lean ANGLE is exact and unconditional; it
+// is bit-identical to the pre-amendment payload, which is why every fall still reads as the fall it
+// was. Closing the residual would mean storing phi relative to the localization yaw instead, which
+// puts yaw back into the torso quaternion and breaks this contract; that is a format change, not an
+// amendment, and it is not made here.
 //
 // THE BODY IS THE REAL CAD. The heavy module ships the MIT-licensed Wolfgang-OP visual meshes
 // (bit-bots/wolfgang_robot @ b067cae, (c) Hamburg Bit-Bots) as quantized columns: 52 unique meshes,

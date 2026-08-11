@@ -289,7 +289,10 @@ section('9. unconditional budgets');
 const moduleBytes = await readFile(path.join(DONNA, 'donna-data.js'));
 const gzipBytes = gzipSync(moduleBytes, { level: 9, mtime: 0 }).length;
 console.log(`  donna-data.js gzip -9 mtime=0: ${gzipBytes} bytes`);
-eq(gzipBytes, 410559, 'emitted full module remains byte-size frozen');
+// Re-frozen 2026-08-11 from 410559: FORMAT-V2 Amendment 3 re-expressed the torso tilt quaternion's
+// lean axis against each sample's own heading, which changes the qx/qy columns' bytes (and, being a
+// smoother sequence, compresses 593 bytes better). Same track shapes, same DATASET_HASH.
+eq(gzipBytes, 409966, 'emitted full module remains byte-size frozen');
 ok(gzipBytes <= 472143, `module is within frozen 472143-byte ceiling (was ${gzipBytes})`);
 ok(gzipBytes <= 524288, `module is within hard 512 KiB cap (was ${gzipBytes})`);
 
