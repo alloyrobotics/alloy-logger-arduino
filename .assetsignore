@@ -39,3 +39,5 @@ package-lock.json
 preview-worker.js
 wrangler.preview.jsonc
 assets-src/
+test/
+.uno-probe/
