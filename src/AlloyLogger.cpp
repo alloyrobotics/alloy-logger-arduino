@@ -1,3 +1,5 @@
+#if defined(ARDUINO_ARCH_ESP32)
+
 #include "AlloyLogger.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -581,3 +583,5 @@ void AlloyLogger::taskLoop() {
     }
   }
 }
+
+#endif  // defined(ARDUINO_ARCH_ESP32)
