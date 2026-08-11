@@ -2,9 +2,10 @@
 
 Date: 2026-08-11 (Australia/Sydney)
 
-Status: implementation and physical proof complete; review, branch isolation, commits, and deployment
-remain. Nothing from this work has been committed, pushed, or deployed. The reference board was
-left running a credential-free disconnect sketch.
+Status: implementation, independent review, clean-branch isolation, staging gates, and production
+deployment are complete. The source/config release commit is `9158d91`; PR #8 is open. Production
+version `0be19100-abdf-4d43-aa7f-b5132d64c65e` is active, with the prior version retained for
+rollback. This document now contains the deployment evidence.
 
 ## Outcome to preserve
 
@@ -463,19 +464,45 @@ the smoke device until the cloud version is stable.
 
 ## Deployment record (complete during release)
 
-- Reviewed commit/PR:
-- Public library version/tag decision:
-- Staging Worker/version:
-- Staging R2/DO resources:
-- Staging v1 smoke:
-- Staging v2 run and MCAP:
-- Previous production version ID:
-- New production version ID:
-- Production deployment UTC:
-- Production v1 health/regression:
-- Production v2 smoke run/path:
-- Mesh list/download/MCAP verification:
-- Hosted SQL Ready time, if applicable:
-- Monitoring window/result:
-- Rollback exercised or retained version:
-- Residual follow-ups:
+- Reviewed commit/PR: source/config commit `9158d91f94cbaf62fdd57ec6a5b8a583ac97a6c0`;
+  <https://github.com/alloyrobotics/alloy-logger-arduino/pull/8> (ready, merge-clean when opened).
+- Public library version/tag decision: `0.5.0`; no Git tag or Arduino Library Manager publication
+  was created as part of the Worker rollout.
+- Staging Worker/version: `alloylogger-cloud-staging`,
+  `774cf359-a995-4265-bfb1-e747251be641`, workers.dev only, with real Mesh finalization enabled.
+- Staging R2/DO resources: `alloylogger-cloud-staging` (OC, Standard, seven-day `stage/` expiry);
+  separate DO namespace `d3c821a27c584aeda423784229bf9727`. Exact meta/chunk keys from both
+  real legacy staging sessions were absent after cleanup. The bucket-info aggregate briefly retained
+  a stale 91-object/1 MB metric after the final run, so lifecycle expiry remains the external bound.
+- Staging v1 smoke: session `178645724320`, 90 chunks, 14,027 rows, terminal finalization. A prior
+  attempt completed just beyond a 90-second external poll; the final fail-closed gate used 180
+  seconds and passed without a Worker finalize error.
+- Staging v2 run and MCAP: complete run `d711c4758be411a834a4294226afb387`; no-END inactivity run
+  `d05df175029f5144ff96d781d91eea82`. Both were listed, downloaded, indexed, content/metadata
+  checked, and passed `mcap doctor --strict-message-order`. The connected UNO R4 also sent 20/20
+  samples with zero loss against DRY_RUN staging before real finalization was enabled.
+- Previous production version ID: `9b90b155-8ebb-4fd0-8b40-a282862091dd` (100% before rollout).
+- New production version ID: `0be19100-abdf-4d43-aa7f-b5132d64c65e`, deployment
+  `f5e5143d-a9bc-47c6-abc9-6cb126fe135c` at 100%.
+- Production deployment UTC: `2026-08-11T14:12:17Z` (`2026-08-12 00:12:17` Australia/Sydney).
+- Production v1 health/regression: both `ingest.alloylogger.com` and the workers.dev alias returned
+  `200 {"ok":true}`; session `178645760375` finalized 90 chunks/14,027 rows into an indexed MCAP.
+- Production v2 smoke run/path: synthetic complete run
+  `4cb012a8ec939b149b78f0ba608d3ee1` under
+  `release-smoke/uno-r4-20260812-production`; physical zero-loss run
+  `7ee49fc7de6ae988f558c601af4d8b50` under
+  `release-smoke/uno-r4-20260812/board-production`. A preceding physical pressure run
+  `b2333b02d28bf8ba72a011dd2db53c1b` truthfully declared 15 drops and also finalized.
+- Mesh list/download/MCAP verification: synthetic v1/v2 artifacts passed the fail-closed indexed
+  verifier and strict MCAP doctor. The physical zero-loss MCAP was 5,372 bytes with 10 `/uptime`
+  samples plus one synchronized clock anchor; metadata reported `complete=true`,
+  `sequence_complete=true`, `end_observed=true`, and zero drop/corrupt/retry counters. Production
+  R2 cleanup returned to zero objects.
+- Hosted SQL Ready time, if applicable: not used as a release gate; Mesh and indexed MCAP were the
+  authoritative artifact checks.
+- Monitoring window/result: a 60-second error-only production tail after synthetic and physical
+  smokes reported no errors; both production health routes remained healthy afterward.
+- Rollback exercised or retained version: not exercised; exact prior version
+  `9b90b155-8ebb-4fd0-8b40-a282862091dd` remains the rollback target.
+- Residual follow-ups: merge PR #8, then create/publish the `0.5.0` library tag through the normal
+  library release process if desired.
