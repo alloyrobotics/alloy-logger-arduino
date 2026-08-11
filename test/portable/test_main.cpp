@@ -1407,14 +1407,17 @@ static bool blockedEndLatchesAndCompletesExactly() {
     std::vector<uint8_t> retained_end;
     if (is_end) {
       retained_end.assign(frame.bytes, frame.bytes + frame.size);
-      core.noteRetryAttempt();
+    }
+    core.noteRetryAttempt();
+    if (is_end) {
       FrameView retried_end;
       CHECK(core.acquireInFlight(&retried_end));
       CHECK(retried_end.size == retained_end.size());
       CHECK(memcmp(retried_end.bytes, &retained_end[0], retained_end.size()) ==
             0);
-      CHECK(core.stats().frame.retries == 2);
-      CHECK(getU32(retried_end.bytes + 52) == 1);
+      CHECK(core.stats().frame.retries == 7);
+      CHECK(getU32(retried_end.bytes + 52) == 6);
+      CHECK(getU32(retried_end.bytes + kFrameHeaderBytes + 36) == 6);
     }
     uint8_t ack[kAckBytes];
     makeAck(ack, core.runId(), frame.frame_seq, frame.crc32c, ACK_ACCEPTED,

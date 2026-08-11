@@ -40,6 +40,8 @@ export interface BinaryFrameEntry {
 export interface ReplayableBinaryFrameSource {
   /** A fresh frame-sequence-ordered iterator on every call. */
   frames(): AsyncGenerator<BinaryFrameEntry>;
+  /** A fresh GAP-only iterator ordered by monotonic start, then frame sequence. */
+  gapFrames(): AsyncGenerator<BinaryFrameEntry>;
 }
 
 export interface BinarySessionInfo extends SessionInfo {
@@ -414,19 +416,26 @@ async function* gapEvents(
   source: ReplayableBinaryFrameSource,
 ): AsyncGenerator<TimedBinaryEvent> {
   let previousFrameSeq = -1;
-  let previousEndUs: bigint | null = null;
+  let previousStartUs: bigint | null = null;
   let runId: string | null = null;
-  for await (const entry of source.frames()) {
+  for await (const entry of source.gapFrames()) {
     const frame = parseFrame(entry.bytes);
-    assertFrameOrder(frame, entry, previousFrameSeq, runId);
-    previousFrameSeq = entry.seq;
-    runId ??= frame.header.runIdHex;
-    if (frame.header.type !== FrameType.Gap) continue;
-    const gap = parseGap(frame.payload);
-    if (previousEndUs !== null && gap.monotonicStartUs < previousEndUs) {
-      throw new Error("GAP ranges regress across frame sequence order");
+    if (frame.header.frameSeq !== entry.seq) throw new Error("staged frame sequence mismatch");
+    if (frame.header.type !== FrameType.Gap) throw new Error("GAP source contains a non-GAP frame");
+    if (runId !== null && frame.header.runIdHex !== runId) {
+      throw new Error("binary session contains mixed run ids");
     }
-    previousEndUs = gap.monotonicEndUs;
+    const gap = parseGap(frame.payload);
+    if (
+      previousStartUs !== null &&
+      (gap.monotonicStartUs < previousStartUs ||
+        (gap.monotonicStartUs === previousStartUs && entry.seq <= previousFrameSeq))
+    ) {
+      throw new Error("GAP source is not chronologically ordered");
+    }
+    previousFrameSeq = entry.seq;
+    previousStartUs = gap.monotonicStartUs;
+    runId ??= frame.header.runIdHex;
     yield { kind: "gap", monotonicUs: gap.monotonicStartUs, frameSeq: entry.seq, gap };
   }
 }

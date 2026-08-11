@@ -182,8 +182,8 @@ Final `arduino-cli` link results with core 1.6.0:
 
 | Example | Flash | Global RAM | Reported headroom |
 | --- | ---: | ---: | ---: |
-| UnoR4Starter | 88,304 / 262,144 bytes (33%) | 14,704 / 32,768 bytes (44%) | 18,064 bytes |
-| UnoR4Telemetry | 88,248 / 262,144 bytes (33%) | 14,704 / 32,768 bytes (44%) | 18,064 bytes |
+| UnoR4Starter | 88,688 / 262,144 bytes (33%) | 14,704 / 32,768 bytes (44%) | 18,064 bytes |
+| UnoR4Telemetry | 88,776 / 262,144 bytes (33%) | 14,704 / 32,768 bytes (44%) | 18,064 bytes |
 
 Those linker totals are the trustworthy SRAM measurement. `mallinfo().fordblks` returned zero or
 tiny values on this RA4M1 core and is deliberately neither exposed nor advertised. Runtime network

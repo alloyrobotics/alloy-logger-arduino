@@ -702,6 +702,16 @@ bool Core::acquireInFlight(FrameView* frame) {
       }
       continue;
     }
+    // RUN_END may be queued behind retained predecessors to preserve the
+    // cooperative end() contract. Seal its cumulative counters only when it
+    // reaches the front, before its first transmission; every retry after
+    // that point remains byte-identical.
+    if (slot_frame_types_[selected] == RUN_END &&
+        journal_.slots_[selected].state == JOURNAL_COMMITTED &&
+        !refreshEndFrame(selected)) {
+      state_ = CORE_FAULTED;
+      return false;
+    }
     journal_.slots_[selected].state = JOURNAL_IN_FLIGHT;
     in_flight_slot_ = static_cast<int8_t>(selected);
   }
@@ -822,6 +832,48 @@ size_t Core::journalUsed() const { return trustedJournalUsed(); }
 bool Core::hasBuilder() const { return builder_active_; }
 
 bool Core::hasInFlight() const { return in_flight_slot_ >= 0; }
+
+bool Core::refreshEndFrame(size_t index) {
+  if (index >= kJournalSlotCount || !slot_metadata_valid_[index] ||
+      slot_frame_types_[index] != RUN_END || !end_frame_queued_ ||
+      slot_frame_sequences_[index] != end_frame_seq_) {
+    return false;
+  }
+  end_stats_ = stats_;
+  RunEndPayload payload;
+  payload.reason = end_reason_;
+  payload.flags = end_flags_;
+  payload.mono_end_us = end_mono_us_;
+  payload.attempted_samples = end_stats_.attempted_samples;
+  payload.encoded_samples = end_stats_.encoded_samples;
+  payload.dropped_samples = end_stats_.frame.dropped_samples;
+  payload.dropped_frames = end_stats_.frame.dropped_frames;
+  payload.corrupt_frames = end_stats_.frame.corrupt_frames;
+  payload.backpressure_events = end_stats_.frame.backpressure_events;
+  payload.retries = end_stats_.frame.retries;
+  uint8_t encoded_payload[40];
+  size_t payload_size = 0;
+  if (encodeRunEndPayload(encoded_payload, sizeof(encoded_payload), payload,
+                          &payload_size) != ENCODE_OK) {
+    return false;
+  }
+  FrameContext context;
+  context.frame_seq = end_frame_seq_;
+  context.run_id = run_id_;
+  context.journal_slots_used =
+      static_cast<uint16_t>(trustedJournalUsed());
+  context.journal_slot_capacity = kJournalSlotCount;
+  context.counters = end_stats_.frame;
+  JournalSlot& slot = journal_.slots_[index];
+  size_t encoded_bytes = 0;
+  if (encodeFrame(slot.bytes, sizeof(slot.bytes), RUN_END, context,
+                  encoded_payload, payload_size, &encoded_bytes) != ENCODE_OK ||
+      encoded_bytes > UINT16_MAX) {
+    return false;
+  }
+  slot.len = static_cast<uint16_t>(encoded_bytes);
+  return true;
+}
 
 const Core::SchemaEntry* Core::findSchema(uint16_t schema_id,
                                           uint16_t revision) const {

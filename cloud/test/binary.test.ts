@@ -45,9 +45,22 @@ class BufferReadable implements IReadable {
 
 function replayable(entries: { seq: number; bytes: Uint8Array }[]) {
   const sorted = [...entries].sort((a, b) => a.seq - b.seq);
+  const gaps = sorted
+    .filter((entry) => parseFrame(entry.bytes).header.type === FrameType.Gap)
+    .sort((left, right) => {
+      const leftGap = parseGap(parseFrame(left.bytes).payload);
+      const rightGap = parseGap(parseFrame(right.bytes).payload);
+      if (leftGap.monotonicStartUs !== rightGap.monotonicStartUs) {
+        return leftGap.monotonicStartUs < rightGap.monotonicStartUs ? -1 : 1;
+      }
+      return left.seq - right.seq;
+    });
   return {
     frames: async function* () {
       for (const entry of sorted) yield entry;
+    },
+    gapFrames: async function* () {
+      for (const entry of gaps) yield entry;
     },
   };
 }
@@ -372,6 +385,44 @@ describe("binary MCAP projection", () => {
     expect(metadata[0]!.get("complete")).toBe("false");
   });
 
+  it("emits late-declared historical GAPs in chronological MCAP order", async () => {
+    const newerGap = gapPayload();
+    const newerView = new DataView(newerGap.buffer);
+    newerView.setBigUint64(20, 1900n, true);
+    newerView.setBigUint64(28, 1950n, true);
+    newerView.setUint32(36, 19, true);
+    const historicalGap = gapPayload();
+    const historicalView = new DataView(historicalGap.buffer);
+    historicalView.setBigUint64(20, 1000n, true);
+    historicalView.setBigUint64(28, 1050n, true);
+    historicalView.setUint32(36, 10, true);
+    const frames = [
+      { seq: 0, bytes: makeFrame(FrameType.Begin, beginPayload(), { seq: 0 }) },
+      { seq: 1, bytes: makeFrame(FrameType.Gap, newerGap, { seq: 1 }) },
+      { seq: 2, bytes: makeFrame(FrameType.Gap, historicalGap, { seq: 2 }) },
+    ];
+    const bytes = (await assembleBinaryMcap(replayable(frames), {
+      device: "uno-r4",
+      session: TEST_RUN_HEX,
+      meshPath: "robots/test",
+      sequenceComplete: true,
+    }))!;
+    const reader = await McapIndexedReader.Initialize({ readable: new BufferReadable(bytes) });
+    const messages: { logTime: bigint; body: Record<string, unknown> }[] = [];
+    for await (const message of reader.readMessages({ topics: ["/alloy/gap"] })) {
+      messages.push({
+        logTime: message.logTime,
+        body: JSON.parse(new TextDecoder().decode(message.data)),
+      });
+    }
+    expect(messages.map((message) => message.body.monotonic_start_us)).toEqual([
+      "1000",
+      "1900",
+    ]);
+    expect(messages.map((message) => message.body.detail)).toEqual([10, 19]);
+    expect(messages.map((message) => message.logTime)).toEqual([1_000_000n, 1_900_000n]);
+  });
+
   it("uses monotonic nanoseconds and marks metadata when no UTC anchor exists", async () => {
     const frames = [
       { seq: 0, bytes: makeFrame(FrameType.Begin, beginPayload(), { seq: 0 }) },
@@ -492,6 +543,10 @@ describe("binary MCAP projection", () => {
             activeRawFrames--;
           }
         }
+      },
+      gapFrames: async function* () {
+        // This fixture has no GAP frames; the method is part of the bounded
+        // replay contract even when finalization never opens it.
       },
     };
     await assembleBinaryMcap(source, {

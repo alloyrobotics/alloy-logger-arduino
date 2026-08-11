@@ -232,6 +232,7 @@ class Core {
                                   int8_t* committed_slot = NULL);
   CommitStatus sealBuilder();
   CommitStatus progressEnd();
+  bool refreshEndFrame(size_t index);
   bool recordSampleLoss(GapReason reason, GapAction action,
                         uint32_t sample_seq, uint64_t mono_us,
                         uint32_t detail);

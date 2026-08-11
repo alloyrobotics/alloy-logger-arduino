@@ -589,18 +589,6 @@ export class SessionDO implements DurableObject {
           );
         }
       } else if (frame.header.type === FrameType.Samples) {
-        const lowestBefore = this.binaryLowestMissing(s.lowestMissingSeq ?? 0);
-        if (lowestBefore !== frame.header.frameSeq) {
-          return this.binaryAck(
-            frame,
-            AckStatus.Busy,
-            AckFlag.Retryable,
-            AckDetail.None,
-            503,
-            lowestBefore,
-            1000,
-          );
-        }
         const schemas = this.loadBinarySchemas();
         const batch = parseSamples(
           frame.payload,
@@ -763,7 +751,12 @@ export class SessionDO implements DurableObject {
 
     // All cross-frame semantics are decided from the last committed SQLite snapshot. No durable
     // frame claim exists yet, so a crash or rejected frame can never become a false DUPLICATE.
-    if (timeFirstMono !== null && timeLastMono !== null) {
+    if (
+      (frame.header.type === FrameType.Samples ||
+        frame.header.type === FrameType.ClockAnchor) &&
+      timeFirstMono !== null &&
+      timeLastMono !== null
+    ) {
       type Boundary = {
         sample_first_seq: number | null;
         sample_last_seq: number | null;
@@ -873,22 +866,44 @@ export class SessionDO implements DurableObject {
 
     if (anchorId !== null) {
       const predecessor = this.ctx.storage.sql
-        .exec<{ anchor_id: number }>(
-          `SELECT anchor_id FROM binary_anchors WHERE frame_seq < ?
+        .exec<{ anchor_id: number; frame_seq: number }>(
+          `SELECT anchor_id, frame_seq FROM binary_anchors WHERE frame_seq < ?
              ORDER BY frame_seq DESC LIMIT 1`,
           frame.header.frameSeq,
         )
         .toArray()[0];
       const successor = this.ctx.storage.sql
-        .exec<{ anchor_id: number }>(
-          `SELECT anchor_id FROM binary_anchors WHERE frame_seq > ?
+        .exec<{ anchor_id: number; frame_seq: number }>(
+          `SELECT anchor_id, frame_seq FROM binary_anchors WHERE frame_seq > ?
              ORDER BY frame_seq ASC LIMIT 1`,
           frame.header.frameSeq,
         )
         .toArray()[0];
+      // Samples bind to the latest lower-sequence anchor when accepted. A
+      // backfilled anchor must not silently change that meaning for samples
+      // already retained before the next anchor.
+      const displacedSample = successor
+        ? this.ctx.storage.sql
+            .exec<{ frame_seq: number }>(
+              `SELECT frame_seq FROM binary_frames
+                WHERE frame_type = ? AND frame_seq > ? AND frame_seq < ? LIMIT 1`,
+              FrameType.Samples,
+              frame.header.frameSeq,
+              successor.frame_seq,
+            )
+            .toArray()[0]
+        : this.ctx.storage.sql
+            .exec<{ frame_seq: number }>(
+              `SELECT frame_seq FROM binary_frames
+                WHERE frame_type = ? AND frame_seq > ? LIMIT 1`,
+              FrameType.Samples,
+              frame.header.frameSeq,
+            )
+            .toArray()[0];
       if (
         (predecessor && predecessor.anchor_id >= anchorId) ||
-        (successor && anchorId >= successor.anchor_id)
+        (successor && anchorId >= successor.anchor_id) ||
+        displacedSample
       ) {
         return this.binaryAck(
           frame,
@@ -967,7 +982,7 @@ export class SessionDO implements DurableObject {
         .toArray()[0]!;
       if (
         endPayload.attemptedSamples < endPayload.encodedSamples ||
-        endPayload.encodedSamples + endPayload.droppedSamples > endPayload.attemptedSamples ||
+        endPayload.attemptedSamples < endPayload.droppedSamples ||
         endPayload.droppedSamples !== frame.header.droppedSamples ||
         endPayload.droppedFrames !== frame.header.droppedFrames ||
         endPayload.corruptFrames !== frame.header.corruptFrames ||
@@ -1319,6 +1334,31 @@ export class SessionDO implements DurableObject {
             yield { seq: row.frame_seq, bytes: new Uint8Array(await obj.arrayBuffer()) };
             after = row.frame_seq;
           }
+        }
+      },
+      gapFrames: async function* () {
+        let offset = 0;
+        for (;;) {
+          // GAP declarations may report an older loss after newer frames have
+          // drained. Page their compact references by unsigned-decimal time so
+          // MCAP emission stays chronological without retaining the timeline.
+          const page = sql
+            .exec<{ frame_seq: number; r2key: string }>(
+              `SELECT frame_seq, r2key FROM binary_frames
+                WHERE frame_type = ?
+                ORDER BY length(time_first_mono), time_first_mono, frame_seq
+                LIMIT 64 OFFSET ?`,
+              FrameType.Gap,
+              offset,
+            )
+            .toArray();
+          if (page.length === 0) return;
+          for (const row of page) {
+            const obj = await staging.get(row.r2key);
+            if (!obj) throw new Error(`staged binary frame missing: ${row.r2key}`);
+            yield { seq: row.frame_seq, bytes: new Uint8Array(await obj.arrayBuffer()) };
+          }
+          offset += page.length;
         }
       },
     };

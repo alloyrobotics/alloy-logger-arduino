@@ -930,7 +930,7 @@ describe("Alloy Device Wire v1 ingest", () => {
     });
   });
 
-  it("requires contiguous declaration state and enforces cross-frame sample order", async () => {
+  it("accepts recoverable frame holes and enforces cross-frame sample order", async () => {
     useBinaryRun();
     mockAlloy();
     await postBinary(binaryFrame(FrameType.Begin, beginPayload({ device: DEVICE }), 0));
@@ -943,14 +943,26 @@ describe("Alloy Device Wire v1 ingest", () => {
       }),
       3,
     );
-    const blocked = await postBinary(later);
-    expect(blocked.status).toBe(503);
-    expect(await readAck(blocked)).toMatchObject({
-      status: AckStatus.Busy,
+    const acceptedLater = await postBinary(later);
+    expect(acceptedLater.status).toBe(200);
+    expect(await readAck(acceptedLater)).toMatchObject({
+      status: AckStatus.Accepted,
       lowestMissing: 2,
     });
 
-    const overlapping = binaryFrame(
+    const invalidPredecessor = binaryFrame(
+      FrameType.Samples,
+      samplesPayload({
+        baseUs: 2000n,
+        rows: [{ deltaUs: 0, sampleSeq: 30, temp: 20, healthy: true }],
+      }),
+      2,
+    );
+    const predecessorResponse = await postBinary(invalidPredecessor);
+    expect(predecessorResponse.status).toBe(409);
+    expect(await readAck(predecessorResponse)).toMatchObject({ status: AckStatus.InvalidSample });
+
+    const validPredecessor = binaryFrame(
       FrameType.Samples,
       samplesPayload({
         baseUs: 2000n,
@@ -958,21 +970,7 @@ describe("Alloy Device Wire v1 ingest", () => {
       }),
       2,
     );
-    expect((await postBinary(overlapping)).status).toBe(200);
-
-    const invalidSuccessor = binaryFrame(
-      FrameType.Samples,
-      samplesPayload({
-        baseUs: 3000n,
-        rows: [{ deltaUs: 0, sampleSeq: 20, temp: 30, healthy: true }],
-      }),
-      3,
-    );
-    const overlapResponse = await postBinary(invalidSuccessor);
-    expect(overlapResponse.status).toBe(409);
-    expect(await readAck(overlapResponse)).toMatchObject({ status: AckStatus.InvalidSample });
-
-    expect((await postBinary(later)).status).toBe(200);
+    expect((await postBinary(validPredecessor)).status).toBe(200);
 
     const regressingTime = binaryFrame(
       FrameType.Samples,
@@ -997,6 +995,32 @@ describe("Alloy Device Wire v1 ingest", () => {
           .toArray(),
     )) as { frame_seq: number }[];
     expect(rows.map((row) => row.frame_seq)).toEqual([2, 3]);
+  });
+
+  it("rejects a backfilled anchor that would reinterpret an accepted later sample", async () => {
+    useBinaryRun();
+    mockAlloy();
+    await postBinary(binaryFrame(FrameType.Begin, beginPayload({ device: DEVICE }), 0));
+    await postBinary(binaryFrame(FrameType.Schema, schemaPayload(), 1));
+    expect((await postBinary(binaryFrame(
+      FrameType.Samples,
+      samplesPayload({
+        baseUs: 3000n,
+        rows: [{ deltaUs: 0, sampleSeq: 1, anchorId: 0, temp: 30, healthy: true }],
+      }),
+      3,
+    ))).status).toBe(200);
+
+    const backfilled = await postBinary(binaryFrame(
+      FrameType.ClockAnchor,
+      anchorPayload({ id: 1, monoUs: 2000n }),
+      2,
+    ));
+    expect(backfilled.status).toBe(409);
+    expect(await readAck(backfilled)).toMatchObject({
+      status: AckStatus.ProtocolFormatConflict,
+      lowestMissing: 2,
+    });
   });
 
   it("never duplicate-ACKs concurrent identical frames that fail stateful validation", async () => {
@@ -1106,7 +1130,9 @@ describe("Alloy Device Wire v1 ingest", () => {
       FrameType.End,
       endPayload({
         attemptedSamples: 2,
-        encodedSamples: 0,
+        // Encoded and dropped overlap when a retained encoded frame is later
+        // lost to journal corruption; both counters remain truthful.
+        encodedSamples: 2,
         droppedSamples: 2,
         droppedFrames: 2,
         corruptFrames: 2,
@@ -1218,6 +1244,94 @@ describe("Alloy Device Wire v1 ingest", () => {
     await runDurableObjectAlarm(await sessionStub());
     await waitForState((state) => state.phase === "done");
     expect(meshPuts.some((path) => path.endsWith(".mcap"))).toBe(true);
+  });
+
+  it("finalizes retained samples after a late historical corruption GAP closes the hole", async () => {
+    useBinaryRun();
+    mockAlloy();
+    await postBinary(binaryFrame(FrameType.Begin, beginPayload({ device: DEVICE }), 0));
+    await postBinary(binaryFrame(FrameType.Schema, schemaPayload(), 1));
+
+    const newerGap = gapPayload();
+    const newerGapView = new DataView(newerGap.buffer);
+    newerGapView.setUint32(4, 1, true);
+    newerGapView.setUint32(8, 1, true);
+    newerGapView.setUint32(12, 0xffff_ffff, true);
+    newerGapView.setUint32(16, 0, true);
+    newerGapView.setBigUint64(20, 1900n, true);
+    newerGapView.setBigUint64(28, 1950n, true);
+    expect((await postBinary(binaryFrame(
+      FrameType.Gap,
+      newerGap,
+      3,
+      { droppedSamples: 1 },
+    ))).status).toBe(200);
+
+    expect((await postBinary(binaryFrame(
+      FrameType.Samples,
+      samplesPayload({
+        baseUs: 2000n,
+        rows: [{ deltaUs: 0, sampleSeq: 2, temp: 20, healthy: true }],
+      }),
+      4,
+      { droppedSamples: 1 },
+    ))).status).toBe(200);
+
+    const historicalGap = gapPayload();
+    const historicalGapView = new DataView(historicalGap.buffer);
+    historicalGapView.setUint32(4, 0, true);
+    historicalGapView.setUint32(8, 1, true);
+    historicalGapView.setUint32(12, 2, true);
+    historicalGapView.setUint32(16, 1, true);
+    historicalGapView.setBigUint64(20, 1000n, true);
+    historicalGapView.setBigUint64(28, 1050n, true);
+    const closed = await postBinary(binaryFrame(
+      FrameType.Gap,
+      historicalGap,
+      5,
+      { droppedSamples: 2, droppedFrames: 1, corruptFrames: 1 },
+    ));
+    expect(closed.status).toBe(200);
+    expect(await readAck(closed)).toMatchObject({ lowestMissing: 6 });
+
+    const end = binaryFrame(
+      FrameType.End,
+      endPayload({
+        attemptedSamples: 3,
+        encodedSamples: 2,
+        droppedSamples: 2,
+        droppedFrames: 1,
+        corruptFrames: 1,
+      }),
+      6,
+      { droppedSamples: 2, droppedFrames: 1, corruptFrames: 1 },
+    );
+    expect((await postBinary(end)).status).toBe(200);
+    await runDurableObjectAlarm(await sessionStub());
+    await waitForState((state) => state.phase === "done");
+
+    const path = `/test-bucket/uploads/sdk-uploads/${MESH}/${SESSION}/${DEVICE}_${SESSION}.mcap`;
+    const bytes = meshBodies.get(path);
+    expect(bytes).toBeDefined();
+    const reader = await McapIndexedReader.Initialize({ readable: new BufferReadable(bytes!) });
+    const gapStarts: string[] = [];
+    const sampleSequences: number[] = [];
+    for await (const message of reader.readMessages()) {
+      const topic = reader.channelsById.get(message.channelId)!.topic;
+      const body = JSON.parse(new TextDecoder().decode(message.data));
+      if (topic === "/alloy/gap") gapStarts.push(body.monotonic_start_us as string);
+      if (topic === "/env") sampleSequences.push(body._alloy_sample_seq as number);
+    }
+    expect(gapStarts).toEqual(["1000", "1900"]);
+    expect(sampleSequences).toEqual([2]);
+    const metadata = [];
+    for await (const item of reader.readMetadata({ name: "alloy" })) {
+      metadata.push(item.metadata);
+    }
+    expect(metadata[0]!.get("complete")).toBe("false");
+    expect(metadata[0]!.get("sequence_complete")).toBe("true");
+    expect(metadata[0]!.get("reported_dropped_samples")).toBe("2");
+    expect(metadata[0]!.get("reported_corrupt_frames")).toBe("1");
   });
 
   it("serializes a delayed frame commit with the alarm so finalization cannot omit its sample", async () => {

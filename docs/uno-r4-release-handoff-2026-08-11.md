@@ -104,6 +104,7 @@ does not capture the full feature.
 
 - the exact `.assetsignore` hunk adding `test/` and `.uno-probe/`
 - `src/AlloyUnoR4.h`
+- `src/Alloy.h`
 - `src/alloy/uno_r4/AlloyUnoR4.cpp`
 - `src/alloy/uno_r4/UnoR4Platform.cpp`
 - `src/alloy/uno_r4/UnoR4Platform.h`
@@ -140,8 +141,9 @@ made consistently in both examples and docs and recompiled; do not merely add a 
 - `cloud/wrangler.jsonc`
 - `cloud/README.md`
 
-The only `wrangler.jsonc` change so far is an explanatory comment. The current live bindings and
-route remain unchanged.
+`wrangler.jsonc` also defines an isolated `staging` environment with no routes, its own Worker,
+Durable Object namespace, and R2 bucket. Production bindings and routes remain unchanged until an
+explicit production deployment.
 
 ## Reviewer checklist
 
@@ -259,18 +261,18 @@ not silently substitute a host compiler. Record object sizes as well as the symb
 The final dirty-tree reference gate passed:
 
 - portable core: 16/16 under C++11 ASan/UBSan;
-- Worker unit tests: 29/29 including the pre-existing mission test;
-- Worker-runtime tests: 32/32;
+- Worker unit tests: 30/30 including the pre-existing mission test;
+- Worker-runtime tests: 34/34;
 - TypeScript typecheck;
-- UNO Starter: 88,304 bytes flash, 14,704 bytes global RAM;
-- UNO Telemetry: 88,248 bytes flash, 14,704 bytes global RAM;
+- UNO Starter: 88,688 bytes flash, 14,704 bytes global RAM;
+- UNO Telemetry: 88,776 bytes flash, 14,704 bytes global RAM;
 - all three legacy ESP32 examples; and
 - `git diff --check`.
 
 If the mission patch is intentionally omitted, the unit-test count can be one lower; require all
 discovered tests to pass rather than forcing the old count.
 
-The handoff dry-run used Wrangler 4.114.0 and produced a 236.07 KiB upload (45.98 KiB gzip) with
+The handoff dry-run used Wrangler 4.114.0 and produced a 237.40 KiB upload (46.20 KiB gzip) with
 exactly `SESSION_DO`, `STAGING`, `ALLOY_DATA_URL`, and `INACTIVITY_MS` bindings. Wrangler reported a
 newer CLI version; do not upgrade it in this release without a separate lockfile diff and full
 rerun.
@@ -284,16 +286,10 @@ Recommended logical commits on the isolated branch:
 3. Worker `/v2/frame`, binary Durable Object/MCAP path, tests, and cloud docs; and
 4. this operational handoff, if it should remain in the repository.
 
-Before the first commit, decide the public library version. `library.properties` is still `0.4.0`;
-shipping UNO R4 support under the existing published version would make releases ambiguous. A
-version bump/tag is release policy, not an implementation decision, and was deliberately not
-invented here. Also reconcile its `url`: it still names the old personal GitHub repository while
-the configured remote is `https://github.com/alloyrobotics/alloy-logger-arduino.git`.
-
-`README.md` still presents CSV as the only wire format, calls binary framing a roadmap item, and
-describes the library as ESP32-only. Update those public claims from the reviewed contract/docs
-before a public library release. Keep the ESP32 description intact and introduce UNO R4 as a
-separate cooperative adapter; do not imply the ESP32 background API was ported wholesale.
+Release policy is now explicit: `library.properties` is `0.5.0`, points to the Alloy Robotics
+repository, and declares both supported architectures. `README.md` preserves the existing ESP32
+API while documenting UNO R4 as a separate cooperative adapter and Alloy Device Wire as its binary
+transport.
 
 For every commit:
 
@@ -306,8 +302,8 @@ For every commit:
   `/private/tmp` material unstaged.
 
 Open the PR from the isolated `codex/` branch against the freshly confirmed target branch. Include
-the gates above, the six physical scenarios, the known limitations below, and a statement that no
-production deployment occurred during implementation.
+the gates above, the six physical scenarios, the known limitations below, and the exact staging and
+production deployment state at the time the PR is opened.
 
 ## Deployment plan
 
@@ -344,7 +340,7 @@ as the first deployment.
 
 ### 2. Add and prove an isolated staging environment
 
-There is no `env.staging` today. Before production, define a named staging environment with:
+The checked-in `env.staging` defines:
 
 - a distinct Worker name/`workers.dev` endpoint and no production custom-domain route;
 - its own Durable Object namespace and required initial SQLite-class migration;

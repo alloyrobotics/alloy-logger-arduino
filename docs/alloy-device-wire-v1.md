@@ -28,7 +28,7 @@ Every request body is one complete frame. Total bytes are `64 + payload_bytes`.
 | 10 | 2 | payload bytes |
 | 12 | 4 | global `frame_seq`; begins at zero, maximum `0xfffffffe`, and must not wrap |
 | 16 | 16 | cryptographically random `run_id` |
-| 32 | 2 | journal slots used when the frame was committed |
+| 32 | 2 | journal slots used when the transmitted frame bytes were sealed |
 | 34 | 2 | journal slot capacity |
 | 36 | 4 | cumulative dropped samples, saturating |
 | 40 | 4 | cumulative dropped frames, saturating |
@@ -216,9 +216,10 @@ dropped_frames:u32 | corrupt_frames:u32 | backpressure_events:u32 | retries:u32
 
 Capture closes before this final frame is queued. Explicit mission finalization begins only after it
 and every preceding frame is acknowledged. Power loss has no end frame; server inactivity finalizes
-the old run with `end_observed=false`. The END time/reason are latched when capture closes; its
-cumulative counters are snapshotted when the END frame successfully commits, so retries needed to
-drain earlier frames are included. Retries of END itself cannot alter its already sealed bytes.
+the old run with `end_observed=false`. The END time/reason are latched when capture closes. The frame
+may be queued behind retained predecessors, but its cumulative counters and CRC are sealed only when
+it reaches the front immediately before first transmission, so retries needed to drain earlier
+frames are included. Retries of END itself cannot alter its already sealed bytes.
 
 ## Binary acknowledgement
 

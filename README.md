@@ -175,7 +175,8 @@ void setup() {
 
 void loop() {
   logger.poll();
-  logger.sample(1, 1).setU16(0, analogRead(A0)).commit();
+  const uint16_t adcRaw = static_cast<uint16_t>(analogRead(A0));
+  logger.sample(1, 1).setU16(0, adcRaw).commit();
 }
 ```
 
