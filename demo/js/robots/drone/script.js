@@ -10,13 +10,25 @@ import { buildScene } from './scene.js';
 // that card names lit in the scene, and every beat held over the seconds of THIS mission that show
 // what its card claims. ONE wide framing carries all four.
 //
-// WHY THESE SECONDS. 18.6 to 31.2 s is one continuous healthy passage: the second survey lane flown
-// edge to edge (18.6 to 27.7 s, x from 10.05 m to -9.98 m at a held 6.0 m) and the cross-lane turn
-// that follows it (27.7 to 31.2 s, y from -3.49 m to -0.01 m). Nothing has gone wrong yet - the
-// bearing wear starts at 32 s - so all four cards are held over the aircraft working. Contiguous on
-// purpose: the beats are four passages of one flight rather than four seeks across it, and the
-// manual handover, which widens the loop to the union of the windows, replays that same lane and
-// turn rather than a stitched-together digest.
+// WHY THESE SECONDS. 20.6 to 31.2 s is one continuous healthy passage: most of the second survey
+// lane (20.6 to 27.7 s, x from 6.71 m to -9.98 m at a held 6.0 m) and the cross-lane turn that
+// follows it (27.7 to 31.2 s, y from -3.49 m to -0.01 m). Nothing has gone wrong yet - the bearing
+// wear starts at 32 s - so all four cards are held over the aircraft working. Contiguous on purpose:
+// the beats are four passages of one flight rather than four seeks across it, and the manual
+// handover, which widens the loop to the union of the windows, replays that same lane and turn
+// rather than a stitched-together digest.
+//
+// WHY IT NO LONGER OPENS AT 18.6, WHICH IS WHERE THE LANE ITSELF OPENS. Round 12 (see the shot below)
+// asks the camera to look back down the ground this aircraft has already surveyed, and at the top of
+// a lane it has surveyed none OF THIS ONE: 23 tiles are laid by 18.6 s and every one of them belongs
+// to the previous lane, 3.5 m across the field and behind the camera's shoulder from this bearing.
+// Rendered at 18.6 s and looked at, the frame is bare grid with a machine in it - the exact failure
+// this round exists to fix, on the first card a visitor sees. The aircraft needs about 2.4 m of trail
+// on its OWN lane before the head of it clears the near zone under the frame's lower edge, which it
+// has by 20.5 s; rendered at 20.6 s the trail is entering at the bottom of the picture, so that is
+// where this opens and the four windows divide the 10.6 s that is left. They are 2.4 to 2.9 s against
+// a 3.1 s hold, so the passages replay at 0.77x to 0.94x - a shade under real time, which is the
+// price of the trail and is cheap.
 //
 // WHY THERE IS ONE SHOT AND NOT FOUR, which is round 7 and the only structural change here. The four
 // per-beat shots this replaces closed to 0.42, 0.39, 0.28 and 0.62 scene units on their subjects, and
@@ -38,6 +50,29 @@ import { buildScene } from './scene.js';
 // and a status LED on the rear-left corner of the top deck, and the anchor is on the board. See the
 // flight-controller block in scene.js for why the corner is the only place on the deck a board is
 // both real and visible.
+//
+// ROUND 12: WHY THE SHOT MOVED, and it is the only structural change in this file. Everything above
+// was true and the step still opened on what looked like a hovering statue. The reason is geometric
+// rather than editorial: the wide shot is an offset resolved against the aircraft every frame, so
+// the aircraft is motionless in frame BY CONSTRUCTION, and for the motion to reach a visitor
+// something else in the picture has to be fixed in the world, close to the subject and irregular.
+// Six metres up over a 20 x 14 m field there was nothing: the flown track and the lane dashes run
+// ALONG the direction of travel so they slide along themselves, the field boundary is one thin line
+// seven metres away, and the viewer's own blueprint grid is a regular lattice - the single worst
+// thing to show a translation against. Rendered at four beat times and looked at, the four frames
+// were interchangeable. That is what the SSL mission's step gets for free by having a carpet, field
+// lines and other robots inside half a metre of its subject.
+//
+// Two changes fix it, and they are two halves of one idea. scene.js now draws the SURVEYED GROUND -
+// the ground the aircraft's own drawn camera footprint has swept, filling in behind it tile by tile
+// - which puts a world-fixed, growing, irregular thing directly under the machine. And this shot
+// moves round to look back DOWN that trail: the camera stands ahead of the aircraft along its lane,
+// so the trail runs from the bottom of the frame up past the airframe and its 1 m seams stream past
+// at the aircraft's own ground speed. The tour lays 3 to 7 new tiles inside every beat (7, 7, 3 and
+// 3, measured on the built payload), and the strip the PREVIOUS lane laid sits beyond this one, so
+// the frame carries a second world-fixed rail at a different depth. The aircraft flies over ground
+// it is visibly mapping, which is both the motion the step was missing and the thing the mission is
+// actually about.
 const ANATOMY_TOUR = {
   // 3100 ms, which is the family's 2900 plus the crossfade. `.v-anat.is-tour .v-anat-card` fades
   // over 0.4 s, so the first eighth of every beat is a card arriving; 3100 leaves 2.7 s of settled
@@ -52,46 +87,62 @@ const ANATOMY_TOUR = {
   // deck's rear-left corner, which is 21 degrees off the nose axis and would skew the whole frame.
   basis: { origin: 'battery', forward: 'camera' },
   // THE WIDE SHOT. Hung off the pack, which is the closest thing this aircraft has to a centre of
-  // mass, aimed 0.02 units above and 0.01 ahead of it: the hull centre.
+  // mass, aimed 0.01 units ahead of it and 0.03 under it: the hull centre, a touch low, which is what
+  // lifts the airframe off the middle of the frame and gives its trail the lower third.
   //
   // HOW FAR OUT, arithmetically, in scene units and not field metres - scene.js compresses the field
   // by 0.30 units per metre and draws the ~0.45 m airframe oversize against it, so the motor diagonal
   // is 0.495 units and the prop discs take the aircraft to 0.586 units across. `viewer.js` holds a
-  // 42 deg base vertical fov and widens it as the panel narrows: the flow's stage measures 1637 x 900
-  // at a 1440 px desktop (aspect 1.8, so 46 deg) and about 355 x 546 on a 390 px phone (70 deg). The
-  // frame is therefore 1.53x the stand-off wide on the desktop and 0.92x on the phone. At 1.08 units
-  // the 0.586 unit aircraft is 36 per cent of the desktop frame's width and 59 per cent of the
-  // phone's - the whole machine, props included, inside both panels with room for the corner cards.
-  // The old close beats needed 0.68 units just to fit the airframe, so this sits comfortably outside
-  // the size at which anything is cropped.
+  // 42 deg base vertical fov and widens it by sqrt(2.2 / aspect) as the panel narrows: the flow's
+  // stage measures 1637 x 900 at a 1440 px desktop (aspect 1.82, so 45.7 deg) and about 355 x 546 on
+  // a 390 px phone (aspect 0.65, so 70.4 deg). At the 1.15 unit stand-off the frame is 0.97 units
+  // tall by 1.76 wide on the desktop and 1.62 by 1.05 on the phone, so the 0.586 unit aircraft is
+  // 33 per cent of the desktop frame's width and 56 per cent of the phone's - the whole machine,
+  // props included, inside both panels with room for the four corner cards. The old close beats
+  // needed 0.68 units just to fit the airframe, so this is nowhere near the size anything crops at.
   //
-  // WHERE IT STANDS. Between the rear-left quarter and the front-left quarter, and the SPAN is the
-  // point. `cameraHome` stands rear-left, and the two parts on the rear-left corner - motor 3 and
-  // round 7's FC board on the deck - read best from there; the nose gimbal and its survey lens are on
-  // the opposite corner and are behind the canopy from that bearing. One fixed bearing therefore has
-  // to lose one of them, so the drift crosses between the two instead: 60 degrees of azimuth, from
-  // 45 deg behind the beam to 15 deg ahead of it, and back. `frame: 'robot'` bolts that arc to the
-  // airframe - the survey holds heading to within a degree for this whole passage, so it is a fixed
-  // arc in practice, and it stays on the aircraft's left through the cross-lane turn rather than
-  // walking round to the nose.
+  // WHERE IT STANDS, and this is the round 12 change. AHEAD OF THE AIRCRAFT ALONG ITS LANE, 163 deg
+  // round from the nose at one end of the drift and 133 deg at the other, both on the aircraft's left.
+  // The reason is the surveyed ground: the trail this aircraft is laying extends BEHIND it, and the
+  // ground a camera hung this close can see at all begins about one stand-off PAST the subject (below
+  // that the frame's lower edge has already cleared the ground - the aircraft is 1.925 units up and
+  // the camera only 0.6 above it). So a camera standing behind the aircraft has the whole trail in
+  // the blind near zone under the frame, which is exactly what the round 7 bearing did and why its
+  // frames had bare ground in them. Standing ahead and looking back down the lane puts the trail
+  // where the shot can see it: it runs from the bottom edge up to the leading tile under the
+  // airframe, and it grows toward the camera for the whole tour. Rendered at both ends of the drift
+  // and at all four beat times, coverage is in frame on every one.
   //
-  // THE DRIFT eases those 60 degrees and 4 degrees of elevation and back on a raised cosine over 16 s,
-  // at a constant 1.08 unit radius: 3.7 deg a second, which is a shot that breathes rather than an
-  // orbit, and it never cuts. 16 s against a 12.4 s tour cycle so the two clocks do not lock and no
-  // card is permanently the one shot from the far end of the arc.
+  // WHAT THAT BEARING COSTS, stated plainly: the nose gimbal and its survey lens are on the far side
+  // of the canopy from here, where round 7's drift used to swing round to meet them. That is now the
+  // wireframe's job rather than the camera's - from round 10 this step draws the airframe transparent
+  // and the live card's part SOLID inside it, so the lens is drawn, lit and legible through the hull
+  // on the beat that names it, and the anchored halo (drawn without depth test) says where. A bearing
+  // that could see the lens could not see the trail, and the trail is what the whole step was missing.
   //
-  // ELEVATION 26 TO 30 DEG, and the top of that range is what the first pass got wrong. At 20 deg the
-  // horizon sits a quarter of the way down a desktop panel and that quarter is the flat background
-  // above the boarding - measured on the live page. At 26 deg the top of the frame is 3 deg above
-  // horizontal, so the band is a sliver and the rest is field and machine. It is not steeper than
-  // that because the pack hangs UNDER the lower plate: the plate's overhang shades the pack's upper
-  // 19 mm at 22 deg and progressively more above it, and the pack is one of the four cards.
+  // THE DRIFT eases 30 degrees of azimuth and 2 of elevation and back on a raised cosine over 16 s,
+  // at a stand-off held between 1.150 and 1.168 units: 1.9 deg a second, a shot that breathes rather
+  // than an orbit, and it never cuts. 16 s against a 12.4 s tour cycle so the two clocks do not lock
+  // and no card is permanently the one shot from the far end of the arc. `frame: 'robot'` bolts the
+  // arc to the airframe, which on this passage is a fixed arc in practice - the survey holds heading
+  // to within 0.9 deg from 18.6 s to 31.2 s - and keeps the shot on the aircraft's left through the
+  // cross-lane turn rather than walking round to the nose.
+  //
+  // ELEVATION 31 TO 33 DEG, up from round 7's 26 to 30, for two reasons that both point the same way.
+  // The visible ground begins at `height / tan(elevation + half-fov)` from the camera, so every degree
+  // of elevation pulls the trail's near end closer to the aircraft; at 26 deg the leading tiles sat
+  // under the frame. And the phone panel's 35.2 deg half-fov means anything shallower than 35 puts
+  // some flat background above the horizon, so the band is 9 per cent of the phone panel here against
+  // 15 at 26 deg. The reason round 7 capped this at 30 no longer applies: the pack hangs under the
+  // lower plate and the plate's overhang shades it from above, but the battery beat opens 3.1 s into
+  // the tour and the drawing settles at 2.4 s, so that card is ALWAYS read against the transparent
+  // airframe with the pack drawn solid inside it, never against the shaded solid.
   wide: {
     anchor: 'battery',
     frame: 'robot',
-    pos: [-0.69, -0.69, 0.47],
-    posEnd: [0.24, -0.9, 0.54],
-    aim: [0.01, 0, 0.02],
+    pos: [-0.94, -0.28, 0.6],
+    posEnd: [-0.66, -0.72, 0.64],
+    aim: [0.01, 0, -0.03],
     drift: 16000,
   },
   // Each beat's `glow` is the radius of the marker drawn at its anchor, in scene units. Authored
@@ -99,43 +150,65 @@ const ANATOMY_TOUR = {
   // motor's boom bounds a 0.11 unit sphere and the FC board a 0.016 one - and a marker the size of a
   // 16 mm board is not findable on a 0.586 unit aircraft. These four are the size of the part as a
   // viewer sees it: a motor with its boom, the pack, the gimballed lens, the FC board.
+  // Every number below is measured off the built arrays over the exact window it describes, and the
+  // tile counts are `scene.js`'s own coverage rule run over the same payload (a 1 m tile lights when
+  // the drawn camera footprint has crossed its centre). The four windows are contiguous, so the beats
+  // are four passages of ONE flight rather than four seeks across it, and the manual handover - which
+  // widens the loop to their union - replays that same lane and turn rather than a stitched digest.
   beats: [
     {
-      // Motor 3 holds 6049 to 6180 rpm at 59.8 to 60.6 percent throttle over these 2.9 s, which is
-      // the card's claim running normally. On the solid aircraft that rpm reads as a blur disc with
-      // the blades hidden under it, because two bars turning 103 times a second cannot be drawn at
-      // 60 fps; from round 10 the anatomy step's wireframe draws them anyway, turning at a slowed but
-      // proportional rate off the same rpm, and the disc recedes to let the drawing be read. The lit
-      // arm, bell, cap and accent ring are one of four identical corners, which is the other half of
-      // the claim and the half the old 0.42 unit close-up could not make.
+      // THE LANE RUNNING. 7.08 m of ground in 2.70 s at a peak 2.66 m/s, altitude held inside 6.001
+      // to 6.013 m and roll inside 1.41 deg: the aircraft at survey speed doing nothing but flying.
+      // Motor 3 holds 6054 to 6109 rpm at 59.7 to 60.0 percent throttle across it, which is the
+      // card's claim running normally, and the other three sit inside the same 6016 to 6154 band -
+      // four identical corners, which is the half of the claim the old 0.42 unit close-up could not
+      // make. Seven new tiles land under the aircraft while the card is up, from 26 to 33.
+      //
+      // On the solid aircraft that rpm reads as a blur disc with the blades hidden under it, because
+      // two bars turning 103 times a second cannot be drawn at 60 fps; from round 10 the anatomy
+      // step's wireframe draws them anyway, turning at a slowed but proportional rate off the same
+      // rpm, and the disc recedes to let the drawing be read.
       part: 'm3',
-      window: [18.6, 21.5],
+      window: [20.6, 23.3],
       glow: 0.085,
     },
     {
-      // The middle of the same lane, where the aircraft is doing nothing but carrying itself at 6 m:
-      // 15.753 to 15.857 V and 13.65 to 14.50 A, the steady draw the later 37 percent current rise is
-      // measured against. The charge gauge scene.js paints on the pack is lit from that logged
-      // voltage, so "voltage and current are logged at 25 Hz" is a thing the shot shows.
+      // THE MIDDLE OF THE SAME LANE, the fastest and flattest passage in the tour: 6.85 m at a peak
+      // 2.68 m/s, altitude inside 5.990 to 6.004 m and roll inside 0.51 deg, so the aircraft is doing
+      // nothing but carrying itself and covering ground. That is exactly the state the pack card is
+      // about - 15.698 to 15.801 V and 13.73 to 14.47 A, the steady draw the later 37 percent current
+      // rise is measured against - and the charge gauge scene.js paints on the pack is lit from that
+      // same logged voltage, so "voltage and current are logged at 25 Hz" is a thing the shot shows.
+      // Seven more tiles land under it, 33 to 40.
       part: 'battery',
-      window: [21.5, 24.4],
+      window: [23.3, 25.9],
       glow: 0.06,
     },
     {
-      // The last 3.3 s of the lane, where scene.js has the ground footprint rectangle, the flown
-      // track and the lane dashes all drawn: the passage in which the lens and the thing the lens
-      // exists to serve are both on screen.
+      // THE END OF THE LANE, and the beat the surveyed ground exists for. The aircraft runs the last
+      // 2.75 m into the lane end and decelerates, the nose coming up to -10.02 deg of pitch, and by
+      // the close of this window it has 43 tiles of mapped ground behind it - this lane running the
+      // whole length of the frame with the drawn footprint rectangle at the head of it, and the
+      // previous lane's strip beyond. Only three of those tiles are laid inside the window - this is
+      // the beat where the PRODUCT is on screen rather than the beat where most of it is made - and
+      // that is the point: a card that says this camera is what
+      // the lawnmower pattern exists to serve is held over the finished pattern. The lens itself is
+      // on the far side of the canopy from this bearing and is read through the drawing, which draws
+      // it solid inside a transparent airframe.
       part: 'camera',
-      window: [24.4, 27.7],
+      window: [25.9, 28.3],
       glow: 0.04,
     },
     {
-      // The turn on to the next lane, 3.48 m across at a locked heading, where roll runs -7.27 to
-      // 7.27 deg and pitch -5.23 to 0.27 deg. A bank is only legible as one wingtip rising against
-      // the other, which is exactly what a wide framing that holds the whole airframe delivers - the
-      // one beat the old close shots had to stand outside their own grammar to shoot.
+      // THE TURN ON TO THE NEXT LANE, 3.22 m across at a locked heading (yaw stays inside 0.51 deg
+      // end to end), where roll runs -6.53 to 7.30 deg and pitch -5.07 to 0.36 deg. A bank is only
+      // legible as one wingtip rising against the other, which is what a wide framing that holds the
+      // whole airframe delivers - the one beat the old close shots had to stand outside their own
+      // grammar to shoot. It is also the one beat where the aircraft moves ACROSS the trail rather
+      // than along it: the finished lane runs the length of the frame and the machine steps off it,
+      // which is the clearest single frame in the tour for reading where the aircraft has been.
       part: 'imu',
-      window: [27.7, 31.2],
+      window: [28.3, 31.2],
       glow: 0.04,
     },
   ],
@@ -164,16 +237,38 @@ export default {
   // parts while the aircraft flies.
   experience: {
     anatomy: {
-      // heroT and this camera are solved together, so moving one means re-solving the other. At
-      // 30 s the craft sits at world (-2.99, 1.925, 0.293); this shot stands 1.05 units out on the
-      // front-left quarter, 20 degrees up. Measured against the viewer's own fov curve, the
-      // airframe covers 33% of the width and 34% of the height on a wide desktop panel and stays
-      // inside the frame down to a portrait phone panel, which leaves the four corner label slots
-      // clear. Front-left keeps the nose lens unobstructed and motor 3 on the near side, and the
-      // elevation is high enough to read the X frame. A search over the surrounding poses gained
-      // under 7% of anchor separation, so the framing is a considered choice, not an arbitrary one.
-      heroT: 30,
-      camera: { position: { x: -2.549, y: 2.282, z: -0.589 }, target: { x: -2.99, y: 1.925, z: 0.293 } },
+      // THE REDUCED-MOTION FRAME, and it is the only thing these two values are for. A visitor who
+      // has asked for less motion gets the tour refused outright (`viewer.js` never schedules
+      // `startTour` under `prefersReducedMotion`), so the step is this one instant, this one pose,
+      // and all four cards on the overlay at once with their leader lines drawn. It therefore has a
+      // different job from the tour's wide shot and is solved separately: the tour needs one card
+      // legible at a time and looks nearly straight down the aircraft's own axis, which packs the
+      // four anchors together; a still frame needs all four SEPARATED.
+      //
+      // heroT and this camera are solved together, so moving one means re-solving the other.
+      //
+      // ROUND 12 RE-SOLVED BOTH, because the round 7 pair was measured against a scene that had no
+      // surveyed ground in it. Rendered with the ground the mission actually covers, that pose looked
+      // out over the field's +x edge: 0 mapped tiles in frame on the desktop stage and 3 on the phone,
+      // so the one frame some visitors ever see of this step was the only one with nothing in it. The
+      // pair below comes from a search over 12,168 poses (azimuth every 5 deg, elevation 16 to 40,
+      // stand-off 1.00 to 1.65) scored on the live rig at each candidate instant, keeping only poses
+      // where all four anchors sit inside 56% of half-frame on BOTH the 1637 x 900 desktop stage and
+      // the 355 x 546 phone, with no two anchors closer than 0.10 of NDC, and ranking what is left by
+      // how many lit tiles are in frame on the WORSE of the two panels.
+      //
+      // 1,869 of the 12,168 pass. The best any of them does on tiles is 23, and this pose takes 21 -
+      // and it is chosen off the second number, because within two tiles of that maximum it has the
+      // widest anchor separation of anything on the board: 0.111 against 0.101 for the 23-tile pose.
+      // 29.0 s, mid cross-lane turn, 1.05 units out on a 155 deg world bearing at 40 deg of elevation.
+      // 21 tiles on the phone and 36 on the desktop stage - the lane just flown and the one before it,
+      // two strips running the length of the picture at different depths, with the aircraft banked off
+      // the end of the near one - against 0 and 3 for the old pose, for a worst-pair separation of
+      // 0.111 against the old 0.114. That is a 3% loss on the number that decides whether four leader
+      // lines are readable, and the difference between a frame that shows a survey and a frame that
+      // shows an empty grid.
+      heroT: 29,
+      camera: { position: { x: -3.726, y: 2.545, z: 1.072 }, target: { x: -2.997, y: 1.87, z: 0.732 } },
       // Not `orbit`. The flow switches the auto-rotate on for that exact string only, so a def that
       // ships a tour declares its own word and the orbit stays off; `viewer.setAnatomy()` reads
       // `def.anatomyTour` and takes the shots from there, falling back to the orbit by itself if

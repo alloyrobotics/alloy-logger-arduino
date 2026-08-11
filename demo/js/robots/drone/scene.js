@@ -11,7 +11,7 @@
 // survey altitude and the 2.1 m drop, all survive the compression.
 
 import { sampleAt } from '../../core/prng.js';
-import { LANE_Y, T_FAIL, duration } from './data.js';
+import { FIELD, LANE_Y, T_FAIL, duration } from './data.js';
 
 const WORLD = 0.30; // world units per metre of field
 const ARM_R = 0.175; // motor offset on each body axis; 0.495 diagonal, ~3.6x true scale
@@ -126,7 +126,14 @@ export function buildScene(THREE, mount) {
   });
   const laneGeo = G(new THREE.BufferGeometry());
   laneGeo.setAttribute('position', new THREE.Float32BufferAttribute(dashPts, 3));
-  root.add(new THREE.LineSegments(laneGeo, M(new THREE.LineBasicMaterial({ color: COL.blue, transparent: true, opacity: 0.09 }))));
+  // 0.18, up from round 7's 0.09, and it is a legibility fix rather than a change of mind about the
+  // build contract's "field dressing is context, not the subject". At 0.09 these dashes are not faint,
+  // they are ABSENT: measured off a rendered anatomy frame at the tour's stand-off they resolve to
+  // about two counts of luminance over a 0x151619 ground, under a viewer grid drawn at 0.09 and 0.13
+  // of a brighter blue. The plan the aircraft is flying was the one piece of world-fixed geometry the
+  // shot could have used to show the machine moving, and it was invisible. At 0.18 the dashes read as
+  // a dashed line and still sit under the flown track (0.92) and the aircraft by a wide margin.
+  root.add(new THREE.LineSegments(laneGeo, M(new THREE.LineBasicMaterial({ color: COL.blue, transparent: true, opacity: 0.18 }))));
 
   const pad = new THREE.Mesh(
     G(new THREE.RingGeometry(0.085, 0.105, 40)),
@@ -194,15 +201,201 @@ export function buildScene(THREE, mount) {
   root.add(new THREE.Line(dropGeo, dropMat));
 
   // camera footprint on the ground while the survey is live
+  const FOOT_HX = 0.17; // world units, along the aircraft's nose axis
+  const FOOT_HZ = 0.115; // and across it
   const footGeo = G(new THREE.BufferGeometry());
   footGeo.setAttribute(
     'position',
-    new THREE.Float32BufferAttribute([-0.17, 0, -0.115, 0.17, 0, -0.115, 0.17, 0, 0.115, -0.17, 0, 0.115, -0.17, 0, -0.115], 3)
+    new THREE.Float32BufferAttribute(
+      [-FOOT_HX, 0, -FOOT_HZ, FOOT_HX, 0, -FOOT_HZ, FOOT_HX, 0, FOOT_HZ, -FOOT_HX, 0, FOOT_HZ, -FOOT_HX, 0, -FOOT_HZ],
+      3
+    )
   );
   const footMat = M(new THREE.LineBasicMaterial({ color: COL.sage, transparent: true, opacity: 0.3 }));
   const footprint = new THREE.Line(footGeo, footMat);
   footprint.position.y = 0.011;
   root.add(footprint);
+
+  /**
+   * How strongly the ground footprint is drawn at mission time `s` - the survey camera's own duty
+   * cycle, in one place because two things read it now.
+   *
+   * It comes up 1.5 s after the climb starts and goes out 0.4 s after the bearing binds: the aircraft
+   * is not surveying while it is climbing off the pad, and it is not surveying while it is falling.
+   */
+  function footAlpha(s) {
+    const fadeIn = Math.min(Math.max((s - 4) / 1.5, 0), 1);
+    const fadeOut = Math.max(0, 1 - (s - (T_FAIL + 0.4)) / 1.6);
+    return 0.3 * fadeIn * fadeOut;
+  }
+
+  // ---------- surveyed ground ----------
+  //
+  // WHY THIS EXISTS, which is round 12 and the change Hugh's note asked for. The anatomy tour holds
+  // four cards over an aircraft flying a survey lane at up to 2.9 m/s, and until now none of that
+  // motion reached the screen. The tour's shot is an offset resolved against the aircraft every
+  // frame, so the aircraft is motionless in frame BY CONSTRUCTION; the flown track and the lane
+  // dashes both run ALONG the direction of travel, so they slide along themselves and read as
+  // static; the field boundary is one thin line 7 m away; and the viewer's own blueprint grid is a
+  // regular lattice, which is the single worst thing to show a translation against. Rendered and
+  // looked at, the step was a hovering statue with labels on it - the exact failure the SSL mission's
+  // step avoids by having a carpet, field lines and other robots within half a metre of its subject.
+  // Six metres up over an empty field there is nothing near this aircraft at all.
+  //
+  // So the scene gets the survey's own PRODUCT. This aircraft carries a mapping camera whose ground
+  // footprint is already drawn every frame, and the ground that footprint has swept fills in behind
+  // the machine tile by tile. That is world-fixed, irregular, directly under the subject, and it
+  // GROWS - so its seams stream past underneath at exactly the aircraft's own ground speed, which is
+  // the parallax the shot had no source for. It is also the answer to the survey-camera card and to
+  // the mission's own premise: what a lawnmower pattern is FOR is covering ground.
+  //
+  // WHAT IT CLAIMS, which is nothing the scene did not already draw. A tile lights when the drawn
+  // footprint rectangle - the same rectangle `update()` poses from /pos and /att - has OVERLAPPED
+  // it, on a frame where that footprint was being drawn at all (`footAlpha` above). So it is /pos
+  // crossed with /att crossed with a rectangle already on screen, quantised to a 1 m grid because a
+  // mapping camera's product is tiles and because 1 m is about the size of this footprint
+  // (1.13 x 0.77 m of ground). NO exposure rate is invented and no image is implied. Nothing is ever
+  // lit ahead of the playhead - a tile is dark until the aircraft has flown over it, exactly as the
+  // flown track is revealed by drawRange - so a still frame of this scene can only show ground the
+  // replay has already covered, and the coverage stops where the survey stopped.
+  //
+  // WHY OVERLAP AND NOT "THE FOOTPRINT CROSSED THE TILE'S CENTRE", which is what this shipped as and
+  // is a rule that looks simpler and is quietly broken. The footprint is 0.767 m across, so it
+  // reaches 0.383 m either side of the lane it is flying; a 1 m grid over a 14 m field puts its tile
+  // centres on the half-metres, at y = -6.5, -5.5 ... 6.5. LANE_Y is [-7, -3.5, 0, 3.5, 7]: only
+  // -3.5 and 3.5 ARE tile centres, and the other three lanes pass 0.5 m from the nearest one - 0.12 m
+  // outside the footprint's own reach. Measured over the built payload, the centre rule lit 53 of 280
+  // tiles and THREE OF THE FIVE LANES laid nothing at all: 1 tile for the whole of lane 1, 2 for lane
+  // 3, 2 for lane 5, all of them incidental tiles from the turns. That included the lane the aircraft
+  // is on when the bearing binds, so the failure replay - the one every visitor watches - ran the
+  // drawn footprint rectangle over bare ground for 6.8 s. The lane spacing landing out of phase with
+  // the grid is not a fact about this survey, it is an artefact of quantising, and the fix is to ask
+  // the question the drawing is actually making: did the footprint cover any of the square this
+  // tile DRAWS. Same payload, same rule, 122 tiles and a strip under every lane.
+  const COV_CELL = 1.0; // metres of field per tile
+  const COV_GAP = 0.05; // metres of dark seam on every side of one, which is what makes them tiles
+  // Half the DRAWN square rather than half the cell, so what lights is what a viewer can see: a tile
+  // the footprint only reached across its seam is not claimed.
+  const COV_TILE_H = (COV_CELL - 2 * COV_GAP) / 2;
+  // Additive, so this layer can only ever lift the ground and never darken anything under it, and so
+  // a tile's weight IS its colour and one attribute write per frame is the whole animation. 0.115 of
+  // COL.sage over the 0x151619 ground lands at about 0.18 luminance: legible as covered ground from
+  // the tour's stand-off and from `cameraHome`, and still under the flown track, the lane dashes and
+  // every lit surface on the aircraft.
+  const COV_MAX = 0.115;
+  const COV_FADE = 0.45; // s for a tile to come up once the footprint has reached it
+  const COV_NX = Math.round(FIELD.x / COV_CELL);
+  const COV_NY = Math.round(FIELD.y / COV_CELL);
+  const COV_N = COV_NX * COV_NY;
+  const covAt = new Float64Array(COV_N).fill(Infinity);
+  let covReady = false;
+  const covGeo = G(new THREE.BufferGeometry());
+  {
+    const cpos = new Float32Array(COV_N * 4 * 3);
+    const ccol = new Float32Array(COV_N * 4 * 3);
+    const cidx = new Uint16Array(COV_N * 6);
+    for (let c = 0; c < COV_N; c++) {
+      const gx = c % COV_NX;
+      const gy = (c / COV_NX) | 0;
+      const x0 = -FIELD.x / 2 + gx * COV_CELL + COV_GAP;
+      const x1 = x0 + COV_CELL - 2 * COV_GAP;
+      const y0 = -FIELD.y / 2 + gy * COV_CELL + COV_GAP;
+      const y1 = y0 + COV_CELL - 2 * COV_GAP;
+      const corners = [
+        [x0, y0],
+        [x1, y0],
+        [x1, y1],
+        [x0, y1],
+      ];
+      const v = c * 4;
+      for (let k = 0; k < 4; k++) {
+        cpos[(v + k) * 3] = wx(corners[k][0]);
+        cpos[(v + k) * 3 + 1] = 0.0035; // under the lane dashes (0.007) and the boundary (0.008)
+        cpos[(v + k) * 3 + 2] = wz(corners[k][1]);
+      }
+      cidx[c * 6] = v;
+      cidx[c * 6 + 1] = v + 1;
+      cidx[c * 6 + 2] = v + 2;
+      cidx[c * 6 + 3] = v;
+      cidx[c * 6 + 4] = v + 2;
+      cidx[c * 6 + 5] = v + 3;
+    }
+    covGeo.setAttribute('position', new THREE.BufferAttribute(cpos, 3));
+    covGeo.setAttribute('color', new THREE.BufferAttribute(ccol, 3));
+    covGeo.setIndex(new THREE.BufferAttribute(cidx, 1));
+  }
+  const covMat = M(
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  const covMesh = new THREE.Mesh(covGeo, covMat);
+  // 280 coplanar tiles inside a 6 x 4.2 unit rectangle the camera is usually inside the bounds of:
+  // a frustum test on the whole mesh is either trivially true or wrong at the edge of the field.
+  covMesh.frustumCulled = false;
+  root.add(covMesh);
+  const covRGB = new THREE.Color(COL.sage);
+
+  /**
+   * When each tile was first swept, read off the flown path once the payload is in hand.
+   *
+   * Every second sample, which is 25 Hz against a footprint 1.13 m long and a top ground speed of
+   * 2.94 m/s: the aircraft advances at most 0.118 m between the samples this tests, so no tile can
+   * be skipped over. Only samples where the footprint is actually drawn count, so nothing is marked
+   * during the climb or during the fall.
+   */
+  function buildCoverage(data) {
+    const p = data && data['/pos'];
+    const a = data && data['/att'];
+    if (!p || !a || covReady) return;
+    covReady = true;
+    const hx = FOOT_HX / WORLD; // the drawn footprint's half-extents, in field metres
+    const hy = FOOT_HZ / WORLD;
+    // The candidate box has to hold both boxes' diagonals now that a tile is tested as a SQUARE and
+    // not as a point, or a tile the footprint clips at a corner is never even offered to the test.
+    const reach = Math.hypot(hx, hy) + Math.hypot(COV_TILE_H, COV_TILE_H);
+    for (let i = 0; i < p.t.length; i += 2) {
+      const s = p.t[i];
+      if (footAlpha(s) <= 0.01) continue;
+      // The footprint is `footprint.rotation.y = -yaw * DEG`, so its nose axis in FIELD coordinates
+      // is (cos yaw, -sin yaw) and its across axis is (-sin yaw, -cos yaw). Derived from the same
+      // rotation `update()` writes rather than assumed, because the survey holds heading and a
+      // reader would otherwise never find out that these two disagreed.
+      const ps = Math.sin(a.yaw[i] * DEG);
+      const pc = Math.cos(a.yaw[i] * DEG);
+      const cx = p.x[i];
+      const cy = p.y[i];
+      const g0 = Math.max(0, Math.floor((cx - reach + FIELD.x / 2) / COV_CELL));
+      const g1 = Math.min(COV_NX - 1, Math.floor((cx + reach + FIELD.x / 2) / COV_CELL));
+      const h0 = Math.max(0, Math.floor((cy - reach + FIELD.y / 2) / COV_CELL));
+      const h1 = Math.min(COV_NY - 1, Math.floor((cy + reach + FIELD.y / 2) / COV_CELL));
+      for (let gy = h0; gy <= h1; gy++) {
+        for (let gx = g0; gx <= g1; gx++) {
+          const c = gy * COV_NX + gx;
+          if (covAt[c] <= s) continue;
+          const dx = -FIELD.x / 2 + (gx + 0.5) * COV_CELL - cx;
+          const dy = -FIELD.y / 2 + (gy + 0.5) * COV_CELL - cy;
+          // Separating-axis test between two rectangles: the tile's own two axes, then the
+          // footprint's. Four axes is the whole test for a pair of boxes in a plane, and the pair
+          // overlaps exactly when none of the four separates them. The tile's half-extents project
+          // onto either footprint axis as `COV_TILE_H * (|cos| + |sin|)`, which is the same number
+          // for both because the square is symmetric - computed once.
+          const apc = Math.abs(pc);
+          const aps = Math.abs(ps);
+          if (Math.abs(dx) > hx * apc + hy * aps + COV_TILE_H) continue;
+          if (Math.abs(dy) > hx * aps + hy * apc + COV_TILE_H) continue;
+          const rt = COV_TILE_H * (apc + aps);
+          if (Math.abs(dx * pc - dy * ps) > hx + rt) continue;
+          if (Math.abs(-dx * ps - dy * pc) > hy + rt) continue;
+          covAt[c] = s;
+        }
+      }
+    }
+  }
 
   // ---------- aircraft ----------
   const craft = new THREE.Group();
@@ -531,6 +724,7 @@ export function buildScene(THREE, mount) {
     const bat = data && data['/bat'];
     if (!pos || !att || !mot) return;
     buildTrack(data);
+    buildCoverage(data);
 
     const x = sampleAt(pos.t, pos.x, tSec);
     const y = sampleAt(pos.t, pos.y, tSec);
@@ -647,10 +841,30 @@ export function buildScene(THREE, mount) {
 
     footprint.position.set(wx(x), 0.011, wz(y));
     footprint.rotation.y = -yaw * DEG;
-    const fadeIn = Math.min(Math.max((tSec - 4) / 1.5, 0), 1);
-    const fadeOut = Math.max(0, 1 - (tSec - (T_FAIL + 0.4)) / 1.6);
-    footMat.opacity = 0.3 * fadeIn * fadeOut;
+    footMat.opacity = footAlpha(tSec);
     footprint.visible = footMat.opacity > 0.01;
+
+    // The covered ground, revealed to the playhead. One pass over 280 tiles writing three floats a
+    // vertex: cheaper than the branchier alternatives and, more to the point, stateless - a wrap, a
+    // seek or a backward scrub all land on exactly the coverage that time has, with nothing to undo.
+    if (covReady) {
+      const cc = covGeo.attributes.color;
+      const arr = cc.array;
+      for (let c = 0; c < COV_N; c++) {
+        const age = tSec - covAt[c];
+        const k = age > 0 ? Math.min(age / COV_FADE, 1) * COV_MAX : 0;
+        const cr = covRGB.r * k;
+        const cg = covRGB.g * k;
+        const cb = covRGB.b * k;
+        for (let q = 0; q < 4; q++) {
+          const o = (c * 4 + q) * 3;
+          arr[o] = cr;
+          arr[o + 1] = cg;
+          arr[o + 2] = cb;
+        }
+      }
+      cc.needsUpdate = true;
+    }
 
     rim.position.set(wx(x) - 0.75, wy(alt) + 0.5, wz(y) - 0.85);
 

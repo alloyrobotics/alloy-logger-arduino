@@ -71,6 +71,14 @@ export const findings = [
     // comes with it, then 0.6 s of the failsafe holding the altitude it has accepted. The trough
     // is at 62.30 s and the loss is back to 1.82 m of the 2.10 by 62.9 s, so the lap ends on the
     // settled fail state rather than mid-recovery. 2.2 s of data.
+    //
+    // ROUND 12 RE-MEASURED THIS AND LEFT IT ALONE, which is worth writing down because the round's
+    // note was that a replay must not spend its head and tail on normal flight. Sampled at 0.1 s:
+    // altitude is 6.002 m at 60.7 and still 6.004 at 61.2, so the head is 0.50 s of level cruise -
+    // the lead the break needs to read as a break and no more. The tail is not cruise either: 61.3
+    // is already 5.633 m and -7.03 deg of yaw, the trough is 3.900 m at 62.30, and 62.9 is 4.170 m
+    // at -15.94 deg, still 1.83 m and 16 deg from where the lap opened. There is no normal operation
+    // anywhere inside these 2.2 s to cut.
     loop: [60.7, 62.9],
     t: 61.2,
     severity: 'alert',
@@ -88,6 +96,31 @@ export const findings = [
     id: 'motor-wear',
     title: 'Motor 3 throttle diverging from 38 s',
     window: [38.0, 62.0],
+    // The 3D replay loop, and until this round there was none: `core/embeds.js` looped this
+    // finding's CHART window, so the block under the root-cause answer ran a 24 s lap of an aircraft
+    // flying survey lanes. The window is unchanged, because the walk from 60 to 100 percent is a
+    // 24 s shape and the chart is where a reader can see it; what the 3D needs is the seconds where
+    // that walk becomes an EVENT.
+    //
+    // There is exactly one, and it is the diagnosis. Measured off the built /motors: pwm3 first
+    // touches 99.0 percent at 57.24 s, 99.9 at 57.46, and is pinned at 100.00 continuously from
+    // 57.48 s - the drive runs out of range. The consequence is on the other side of the same
+    // channel: rpm3's half-second mean peaks at 6159 rpm at 57.20 s and then falls away with nothing
+    // left to hold it - 6001 at 58.0, 5730 at 59.0, 5650 by 59.4 - while the three healthy motors
+    // walk the other way, rpm1's own half-second mean going 6120 at 56.9 s to 6183 at 59.4 s. Same
+    // throttle ceiling, less rpm, and the other three taking up the difference.
+    //
+    // So the lap opens 0.58 s early, at a pwm3 of 97.48 percent already 37.2 points over the median
+    // of the healthy three and still climbing, and closes 1.9 s after the ceiling is reached. 2.5 s
+    // at 1x against 24.0 s. Nothing in it is normal operation on the channel this finding is about.
+    // The head is not padding either: it is the last of the headroom, which is the only reason the
+    // ceiling reads as a ceiling.
+    //
+    // AND THE AIRFRAME LOOKS FINE FOR EVERY SECOND OF IT, which is this finding's whole claim and is
+    // why the loop is worth having at 1x rather than a chart alone. Over 56.9 to 59.4 s altitude
+    // holds 5.985 to 6.001 m, yaw stays inside -0.42 to 0.41 deg, and the aircraft flies 5.7 m of
+    // the last survey lane. The fault is only in the throttle, 1.8 s before the bearing binds.
+    loop: [56.9, 59.4],
     t: 52.0,
     severity: 'warn',
     // NOTE (deviation, see report): the chart shares one y axis across the selected fields, so
@@ -105,6 +138,23 @@ export const findings = [
   {
     id: 'battery',
     title: 'Pack sag steepens from 40 s',
+    // NO `loop`, DELIBERATELY, and it is the one finding in this mission where a tight one would be
+    // both dead code and a lie about the channel.
+    //
+    // Dead code first, because it settles the question: this window IS the log, and
+    // `core/embeds.js` tests `w[1] - w[0] >= duration * 0.95` before it reads `loop` at all. A
+    // whole-log finding is a declaration that the channel is context for every second of the
+    // mission, so the block seeks to `t` minus 8 s and plays free rather than lapping anything. A
+    // `loop` written here would never be read by the one consumer that reads loops.
+    //
+    // And there is no onset to write one around even if there were. Measured off the built /bat,
+    // centred over 4 s: dV/dt averages -0.0284 V/s across 10 to 30 s, first passes 1.5x that at
+    // 36.32 s and 2x at 48.08 s. That is a curve bending over twenty seconds, not an edge - which
+    // is the finding's own point, since the thing that bends it is one motor's current climbing the
+    // whole time (mean pack current 14.18 A over 20 to 30 s against 23.39 A over 55 to 60 s). The
+    // 3D has nothing to show inside two seconds either: the pack's charge gauge is lit from this
+    // same voltage and moves by less than one of its four segments across any 2 s of the flight.
+    // The chart over the whole mission is the evidence, and this window is what says so.
     window: [0, 90],
     t: 40.0,
     severity: 'warn',
