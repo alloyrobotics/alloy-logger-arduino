@@ -118,7 +118,9 @@ function numericBounds(type: FieldType): { minimum?: number; maximum?: number } 
 }
 
 export function buildBinarySchema(schema: BinarySchema): Record<string, unknown> {
-  const properties: Record<string, unknown> = {};
+  // A null prototype keeps valid names such as `__proto__` from invoking
+  // Object.prototype setters and disappearing from the emitted JSON Schema.
+  const properties: Record<string, unknown> = Object.create(null);
   for (const field of schema.fields) {
     const property: Record<string, unknown> = { type: jsonType(field), ...numericBounds(field.type) };
     if (field.unit) property.description = field.unit;

@@ -659,7 +659,9 @@ export function parseSamples(
     requireRange(payload, offset, recordBytes, "SAMPLES record");
     const allowedMask = schema.fields.reduce((mask, field) => mask | (1 << field.id), 0);
     if ((presentMask & ~allowedMask) !== 0) throw new WireError("SAMPLES present mask has unknown fields");
-    const values: Record<string, boolean | number> = {};
+    // Field names are protocol data, not object-shape controls. In particular,
+    // `__proto__` is a valid wire name and must be retained as an own property.
+    const values: Record<string, boolean | number> = Object.create(null);
     let valueOffset = offset + 20;
     for (const field of schema.fields) {
       const width = fieldWidth(field.type);

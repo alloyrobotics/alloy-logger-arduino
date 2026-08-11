@@ -249,6 +249,64 @@ describe("payload conformance", () => {
 });
 
 describe("binary MCAP projection", () => {
+  it("preserves protocol-valid prototype-like field names in schema and samples", async () => {
+    const protoSchema = {
+      id: 9,
+      revision: 1,
+      flags: 0,
+      channel: "prototype_fields",
+      fields: [{ id: 0, type: 8, flags: 0, name: "__proto__", unit: "" }],
+    };
+    const samplePayload = new Uint8Array(40);
+    const sampleView = new DataView(samplePayload.buffer);
+    sampleView.setUint16(0, 1, true);
+    sampleView.setBigUint64(4, 900n, true);
+    sampleView.setUint16(12, 20, true);
+    sampleView.setUint16(16, 24, true);
+    sampleView.setUint16(18, protoSchema.id, true);
+    sampleView.setUint16(20, protoSchema.revision, true);
+    sampleView.setUint32(24, 1, true);
+    sampleView.setUint16(32, 1, true);
+    sampleView.setFloat32(36, 42.5, true);
+
+    const frames = [
+      { seq: 0, bytes: makeFrame(FrameType.Begin, beginPayload(), { seq: 0 }) },
+      { seq: 1, bytes: makeFrame(FrameType.Schema, schemaPayload(protoSchema), { seq: 1 }) },
+      { seq: 2, bytes: makeFrame(FrameType.Samples, samplePayload, { seq: 2 }) },
+      {
+        seq: 3,
+        bytes: makeFrame(
+          FrameType.End,
+          endPayload({ attemptedSamples: 1, encodedSamples: 1, droppedSamples: 0 }),
+          { seq: 3 },
+        ),
+      },
+    ];
+    const bytes = (await assembleBinaryMcap(replayable(frames), {
+      device: "uno-r4",
+      session: TEST_RUN_HEX,
+      meshPath: "robots/test",
+      sequenceComplete: true,
+    }))!;
+    const reader = await McapIndexedReader.Initialize({ readable: new BufferReadable(bytes) });
+    const channel = [...reader.channelsById.values()].find(
+      (candidate) => candidate.topic === "/prototype_fields",
+    )!;
+    const schema = JSON.parse(
+      new TextDecoder().decode(reader.schemasById.get(channel.schemaId)!.data),
+    );
+    expect(Object.hasOwn(schema.properties, "__proto__")).toBe(true);
+    expect(schema.properties.__proto__.type).toBe("number");
+
+    const messages = [];
+    for await (const message of reader.readMessages({ topics: ["/prototype_fields"] })) {
+      messages.push(JSON.parse(new TextDecoder().decode(message.data)));
+    }
+    expect(messages).toHaveLength(1);
+    expect(Object.hasOwn(messages[0], "__proto__")).toBe(true);
+    expect(messages[0].__proto__).toBe(42.5);
+  });
+
   it("sorts samples, emits typed revision channels, anchors/gaps, and mission metadata", async () => {
     const frames = [
       { seq: 5, bytes: makeFrame(FrameType.End, endPayload(), { seq: 5, droppedSamples: 2 }) },
