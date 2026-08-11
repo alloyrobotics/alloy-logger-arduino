@@ -54,6 +54,15 @@ export const findings = [
     id: 'fall',
     title: 'Fall at 51.7 s',
     window: [50.5, 58.5],
+    // The 3D replay loop, tight on the FIRST fall. Measured off the built pitch: the ring's last
+    // clean peak is T_P1 (51.46 s, 2.50 deg off setpoint) and the next peak is already the +7.12 deg
+    // whip at T_P2, so the onset sits between them; pitch crosses TILT_FAULT at T_DOWN_1, is past
+    // 85 deg from 52.34 s, peaks at 88.60 deg at 52.42 s and is still 86.09 deg at the 53.0 s close,
+    // with the stand-up only beginning after it (68.66 deg by 53.20 s). So 0.46 s of the healthy
+    // limit cycle, the fall, 0.66 s of the settled fail state: 2.0 s of data, 5.0 s a lap at the
+    // 0.4x the show-me answer promises, against 8.0 s and 20 s a lap when this looped its chart
+    // window. `window` is unchanged and still holds the stand-up and the second fall: CHART context.
+    loop: [51.0, 53.0],
     t: 51.7,
     severity: 'alert',
     focus: { channel: '/balance', fields: ['pitch', 'output'] },
@@ -64,6 +73,14 @@ export const findings = [
     id: 'divergence',
     title: 'Oscillation diverging, D term is 0',
     window: [42.0, 52.2],
+    // Replay loop: the last four rings before the loop lets go, where the divergence is legible
+    // inside one lap. Peak deviation off setpoint, measured on the built pitch: 1.30 deg at 50.14 s,
+    // 1.56 at 50.40 (this finding's t), 1.94 at 50.94, 2.19 at 51.20, 2.50 at T_P1 - it doubles
+    // across the lap - and the loop closes 0.24 s past the +7.12 deg whip at T_P2, far enough to
+    // carry the -10.06 deg backswing at T_P3 (51.80 s) that is the authority going, and 0.10 s
+    // short of T_DOWN_1 so it stops before the fall the NEXT finding owns. 2.0 s at 1x. The 10.2 s
+    // chart window is what carries the slow growth.
+    loop: [49.9, 51.9],
     t: 50.4,
     severity: 'warn',
     focus: { channel: '/balance', fields: ['pitch', 'setpoint'] },
@@ -84,6 +101,12 @@ export const findings = [
     id: 'i2c-stall',
     title: 'I2C stall, 801.9 ms at 31.4 s',
     window: [30.2, 33.8],
+    // Replay loop: 0.46 s of the healthy ring, the stall at T_STALL, and the catch. Measured on the
+    // built pitch: the ring holds inside +/-0.34 deg of setpoint for the 3.3 s before the stall, the
+    // starved loop lurches to +6.26 deg at 31.50 s, overshoots back to -1.69 deg at 32.12 s and is
+    // back through the 0.5 deg setpoint at 32.84 s, which is the survival this finding is about.
+    // 2.1 s at 1x.
+    loop: [30.9, 33.0],
     t: 31.36,
     severity: 'warn',
     focus: { channel: '/balance', fields: ['i2c_dt'] },

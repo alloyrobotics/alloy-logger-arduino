@@ -492,6 +492,7 @@ const DRIB_LADDER_EVENTS = [
 ];
 
 // ------------------------------------------------------------------ findings
+// `loop` is the 3D lap; every edge is asserted against the decoded series in ssl-data.test.mjs.
 
 /**
  * `healthState` is a DEMO-GENERATED application-layer classification over the synthesized
@@ -535,6 +536,7 @@ export const findings = [
     id: 'radio-degraded',
     title: 'Radio link to #7 drops out four times',
     window: [30.0, 35.2],
+    loop: [T_RSSI_BASE - 0.1, T_RSSI_FLOOR + 1.3],
     t: T_Y7_STALL_1,
     severity: 'warn',
     focus: { channel: '/bot7/radio', fields: ['rxRssi', 'rxPacketsLost', 'rxCrcErrors'] },
@@ -556,6 +558,7 @@ export const findings = [
     id: 'dribbler-overheat',
     title: 'Dribbler on #3 goes over its band holding the ball',
     window: [26.0, 40.0],
+    loop: [T_Y3_CONTACT_IN - 0.5, T_DRIB_TRIP + 0.6],
     t: T_DRIB_TRIP,
     severity: 'warn',
     focus: { channel: '/bot3/dribbler', fields: ['dribCurrent', 'dribTempEstC'] },
@@ -592,6 +595,7 @@ export const findings = [
     id: 'vision-confidence',
     title: 'Tracker loses Ferrum #13 and never regains it',
     window: [22.5, 32.0],
+    loop: [T_B13_DIP2_START - 0.5, T_B13_VIS_MIN + 0.5],
     t: T_B13_DIP2_START,
     severity: 'info',
     focus: { channel: '/bot13/vision', fields: ['visibility', 'detections'] },

@@ -216,6 +216,17 @@ export const findings = [
     id: 'one-match-three-logs',
     title: `${T('oneMatchWord')} match, ${T('threeLogsWord')} onboard logs`,
     window: [V('windowOpenT'), V('jackSpeak1T')],
+    // The 3D replay loop. /compute carries no onset to open on: over this window cpuLoadPct sits in
+    // a 51.9-61.6 percent band and memUsedPct inside 18.36-18.42 percent on the 2 Hz grid. The band
+    // jitters up to 7.6 points sample to sample but its LEVEL never moves, so there is nothing
+    // measurable for the replay to point at on the charted channel. Both edges are ledger values
+    // instead, on the one event inside the window where the three logs disagree: 0.5 s of all three
+    // walking, then Jack goes down at jackFall1T (6.345 s, and his presence table drops him to HOLD
+    // on the same 6.35 s sample) and is getting up from jackGettingUp1T (7.159 s) while Donna and
+    // Rory keep playing, out to the window's own right edge. 2.47 s at 1x against 8.31 s of looping
+    // the window, most of which was three robots walking. `t` stays at the window open, which is
+    // what the finding is anchored to; a loop is not required to contain `t` (see `core/flow.js`).
+    loop: [V('jackFall1T') - 0.5, V('jackSpeak1T')],
     t: V('windowOpenT'),
     severity: 'warn',
     focus: { channel: '/compute', fields: ['cpuLoadPct', 'memUsedPct'] },
@@ -260,6 +271,13 @@ export const findings = [
     id: 'penalty-traffic',
     title: 'Penalty traffic',
     window: [V('donnaPenaltyStartT'), V('donnaPenaltyEndT')],
+    // The 3D replay loop, on the moment she goes dark. The window is the whole 37.071 s penalty and
+    // 36 s of it is two robots playing without her, which is the same picture in every frame. Both
+    // edges are ledger-derived: Donna's first live pose segment ends at 86.81 s and the payload's
+    // own presence table flips her from LIVE to HIDDEN at 86.85 s, which is donnaPenaltyStartT
+    // (86.852 s) on that table's 10 ms grid. So 0.5 s of her tracked on the pitch, the transition,
+    // and 1.5 s of the honestly dark state this finding is about. 2.0 s at 1x against 37.1 s.
+    loop: [V('donnaPenaltyStartT') - 0.5, V('donnaPenaltyStartT') + 1.5],
     t: V('donnaPenaltyStartT'),
     severity: 'info',
     focus: { channel: '/game', fields: ['secondsRemaining', 'ownScore', 'rivalScore'] },

@@ -283,6 +283,116 @@ for (const word of findingText.match(/[A-Za-z]+/g) || []) {
   if (numberWords.has(word.toLowerCase())) ok(C.allowedNumberWords().has(word), `rendered number word ${word} is ledger-owned`);
 }
 
+// ---------------------------------------------------------------- 9b. replay loop edges
+//
+// `loop` is the tight span the 3D replay plays; `window` stays the wider span the chart plots. The
+// rule for the round: open roughly half a second before the measurable onset, close shortly after
+// the consequence has landed. Donna is the mission where that cannot be read off the charted
+// channel - /compute has no step in it and the penalty is 37 s of nothing - so BOTH edges of every
+// Donna loop are ledger values or presence-table boundaries, and this section is what stops a
+// future edit inventing an event time to open on.
+
+section('9b. replay loop edges');
+{
+  const findingOf = (id) => D.findings.find((finding) => finding.id === id);
+  const V = C.value;
+
+  for (const finding of D.findings) {
+    if (!Array.isArray(finding.loop)) continue;
+    ok(finding.loop.length === 2 && finding.loop[0] < finding.loop[1], `${finding.id}: loop is an ordered pair`);
+    ok(finding.loop[0] >= 0 && finding.loop[1] <= D.duration, `${finding.id}: loop is inside the 250 s window`);
+    ok(finding.loop[1] - finding.loop[0] < finding.window[1] - finding.window[0], `${finding.id}: the loop is tighter than the window`);
+    const lap = (finding.loop[1] - finding.loop[0]) / (finding.slowmo ? 0.4 : 1);
+    ok(lap <= 3.0, `${finding.id}: one lap is ${lap.toFixed(2)} s of wall clock`);
+    // The loop may open BEFORE the chart window (both of the ledger-derived ones do, because the
+    // event IS the window's left edge) but never by more than the 15 percent pad the chart puts
+    // around the shaded region, or the playhead parks off the drawn domain instead of sweeping.
+    const pad = (finding.window[1] - finding.window[0]) * 0.15;
+    ok(finding.loop[0] >= finding.window[0] - pad, `${finding.id}: an early-opening loop stays inside the chart's pad`);
+  }
+
+  // added-time-finish is the one finding with NO loop, and that is the correct answer rather than an
+  // omission: its window is already 2.46 s, so the window IS the tight span and `flow.js` loops it.
+  ok(!Array.isArray(findingOf('added-time-finish').loop), 'added-time-finish declares no loop');
+  ok(
+    V('finishedT') - V('goal6T') < 3.0,
+    'because its whole chart window is already under three seconds',
+  );
+
+  // one-match-three-logs - /compute genuinely carries no onset. Assert that, so "there is nothing
+  // measurable to open on" is a checked statement and not an excuse: over the window cpuLoadPct
+  // stays inside one band and memUsedPct inside another, neither of which has a step in it.
+  {
+    const finding = findingOf('one-match-three-logs');
+    const compute = data['/compute'];
+    let cpuLo = Infinity;
+    let cpuHi = -Infinity;
+    let memLo = Infinity;
+    let memHi = -Infinity;
+    for (let i = 0; i < compute.t.length; i++) {
+      if (compute.t[i] < finding.window[0] || compute.t[i] > finding.window[1]) continue;
+      cpuLo = Math.min(cpuLo, compute.cpuLoadPct[i]);
+      cpuHi = Math.max(cpuHi, compute.cpuLoadPct[i]);
+      memLo = Math.min(memLo, compute.memUsedPct[i]);
+      memHi = Math.max(memHi, compute.memUsedPct[i]);
+    }
+    near(cpuLo, 51.88, 0.2, 'cpuLoadPct floor over the window');
+    near(cpuHi, 61.56, 0.2, 'cpuLoadPct ceiling over the window');
+    ok(cpuHi - cpuLo < 12, 'cpuLoadPct is one band with no step in it');
+    ok(memHi - memLo < 0.1, `memUsedPct is flat to ${(memHi - memLo).toFixed(3)} points across the window`);
+    // So both edges are ledger values, on the one event the three logs disagree about.
+    near(finding.loop[0], V('jackFall1T') - 0.5, 1e-9, 'the loop opens 0.5 s before Jack goes down');
+    near(finding.loop[1], V('jackSpeak1T'), 1e-9, 'and closes on the window right edge, which is a ledger value');
+    const jackHold = M.presence.jack.find((segment) => segment.className === 'fall-outage');
+    ok(
+      jackHold.startT > finding.loop[0] && jackHold.startT < finding.loop[1],
+      'Jack dropping to HOLD in the presence table is inside the loop',
+    );
+    ok(
+      V('jackGettingUp1T') > finding.loop[0] && V('jackGettingUp1T') < finding.loop[1],
+      'and so is him getting up, which is the consequence half of the lap',
+    );
+  }
+
+  // jack-falls-foul-line - the failure step's finding, and the one flow-walk.test.mjs pins end to
+  // end. Both edges are ledger values around the third fall.
+  {
+    const finding = findingOf('jack-falls-foul-line');
+    near(finding.loop[0], V('jackFall3T') - 0.5, 1e-9, 'the foul loop opens 0.5 s before the fall');
+    near(finding.loop[1], V('jackGettingUp3T') + 0.5, 1e-9, 'and closes 0.5 s after he starts getting up');
+    ok(
+      V('jackFall3T') > finding.loop[0] && V('jackGettingUp3T') < finding.loop[1],
+      'the fall and the recovery are both inside the lap',
+    );
+    ok(
+      V('jackRecovery3T') > finding.loop[1],
+      'the full recovery out to jackRecovery3T stays CHART context, which is what keeps the lap at 2.0 s',
+    );
+  }
+
+  // penalty-traffic - 37.071 s of penalty, 36 of which is two robots playing without her. The loop
+  // is the moment she goes dark, and both edges are presence-table derived: her first live pose
+  // segment ends at 86.81 s and the presence table flips her LIVE -> HIDDEN at 86.85 s, which is
+  // donnaPenaltyStartT on that table's 10 ms grid.
+  {
+    const finding = findingOf('penalty-traffic');
+    near(finding.loop[0], V('donnaPenaltyStartT') - 0.5, 1e-9, 'the penalty loop opens 0.5 s before she goes dark');
+    near(finding.loop[1], V('donnaPenaltyStartT') + 1.5, 1e-9, 'and holds 1.5 s of the honestly dark state');
+    const live = M.presence.donna.find((segment) => segment.className === 'live');
+    const outage = M.presence.donna.find((segment) => segment.className === 'penalty-outage');
+    near(live.endT, V('donnaPenaltyStartT'), 0.005, 'the LIVE span ends on donnaPenaltyStartT to the table grid');
+    eq(live.endT, outage.startT, 'and the HIDDEN span starts on the same stamp');
+    ok(outage.startT > finding.loop[0] && outage.startT < finding.loop[1], 'the transition is inside the lap');
+    ok(finding.loop[1] < outage.endT, 'the lap ends deep inside the outage rather than replaying it');
+    const pose = M.tracks.donnaPose0.t10ms;
+    const lastLive = pose[pose.length - 1] / 100;
+    ok(
+      lastLive > finding.loop[0] && lastLive < outage.startT,
+      `her last tracked pose (${lastLive.toFixed(2)} s) is inside the loop's opening half second`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------- 10. claim bindings resolve
 
 section('10. claim bindings resolve');

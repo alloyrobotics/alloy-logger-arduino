@@ -41,7 +41,7 @@
 
 import { decodeBattleData } from './decode.js';
 import * as previewModule from './preview-data.js';
-import { text as T } from './claims.mjs';
+import { text as T, value as V } from './claims.mjs';
 
 // ------------------------------------------------------------------ mission shape
 
@@ -322,11 +322,12 @@ export const findings = [
     id: 'stale-track',
     title: `Target track goes stale at ${T('lastAcceptedCaptureS')} s and keeps being consumed`,
     window: [69.0, 76.0],
+    loop: [V('lastAcceptedCaptureS') - 0.5, V('fireGateCloseS') + 0.45],
     t: 72.0,
     severity: 'warn',
     focus: { channel: '/blue1/vision', fields: ['confidence', 'trackAgeS'] },
     highlight: 'blue1',
-    slowmo: true,
+    slowmo: false,
     note:
       `Blue 1 is holding Red 2 cleanly: confidence peaks at ${T('confidencePeakPreLoss')} at ` +
       `${T('confidencePeakPreLossS')} s. The last accepted detection lands at ` +
@@ -346,6 +347,7 @@ export const findings = [
     id: 'frozen-goal',
     title: `Chase goal freezes at ${T('goalFrozenM')} m`,
     window: [71.0, 76.0],
+    loop: [V('goalFrozenStartS') - 0.5, V('goalFrozenEndS') + 0.4],
     t: 72.3,
     severity: 'warn',
     focus: { channel: '/blue1/planner', fields: ['goalDistM', 'pathLenM'] },
@@ -368,11 +370,12 @@ export const findings = [
     id: 'blind-burst',
     title: `Chassis rotates to a held bearing and fires ${T('burstShotCount')} rounds into an obstacle`,
     window: [72.0, 75.5],
+    loop: [V('fireGateOpenS') - 0.5, V('fireGateCloseS') + 0.45],
     t: 72.6,
     severity: 'alert',
     focus: { channel: '/blue1/gimbal_launcher', fields: ['gimbalYawDeg', 'targetBearingDeg', 'fireGate'] },
     highlight: 'blue1',
-    slowmo: true,
+    slowmo: false,
     note:
       `targetBearingDeg is the bearing to the HELD position, so it is frozen at ` +
       `${T('heldBearingDeg')} deg throughout. At ${T('fireGateOpenS')} s the gimbal is saturated ` +
@@ -397,6 +400,7 @@ export const findings = [
     id: 'overheat-self-damage',
     title: `Barrel heat crosses ${T('heatLimit')} and Blue 1 takes ${T('overheatLossHP')} HP off itself`,
     window: [72.0, 79.0],
+    loop: [V('crossingShotS') - 0.5, V('lastDeductionTickS') + 0.4],
     t: 74.5,
     severity: 'alert',
     focus: { channel: '/blue1/referee', fields: ['shooterHeat0', 'remainHP'] },
@@ -427,6 +431,7 @@ export const findings = [
     id: 'buff-halved-damage',
     title: `Defense buff halves armour damage to ${T('buffedArmorDamageHP')} HP, and none of it is on this robot`,
     window: [35.0, 65.0],
+    loop: [39.6, 41.1],
     t: 40.1,
     severity: 'info',
     focus: { channel: '/blue1/referee', fields: ['remainHP'] },
@@ -450,6 +455,7 @@ export const findings = [
     id: 'uwb-yaw-residual',
     title: `UWB yaw residual blips to ${T('uwbResidualPeakM')} m under fast rotation, and it is not a fault`,
     window: [43.0, 49.0],
+    loop: [44.1, 46.9],
     t: 46.0,
     severity: 'info',
     focus: { channel: '/blue1/localization', fields: ['uwbResidualM', 'yawDeg'] },

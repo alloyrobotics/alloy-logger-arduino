@@ -794,6 +794,139 @@ for (const name of claimNames) {
   ok(total > 50, `the narratives quote ${total} numeric tokens, so the scan has something to catch`);
 }
 
+// ---------------------------------------------------------------- 6b. replay loop edges
+//
+// Every finding declares `loop`, the tight span the 3D replay actually plays, split off `window`,
+// which stays the wider span the CHART plots. The rule: open roughly half a second before the
+// measurable onset, close shortly after the consequence has landed, cut the cruising in between.
+//
+// The measured justification is asserted HERE rather than written beside each `loop` because the
+// eager battle graph has ~20 B of gzip margin under its frozen ceiling (battle-eager-size.test.mjs)
+// and a comment per loop does not fit. Four of the six loops are expressed in `data.js` directly as
+// claim-ledger arithmetic - `[V('fireGateOpenS') - 0.5, V('fireGateCloseS') + 0.45]` and friends -
+// so the edge moves with the payload by construction; the two secondary beats are literals and are
+// re-derived from the event ledger below.
+
+section('replay loop edges');
+{
+  const loopOf = (id) => D.findings.find((f) => f.id === id).loop;
+  const findingOf = (id) => D.findings.find((f) => f.id === id);
+  const V = C.value;
+
+  for (const f of D.findings) {
+    ok(Array.isArray(f.loop) && f.loop.length === 2, `${f.id}: declares a replay loop pair`);
+    ok(f.loop[0] < f.loop[1], `${f.id}: loop is ordered`);
+    ok(f.loop[0] >= f.window[0] && f.loop[1] <= f.window[1], `${f.id}: loop sits inside its chart window`);
+    ok(f.t >= f.loop[0] && f.t <= f.loop[1], `${f.id}: the finding's instant is inside the loop it replays`);
+    ok(f.loop[1] - f.loop[0] < f.window[1] - f.window[0], `${f.id}: the loop is tighter than the window`);
+    const lap = (f.loop[1] - f.loop[0]) / (f.slowmo ? 0.4 : 1);
+    ok(lap <= 5.0, `${f.id}: one lap is ${lap.toFixed(2)} s of wall clock`);
+  }
+
+  // stale-track - onset is the last accepted detection (72.00 s); one 25 Hz sample later confidence
+  // has collapsed. The consequence is the team layer finally dropping the track at 74.55 s, so the
+  // loop opens 0.5 s before the stamp and closes 0.45 s after the drop.
+  {
+    const l = loopOf('stale-track');
+    near(l[0], V('lastAcceptedCaptureS') - 0.5, 1e-9, 'stale-track opens 0.5 s before the last accepted capture');
+    near(l[1], V('fireGateCloseS') + 0.45, 1e-9, 'and closes 0.45 s after the stale timeout drops the track');
+    ok(
+      at('/blue1/vision', 'confidence', l[0]) > at('/blue1/vision', 'confidence', V('firstOccludedSampleS')),
+      'the open is a healthy track and the collapse is inside the loop',
+    );
+    ok(
+      V('trackAgePeakTS') > l[0] && V('trackAgePeakTS') < l[1],
+      'the trackAgeS peak the note quotes is inside the loop',
+    );
+    ok(V('confidencePeakPreLossS') < l[0], 'the pre-loss confidence peak is CHART context, deliberately outside');
+  }
+
+  // frozen-goal - goalDistM is moving at the open and pinned on the frozen value for the whole
+  // 72.00-74.60 s freeze, which is exactly what the loop brackets.
+  {
+    const l = loopOf('frozen-goal');
+    near(l[0], V('goalFrozenStartS') - 0.5, 1e-9, 'frozen-goal opens 0.5 s before the goal freezes');
+    near(l[1], V('goalFrozenEndS') + 0.4, 1e-9, 'and closes 0.4 s after it thaws');
+    near(at('/blue1/planner', 'goalDistM', V('goalFrozenStartS')), V('goalFrozenM'), 1e-6, 'the freeze value is the plotted sample');
+    ok(
+      Math.abs(at('/blue1/planner', 'goalDistM', l[0]) - V('goalFrozenM')) > 1e-6,
+      'the half second of head really is the planner still moving',
+    );
+  }
+
+  // blind-burst - the fire gate IS the event: shut at the open, open at 72.60 s, and every one of
+  // the fourteen rounds lands between it and the close.
+  {
+    const l = loopOf('blind-burst');
+    near(l[0], V('fireGateOpenS') - 0.5, 1e-9, 'blind-burst opens 0.5 s before the fire gate does');
+    near(l[1], V('fireGateCloseS') + 0.45, 1e-9, 'and closes 0.45 s after the gate shuts');
+    eq(at('/blue1/gimbal_launcher', 'fireGate', l[0]), 0, 'the gate is shut at the open');
+    eq(at('/blue1/gimbal_launcher', 'fireGate', V('fireGateOpenS')), 1, 'and open on the onset sample');
+    ok(V('burstFirstShotS') >= l[0] && V('burstLastShotS') <= l[1], 'all fourteen rounds are inside the loop');
+    ok(V('gimbalConvergedS') > l[0] && V('gimbalConvergedS') < l[1], 'the gimbal converging on the held bearing is inside it');
+    ok(V('chassisCurrentPeakTS') > l[0] && V('chassisCurrentPeakTS') < l[1], 'so is the rotation current peak');
+  }
+
+  // overheat-self-damage - the onset is the shot that carries heat over the limit (74.171 s) and
+  // the consequence is the deduction staircase, which keeps running for 0.45 s after the gate has
+  // already shut. The loop is the only one left on 0.4x: eight referee ticks at 10 Hz is a fast
+  // staircase, and at 1x the HP steps are one frame each.
+  {
+    const l = loopOf('overheat-self-damage');
+    near(l[0], V('crossingShotS') - 0.5, 1e-9, 'overheat opens 0.5 s before the crossing shot');
+    near(l[1], V('lastDeductionTickS') + 0.4, 1e-9, 'and closes 0.4 s after the last deduction tick');
+    ok(V('firstDeductionTickS') > l[0] && V('lastDeductionTickS') < l[1], 'the whole deduction staircase is inside the loop');
+    ok(V('peakShooterHeat0TS') > l[0] && V('peakShooterHeat0TS') < l[1], 'so is the exported heat peak');
+    ok(
+      at('/blue1/referee', 'remainHP', l[0]) > at('/blue1/referee', 'remainHP', l[1]),
+      'HP is intact at the open and down at the close, which is the whole finding',
+    );
+    ok(findingOf('overheat-self-damage').slowmo === true, 'a 10 Hz staircase keeps its 0.4x');
+  }
+
+  // buff-halved-damage - a literal loop, re-derived here. The buff runs 35-65 s and Blue 2 takes
+  // four halved (25 HP) armour hits inside it, in two pairs ten seconds apart. The loop is the
+  // FIRST pair: it opens 0.46 s before 40.055 s and closes 0.54 s after 40.555 s. What it has to
+  // show is the finding's actual point - Blue 1's own remainHP flat while a team-mate is being hit -
+  // and one pair shows that as well as all four, in 1.5 s instead of 11.
+  {
+    const l = loopOf('buff-halved-damage');
+    const halved = E.hits.filter((h) => h.t >= V('blueBuffStartS') && h.t <= V('blueBuffEndS') && h.amount === V('buffedArmorDamageHP'));
+    eq(halved.length, 4, 'four halved armour hits inside the buff window');
+    const inLoop = halved.filter((h) => h.t >= l[0] && h.t <= l[1]);
+    eq(inLoop.length, 2, 'the loop carries the first pair of them');
+    ok(inLoop[0].t - l[0] >= 0.4 && inLoop[0].t - l[0] <= 1.0, 'with the first hit half a second into the lap');
+    ok(l[1] - inLoop[1].t >= 0.4, 'and the second hit landed before the close');
+    eq(new Set(inLoop.map((h) => h.targetId)).size, 1, 'both are on the same team-mate');
+    ok(
+      at('/blue1/referee', 'remainHP', l[0]) === V('blue1HPThroughBuffWindow') &&
+        at('/blue1/referee', 'remainHP', l[1]) === V('blue1HPThroughBuffWindow'),
+      'and Blue 1 own HP is flat across the lap, which is what the finding is about',
+    );
+  }
+
+  // uwb-yaw-residual - a literal loop, re-derived here. uwbResidualM sits on its baseline through
+  // the open, jumps past 0.2 m at 44.70 s under the fast rotation, peaks at 46.00 s and is back
+  // under the settle value by 46.50 s. So 0.6 s of quiet, the blip, 0.4 s of settled.
+  {
+    const l = loopOf('uwb-yaw-residual');
+    const blk = ch('/blue1/localization');
+    let onset = null;
+    for (let i = 0; i < blk.t.length; i++) {
+      if (blk.t[i] < l[0] || blk.t[i] > l[1]) continue;
+      if (onset === null && blk.uwbResidualM[i] > 0.2) onset = blk.t[i];
+    }
+    ok(onset !== null, 'the residual really does blip inside the loop');
+    ok(onset - l[0] >= 0.5 && onset - l[0] <= 1.0, `the blip has ${(onset - l[0]).toFixed(2)} s of quiet baseline in front of it`);
+    ok(at('/blue1/localization', 'uwbResidualM', l[0]) <= V('uwbResidualSettleM'), 'and the open is on the baseline');
+    ok(V('uwbResidualPeakTS') > onset && V('uwbResidualPeakTS') < l[1], 'the peak the note quotes is inside the loop');
+    ok(
+      at('/blue1/localization', 'uwbResidualM', l[1]) <= V('uwbResidualSettleM'),
+      'the close is back under the settle value, so the lap ends on "and it was fine"',
+    );
+  }
+}
+
 // ---------------------------------------------------------------- the round event ledger
 
 section('event lines');

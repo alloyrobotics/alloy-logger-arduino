@@ -65,6 +65,15 @@ export const findings = [
     id: 'stall',
     title: 'Left track stall at 48.4 s',
     window: [46.0, 54.0],
+    // The 3D replay loop, tight on the stall. Measured off the built /drive: the left track cruises
+    // the face at 8.7-9.9 A with cmd_l 0.35 m/s held, then i_l crosses 10 A at 47.54 s and cmd_l -
+    // vel_l opens past 0.08 m/s at 47.56 s - that is the onset - i_l peaks 22.80 A at 48.36 s with
+    // vel_l at 0.01, and vel_l goes negative at 48.50 s: the robot is sliding back down the face
+    // with a forward command still on. 0.54 s of the healthy climb, 0.96 s of the stall, 0.50 s of
+    // the slide. 2.0 s of data, 5.0 s a lap at the 0.4x this finding's show-me answer promises,
+    // against 8.0 s of data and 20 s a lap when it looped the chart window. The window keeps the
+    // whole slide-back and the operator giving up at 52.88 s for the chart.
+    loop: [47.0, 49.0],
     t: 48.4,
     severity: 'alert',
     focus: { channel: '/drive', fields: ['cmd_l', 'vel_l', 'i_l'] },
@@ -85,6 +94,17 @@ export const findings = [
     id: 'retry',
     title: 'Flippers down, second attempt crests',
     window: [56.0, 66.0],
+    // The 3D replay loop, on the crest. The rest of this window is a constant-speed climb that
+    // looks identical to the failed one from the outside: the front flipper is down past -34 deg
+    // from 58.28 s, cmd_l resumes at 58.70 s, and vel_l then tracks it to within 0.075 m/s at
+    // 5.4-15.3 A for four seconds. The measurable event is the break over the top: body pitch rings
+    // 26-31 deg against the face (peak 31.18 deg at 61.30 s), takes its LAST sample above 28 deg at
+    // 62.74 s and then falls monotonically - 13.85 deg at 63.96 s, 4.94 deg at 64.64 s, which is the
+    // 64.6 s crest this mission's chat answer quotes - is under 1 deg by 65.20 s, and i_l is off the
+    // climb load at 7.00 A by 65.60 s. So 0.51 s of the last of the climb, the crest, 0.96 s of the
+    // plateau: 3.35 s at 1x against 10.0 s. `t` stays at 61.0 s, mid-climb, where the traction claim
+    // is measured; a loop is not required to contain `t` (see `core/flow.js`).
+    loop: [62.25, 65.6],
     t: 61.0,
     severity: 'info',
     focus: { channel: '/drive', fields: ['cmd_l', 'vel_l', 'i_l'] },

@@ -347,6 +347,16 @@ export const findings = [
     id: 'follow-err',
     title: 'J2 following error, 53.9 s',
     window: [53.0, 58.0],
+    // The 3D replay loop, tight on the error opening. Measured off the built /ctl and /joints:
+    // tau2 first touches its 12.00 Nm clamp at 53.68 s and is pinned on it continuously from
+    // 54.24 s; err2 leaves its 1.04 deg nominal - the whole run's high, set at 40.92 s - at 54.90 s,
+    // then runs away 2.33 (55.30) - 4.56 (55.80) - 7.50 deg at 56.32 s, which is the sample the part
+    // leaves the jaws, and collapses to 0.33 deg by 56.80 s. err_max is a decaying peak-hold, not a
+    // latch: it tops out at 7.50 with err2 and is back to 0.58 by the close. So 0.5 s of nominal
+    // following, the whole divergence, 0.48 s of the settled state: 2.4 s at 1x against 5.0 s when
+    // this looped `window`. `t` stays at 54.0 s, the anchor the title and the scrubber marker use;
+    // a loop is not required to contain `t` (see `core/flow.js`).
+    loop: [54.4, 56.8],
     t: 54.0,
     severity: 'warn',
     focus: { channel: '/ctl', fields: ['err2', 'err_max'] },

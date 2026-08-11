@@ -419,6 +419,99 @@ eq(sample('/bot13/vision', 'visibility', 40.0), 0, 'visibility is 0 once #13 is 
 ok(noteOf('vision-confidence').includes('0.012'), 'the vision note quotes the 0.012 low');
 ok(noteOf('vision-confidence').includes('250'), 'the vision note quotes the 250 detections');
 
+// ---------------------------------------------------------------- 6b. replay loop edges
+//
+// `data.js` says "every edge is asserted against the decoded series in ssl-data.test.mjs". This is
+// that assertion, and it lives here rather than as prose beside each `loop` because the eager SSL
+// graph has 26 B of gzip margin under its frozen ceiling (ssl-eager-size.test.mjs) - the measured
+// justification cannot ship to a visitor, so it is asserted where it costs nothing.
+//
+// The rule the round set: the loop opens roughly half a second before the measurable onset and
+// closes shortly after the consequence has landed, while `window` keeps the wider chart context.
+// Each check below re-derives the onset and the consequence FROM the decoded series, so a change to
+// the payload that moves either one fails here rather than quietly leaving the replay pointed at
+// the wrong second.
+
+section('replay loop edges');
+const loopOf = (id) => D.findings.find((f) => f.id === id).loop;
+const findingOf = (id) => D.findings.find((f) => f.id === id);
+for (const f of D.findings) {
+  ok(Array.isArray(f.loop) && f.loop.length === 2, `${f.id}: declares a replay loop pair`);
+  ok(f.loop[0] < f.loop[1], `${f.id}: loop is ordered`);
+  ok(f.loop[0] >= f.window[0] && f.loop[1] <= f.window[1], `${f.id}: loop sits inside its chart window`);
+  ok(f.t >= f.loop[0] && f.t <= f.loop[1], `${f.id}: the finding's instant is inside the loop it replays`);
+  const lap = (f.loop[1] - f.loop[0]) / (f.slowmo ? 0.4 : 1);
+  ok(lap <= 5.0, `${f.id}: one lap is ${lap.toFixed(2)} s of wall clock`);
+  ok(f.loop[1] - f.loop[0] < f.window[1] - f.window[0], `${f.id}: the loop is tighter than the window`);
+}
+
+// kicker-charge - onset is the kick itself: the bank sits on its plateau (177 V at the open, 179 V
+// at 53.95 s, never near the 240 V set point), dumps to 15 V on the kick, and by the close has
+// crawled back only to 41 V, which is the consequence the finding is about.
+{
+  const l = loopOf('kicker-charge');
+  near(l[0], 53.477, 1e-3, 'kicker loop opens 0.5 s before the kick');
+  near(l[1], 54.627, 1e-3, 'kicker loop closes 0.65 s after it');
+  eq(sample('/bot8/kicker', 'kickerLevel', l[0]), 177, 'the loop opens on the plateau at 177 V');
+  eq(sample('/bot8/kicker', 'kickerLevel', 53.95), 179, 'still 179 V a sample before the kick');
+  eq(sample('/bot8/kicker', 'kickerLevel', 53.977), 15, 'the kick dumps the bank to 15 V');
+  eq(sample('/bot8/kicker', 'kickerLevel', l[1]), 41, 'and the close is 41 V of a recharge that never arrives');
+}
+
+// radio-degraded - rxRssi holds its -59.4 dBm baseline through the open, breaks at 32.9 s, floors
+// at -88.1 dBm at 33.4 s, and is back on baseline by 34.4 s. The loop opens 0.5 s before the break
+// and closes 0.3 s after the recovery, so one lap is the whole dropout and nothing else.
+{
+  const l = loopOf('radio-degraded');
+  near(l[0], 32.4, 1e-6, 'radio loop opens at 32.4 s');
+  near(l[1], 34.7, 1e-6, 'radio loop closes at 34.7 s');
+  near(sample('/bot7/radio', 'rxRssi', l[0]), -59.4, 0.15, 'the loop opens on the -59.4 dBm baseline');
+  near(sample('/bot7/radio', 'rxRssi', 32.9), -64.9, 0.15, 'the break is 5.5 dB down by 32.9 s');
+  ok(32.9 - l[0] >= 0.45 && 32.9 - l[0] <= 1.0, 'the break has 0.5 s of healthy link in front of it');
+  near(sample('/bot7/radio', 'rxRssi', 33.4), -88.1, 0.15, 'the floor is -88.1 dBm at 33.4 s');
+  near(sample('/bot7/radio', 'rxRssi', l[1]), -59.7, 0.3, 'and the link is back on baseline at the close');
+  ok(sample('/bot7/radio', 'rxPacketsLost', 33.4) > 100, 'the floor really is a packet-loss burst');
+  ok(sample('/bot7/radio', 'rxPacketsLost', l[1]) <= 2, 'and the close is back to the nominal loss rate');
+}
+
+// dribbler-overheat - the loop opens 0.5 s before the ball reaches the roller (T_Y3_CONTACT_IN),
+// which is where dribCurrent steps off its ~3.2 A free spin, and closes 0.6 s after the trip, far
+// enough that the current cut-out and the falling temperature are both in the lap.
+{
+  const l = loopOf('dribbler-overheat');
+  const contactIn = 32.3249;
+  near(l[0], contactIn - 0.5, 1e-6, 'dribbler loop opens 0.5 s before ball contact');
+  near(l[1], 33.7 + 0.6, 1e-6, 'dribbler loop closes 0.6 s after the trip');
+  near(sample('/bot3/dribbler', 'dribCurrent', l[0]), 3.16, 0.1, 'the open is free-spin current');
+  near(sample('/bot3/dribbler', 'dribCurrent', 32.4), 4.31, 0.1, 'current steps up on contact');
+  near(sample('/bot3/dribbler', 'dribTempEstC', 33.7), 92.4, 0.1, 'the trip is the 92.4 C peak');
+  eq(sample('/bot3/dribbler', 'dribCurrent', 33.75), 0, 'and the roller is cut a sample later');
+  ok(
+    sample('/bot3/dribbler', 'dribTempEstC', l[1]) < sample('/bot3/dribbler', 'dribTempEstC', 33.7),
+    'the close carries the temperature already coming back down',
+  );
+}
+
+// vision-confidence - the only gradual one. The second dip starts at T_B13_DIP2_START and the
+// tracker never recovers: detections reach 0 at 27.30 s and visibility bottoms at 3/255 at 28.8 s.
+// The loop opens 0.5 s before the dip and closes 0.5 s past the floor, which is a 4.7 s lap because
+// the EVENT is 3.7 s long, not because the head or the tail is padded.
+{
+  const l = loopOf('vision-confidence');
+  const dip2 = 25.0769;
+  near(l[0], dip2 - 0.5, 1e-6, 'vision loop opens 0.5 s before the second dip');
+  near(l[1], 28.8 + 0.5, 1e-6, 'vision loop closes 0.5 s after the visibility floor');
+  ok(
+    sample('/bot13/vision', 'visibility', l[0]) > sample('/bot13/vision', 'visibility', dip2),
+    'the open is above the dip it leads into',
+  );
+  ok(sample('/bot13/vision', 'detections', l[0]) > 0, 'and #13 is still being detected there');
+  eq(sample('/bot13/vision', 'detections', 27.2998), 0, 'detections reach 0 at 27.30 s, inside the loop');
+  near(sample('/bot13/vision', 'visibility', l[1]), 3 / 255, 1e-3, 'the close is still on the 3/255 floor');
+  ok(l[1] < 29.6999, 'the loop closes before the last-seen stamp, so it never replays the empty tail');
+  ok(findingOf('vision-confidence').slowmo === false, 'a 3.7 s fade is not slowed down further');
+}
+
 // ---------------------------------------------------------------- 7. real anchors are real
 
 section('real anchors');
