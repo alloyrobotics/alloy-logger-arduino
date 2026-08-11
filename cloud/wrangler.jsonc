@@ -29,8 +29,7 @@
       ],
       "vars": {
         "ALLOY_DATA_URL": "https://data.usealloy.ai",
-        "INACTIVITY_MS": "120000",
-        "DRY_RUN": "1"
+        "INACTIVITY_MS": "120000"
       }
     }
   }
