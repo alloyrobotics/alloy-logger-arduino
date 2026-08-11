@@ -1,9 +1,9 @@
 # AlloyLogger
 
-Stream Arduino sensor & telemetry data **straight to [Alloy](https://usealloy.ai)** from an ESP32 —
-in about ten lines. You log `name → value` pairs at the call site; the library RAM-buffers them and
-uploads to Alloy in the background. **Every power-on lands in Alloy as one MCAP mission**: replay it,
-scrub it, query it with SQL, ask about it over MCP. **No SD card, no flash wear, never blocks your loop.**
+Stream Arduino sensor and telemetry data **straight to [Alloy](https://usealloy.ai)** from an ESP32
+or Arduino UNO R4 WiFi. ESP32 keeps the existing background `AlloyLogger` API; UNO R4 uses a separate
+cooperative `AlloyUnoR4` adapter with typed binary capture and a fixed six-slot RAM journal. **Every
+power-on lands in Alloy as one MCAP mission** for replay, inspection, SQL, and MCP analysis.
 
 You usually don't declare anything: Alloy's AI reasons over your tag + field names + values (a
 `heading` ranging 0–360 under a `bno055` tag → it's a magnetic heading). Optionally `describe()` a
@@ -18,8 +18,9 @@ browser: pick a robot (balancer, 6-axis arm, survey quad, tracked rescue), ask t
 failed, and watch the 3D replay and telemetry jump to the exact moment it went wrong. Every number
 in it came through `alloy.log()`-style channels. No account, no hardware, nothing to install.
 
-> Verified end-to-end on real hardware: an ESP32 streaming `env`/`battery` telemetry → a `meta.json`
-> semantics sidecar + CSV chunks land in Alloy Mesh Storage, `uploaded` climbing, `dropped=0`.
+> Verified end-to-end on real hardware: the existing ESP32 CSV path and the UNO R4 binary path both
+> produced indexed MCAP missions in Alloy Mesh Storage. The UNO gate covered normal upload, WiFi
+> reconnect, dropped-response retry, fixed-RAM overflow, reset-before-END, and clean post-reset capture.
 
 ```cpp
 #include <AlloyLogger.h>
@@ -42,6 +43,10 @@ void loop() {
 ---
 
 ## Why it's nice
+
+The bullets below describe the ESP32 path. UNO R4 deliberately uses a cooperative API documented in
+[AlloyLogger on Arduino UNO R4 WiFi](docs/uno-r4-wifi.md), rather than pretending FreeRTOS background
+tasks were ported to the RA4M1.
 
 - **Self-documenting calls.** The field name sits next to its value — nothing to declare, nothing to
   keep in sync, no positional args to get wrong.
@@ -67,6 +72,7 @@ Depends on **ArduinoJson** (Library Manager).
 arduino-cli lib install ArduinoJson
 # clone this repo into your libraries folder, or for a one-off build:
 arduino-cli compile --fqbn esp32:esp32:esp32 --library /path/to/AlloyLogger your_sketch
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --library /path/to/AlloyLogger your_uno_sketch
 ```
 
 You need an Alloy account + a data-API key
@@ -76,7 +82,7 @@ sketch — see [Security](#security) for what it can do.
 
 ---
 
-## API
+## ESP32 API
 
 ```cpp
 AlloyLogger alloy;
@@ -142,21 +148,58 @@ just makes the mission appear immediately, e.g. on a kill switch or at the end o
 **Stats:** `alloy.uploaded()`, `alloy.failed()`, `alloy.dropped()` (buffers shed under backpressure),
 `alloy.stale()` (chunks refused because the run had already finalized).
 
+## Arduino UNO R4 WiFi API
+
+UNO R4 support is a separate fixed-memory adapter. Read board I/O explicitly, commit typed values,
+and call `poll()` frequently enough to service WiFi, verified TLS, retries, ACKs, and time anchors:
+
+```cpp
+#include <AlloyUnoR4.h>
+#include "arduino_secrets.h"
+
+AlloyUnoR4 logger;
+const AlloyUnoR4Field fields[] = {
+  {0, alloy::device::v1::FIELD_U16, "adc_raw", "count"},
+};
+
+void setup() {
+  AlloyUnoR4Config config;
+  config.ssid = SECRET_WIFI_SSID;
+  config.password = SECRET_WIFI_PASSWORD;
+  config.api_key = SECRET_ALLOY_API_KEY;
+  config.device_id = "uno-r4-01";
+  config.mesh_path = "robots/bench";
+  logger.begin(config);
+  logger.declareSchema(1, 1, "board_io", fields, 1);
+}
+
+void loop() {
+  logger.poll();
+  logger.sample(1, 1).setU16(0, analogRead(A0)).commit();
+}
+```
+
+Capture performs fixed-capacity memory operations only. Networking is cooperative and occurs in
+`poll()`, which can block within its configured WiFi/TLS bounds. The tracked example secret headers
+contain empty compile-only placeholders; put real credentials only in a private working copy and
+clear them before committing. See the [UNO R4 guide](docs/uno-r4-wifi.md),
+[starter example](examples/UnoR4Starter), and [telemetry example](examples/UnoR4Telemetry).
+
 ---
 
 ## How it gets to Alloy
 
-The device streams compact **per-channel CSV chunks**: a one-line header (`t_ns` + your field
+The ESP32 path streams compact **per-channel CSV chunks**: a one-line header (`t_ns` + your field
 names), then bare value rows, wall-clock-timestamped so channels align with no extra math:
 ```csv
 t_ns,temp_c,humidity
 1782715694000000000,22.4,51.2
 1782715695000000000,22.5,51.1
 ```
-The header makes each chunk **self-describing** — the schema travels with the data, nothing to
-keep in sync with your firmware — and dropping per-row JSON keys roughly halves the bytes on the
-wire. (That's efficient *versus JSON*, not versus binary: values are still text-formatted at the
-call site. A binary framing is on the [roadmap](#roadmap).) One channel = one consistent schema.
+The header makes each ESP32 chunk **self-describing** and dropping per-row JSON keys roughly halves
+the bytes versus JSON. UNO R4 instead sends bounded **Alloy Device Wire v1** binary frames with typed
+schemas, CRC32C, exact duplicate/conflict semantics, clock anchors, explicit gaps/loss counters, and
+an exact 48-byte ACK. See the [wire contract](docs/alloy-device-wire-v1.md).
 
 **Why CSV on the wire, MCAP at rest?** Text CSV is a deliberate v1 choice for the device side:
 you can eyeball a chunk over the serial monitor, replay one with `curl`, and a run that dies
@@ -189,12 +232,14 @@ MCAP, replay, or mission view).
 - **[AutoCapture](examples/AutoCapture)** — set-and-forget: `scope()` every pin + `watch()` variables, nothing in `loop()`.
 - **[SelfBalancingRobot](examples/SelfBalancingRobot)** — add streaming to a 100 Hz control loop
   without disturbing real-time stepping (the pattern for a robot that already manages WiFi).
+- **[UnoR4Starter](examples/UnoR4Starter)** — finite typed run with cooperative END/ACK handling.
+- **[UnoR4Telemetry](examples/UnoR4Telemetry)** — explicit board I/O, cached RSSI, and missed-tick visibility.
 
 ---
 
 ## Limits & notes
 
-- **Sustained rate is bounded by upload throughput** (~one R2 PUT per buffer over WiFi). A few hundred
+- **ESP32 sustained rate is bounded by upload throughput** (~one R2 PUT per buffer over WiFi). A few hundred
   records/sec is comfortable; far higher sheds oldest buffers (counted in `dropped()`). Tune with
   `buffers()`, or use an ESP32-S3 / better WiFi.
 - **Values are `float`** (~7 significant digits). `set()` silently narrows `double`; `int` and
@@ -209,16 +254,18 @@ MCAP, replay, or mission view).
   runs SNTP automatically. Records logged
   before the first sync are stamped with a boot-relative clock and rebased to wall-clock time
   in-buffer once SNTP lands, so nothing is lost or mis-timed.
-- **TLS is verified by default** against the ESP32 core's embedded Mozilla root CA bundle (no extra
-  flash shipped by this library). `alloy.insecure()` opts out for networks that intercept TLS.
-- ESP32 / ESP32-S3 only (uses WiFi + mbedTLS).
+- **TLS is verified by default.** ESP32 uses its embedded Mozilla bundle and retains the explicit
+  `alloy.insecure()` escape hatch. UNO R4 delegates to WiFiS3's verified public roots and has no
+  insecure fallback.
+- **UNO R4 is volatile best effort.** Its six 768-byte journal slots make loss and backpressure
+  observable, but reset or power loss discards retained RAM and starts a new run.
 
 ## Security
 
 - **Know what the key can do.** The key you flash is a long-lived Alloy **data-API key**: it can
   read, write, and SQL-query your whole org's mesh, not just this device's path. Treat a leaked
   key as a leak of your org's data plane, not of one robot's telemetry.
-- **The device is not a vault.** ESP32 flash is dumpable — anyone with the board (or a sketch you
+- **The device is not a vault.** MCU flash is dumpable — anyone with the board (or a sketch you
   committed) has the key. Keep it in a gitignored `secrets.h`, give each device its own key, and
   rotate on any suspicion.
 - **What the cloud holds.** In cloud mode the key rides along with each request; the service keeps
@@ -230,9 +277,8 @@ MCAP, replay, or mission view).
 
 ## Roadmap
 
-- **Binary wire framing.** Replace CSV rows with a compact binary encoding — takes the remaining
-  per-field text formatting off the hot path and makes "efficient" literal rather than
-  efficient-versus-JSON.
+- **Persistent UNO journal.** The current tier-1 fixed-memory profile reports loss honestly but does
+  not survive reset or power loss.
 - **Scoped ingest keys.** Write-only, path-scoped per-device keys, so a key pulled off a board
   can't read — or touch — anything else in the org.
 
