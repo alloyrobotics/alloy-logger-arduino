@@ -4,6 +4,7 @@
 import { authenticate, sha256Hex } from "./auth";
 import {
   AckDetail,
+  AckFlag,
   AckStatus,
   BodyTooLargeError,
   type AckContext,
@@ -130,7 +131,20 @@ export default {
         return binaryAckResponse(context!, AckStatus.ProtocolFormatConflict, 400);
       }
 
-      if (!(await authenticate(env, apiKey, meshPath))) {
+      let authenticated: boolean;
+      try {
+        authenticated = await authenticate(env, apiKey, meshPath);
+      } catch (error) {
+        console.error(`Alloy auth oracle unavailable: ${String(error)}`);
+        return binaryAckResponse(
+          context!,
+          AckStatus.Busy,
+          503,
+          AckFlag.Retryable,
+          5000,
+        );
+      }
+      if (!authenticated) {
         return binaryAckResponse(context!, AckStatus.AuthenticationFailure, 401);
       }
       const keyHash = await sha256Hex(apiKey);
@@ -174,7 +188,17 @@ export default {
       return new Response("meta too large", { status: 413 });
     }
 
-    if (!(await authenticate(env, apiKey, meshPath))) {
+    let authenticated: boolean;
+    try {
+      authenticated = await authenticate(env, apiKey, meshPath);
+    } catch (error) {
+      console.error(`Alloy auth oracle unavailable: ${String(error)}`);
+      return new Response("Alloy authentication temporarily unavailable", {
+        status: 503,
+        headers: { "Retry-After": "5" },
+      });
+    }
+    if (!authenticated) {
       return new Response("invalid api key", { status: 401 });
     }
 

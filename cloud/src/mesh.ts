@@ -17,9 +17,22 @@ export async function mintUploadSession(
     },
     body: JSON.stringify({ path, ttl_seconds: 900 }),
   });
-  if (!res.ok) return null;
-  const sess = (await res.json()) as UploadSession;
-  if (!sess.bucket || !sess.endpoint_url || !sess.credentials?.access_key_id) return null;
+  // Only an explicit auth rejection means "bad key". Treat rate limits, outages, and malformed
+  // upstream responses as transient service failures so callers retry instead of negative-caching
+  // a healthy key and telling the device its credentials are wrong.
+  if (res.status === 401 || res.status === 403) return null;
+  if (!res.ok) throw new Error(`upload-session HTTP ${res.status}`);
+  let sess: UploadSession;
+  try {
+    sess = (await res.json()) as UploadSession;
+  } catch {
+    throw new Error("upload-session returned invalid JSON");
+  }
+  if (!sess.bucket || !sess.endpoint_url || !sess.region || !sess.prefix ||
+      !sess.credentials?.access_key_id || !sess.credentials?.secret_access_key ||
+      !sess.credentials?.session_token) {
+    throw new Error("upload-session response missing credentials");
+  }
   return sess;
 }
 
@@ -47,5 +60,6 @@ export async function putToMesh(
     },
     body,
   });
-  return res.ok;
+  if (!res.ok) throw new Error(`mesh PUT HTTP ${res.status}`);
+  return true;
 }
