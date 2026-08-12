@@ -44,7 +44,7 @@ At this snapshot:
 - repository: `/Users/hughp/Documents/alloy-logger-arduino`;
 - current branch: `ux-wall-r2` at `d82e498`;
 - observed `origin/main`: `2e663b8` (fetch again; this is not a release pin);
-- current HEAD's complete same-day diff adds `test/` and `.uno-probe/` to `.assetsignore`, preventing
+- current HEAD's complete same-day diff adds `test/` and `extras/uno-probe/` to `.assetsignore`, preventing
   the root site Worker from publishing those directories;
 - the current branch already contains unrelated committed Donna/demo work; and
 - the shared working tree also contains unrelated, actively changing `demo/**` edits.
@@ -103,7 +103,7 @@ does not capture the full feature.
 
 ### UNO R4 adapter, examples, and evidence
 
-- the exact `.assetsignore` hunk adding `test/` and `.uno-probe/`
+- the exact `.assetsignore` hunk adding `test/` and `extras/uno-probe/`
 - `src/AlloyUnoR4.h`
 - `src/Alloy.h`
 - `src/alloy/uno_r4/AlloyUnoR4.cpp`
@@ -116,9 +116,9 @@ does not capture the full feature.
 - `examples/UnoR4Telemetry/arduino_secrets.h`
 - `library.properties`
 - `README.md` after reconciling its obsolete ESP32/CSV-only and binary-roadmap claims
-- `.uno-probe/Disconnect/Disconnect.ino`
-- `.uno-probe/UnoProbe/UnoProbe.ino`
-- `.uno-probe/run_probe.py`
+- `extras/uno-probe/Disconnect/Disconnect.ino`
+- `extras/uno-probe/UnoProbe/UnoProbe.ino`
+- `extras/uno-probe/run_probe.py`
 - `docs/uno-r4-wifi.md`
 - `docs/uno-r4-hardware-baseline-2026-08-11.md`
 - this handoff
@@ -459,7 +459,7 @@ the smoke device until the cloud version is stable.
   `/private/tmp/alloy-e2e-captures.C7moyo`; treat this as ephemeral evidence, not a release input.
 - No supplied Wi-Fi or Alloy API credential was found in repository content.
 - An unrelated ignored `.dev.vars` predates this work. Do not read, copy, stage, or depend on it.
-- The board was reflashed with `.uno-probe/Disconnect`, called `WiFi.end()`, and repeatedly reported
+- The board was reflashed with `extras/uno-probe/Disconnect`, called `WiFi.end()`, and repeatedly reported
   `ALLOY_UNO_WIFI_DISCONNECTED` over USB.
 
 ## Deployment record (complete during release)
