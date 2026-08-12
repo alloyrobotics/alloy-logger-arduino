@@ -11,6 +11,14 @@
 #include "soc/gpio_periph.h"      // scope(): GPIO_PIN_MUX_REG[]
 #include "soc/io_mux_reg.h"       // scope(): FUN_IE/FUN_PU/FUN_PD, PIN_INPUT_ENABLE
 #include "soc/gpio_sig_map.h"     // scope(): SIG_GPIO_OUT_IDX
+#include "AlloyReliability.h"
+
+// Local status values are deliberately outside HTTPClient's small negative error range.
+static constexpr int ALLOY_STATUS_WIFI          = -1000;
+static constexpr int ALLOY_STATUS_CONFIG        = -1001;
+static constexpr int ALLOY_STATUS_MEMORY        = -1002;
+static constexpr int ALLOY_STATUS_TASK          = -1003;
+static constexpr int ALLOY_STATUS_DRAIN_TIMEOUT = -1004;
 
 // Alloy object keys allow [A-Za-z0-9_-]; anything else becomes '_'.
 static void alloySanitize(char* s) {
@@ -325,14 +333,66 @@ uint32_t AlloyLogger::hashStr(const char* s, int n, uint32_t h) {
 
 // frees everything begin() allocated, so a failed begin() can be retried safely
 void AlloyLogger::teardown() {
+  _ready = false;
   if (_pool) { for (uint8_t i = 0; i < _nBuf; i++) free(_pool[i].data); delete[] _pool; _pool = nullptr; }
   if (_freeQ)    { vQueueDelete(_freeQ);    _freeQ = nullptr; }
   if (_pendingQ) { vQueueDelete(_pendingQ); _pendingQ = nullptr; }
   if (_mtx)      { vSemaphoreDelete(_mtx);  _mtx = nullptr; }
 }
 
+bool AlloyLogger::waitForWiFi(uint32_t waitMs) {
+  if (WiFi.status() == WL_CONNECTED) return true;
+  _lastStatus = ALLOY_STATUS_WIFI;
+  if (_ssid) WiFi.begin(_ssid, _pass);
+  else WiFi.reconnect();
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && (uint32_t)(millis() - t0) < waitMs)
+    vTaskDelay(pdMS_TO_TICKS(250));
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool AlloyLogger::retryableStatus(int status) {
+  return status <= 0 || status == 408 || status == 425 || status == 429 || status >= 500;
+}
+
+uint32_t AlloyLogger::retryDelayMs(uint8_t attempt) {
+  uint8_t shift = attempt > 5 ? 5 : attempt;
+  uint32_t ms = 1000UL << shift;
+  return ms > 30000UL ? 30000UL : ms;
+}
+
+uint32_t AlloyLogger::queued() const {
+  if (!_pendingQ) return _inFlight ? 1 : 0;
+  return (uint32_t)uxQueueMessagesWaiting(_pendingQ) + (_inFlight ? 1U : 0U);
+}
+
+String AlloyLogger::lastError() const {
+  int status = _lastStatus;
+  if (status == 0 || (status >= 200 && status < 300)) return String();
+  if (status == ALLOY_STATUS_WIFI) return "WiFi disconnected";
+  if (status == ALLOY_STATUS_CONFIG) return "missing API key or mesh path";
+  if (status == ALLOY_STATUS_MEMORY) return "could not allocate AlloyLogger buffers";
+  if (status == ALLOY_STATUS_TASK) return "could not start AlloyLogger background task";
+  if (status == ALLOY_STATUS_DRAIN_TIMEOUT) return "metadata or buffer drain timed out; delivery is still retrying";
+  if (status == alloy_logger_internal::kDataLossStatus)
+    return "a buffered data chunk was dropped before delivery";
+  if (status == alloy_logger_internal::kUploadSessionProtocolError)
+    return "upload-session response was incomplete; delivery is retrying";
+  if (status < 0) return "network or TLS transport error (" + String(status) + "); delivery is retrying";
+  if (status == 400 || status == 413) return "upload rejected; check mesh path and buffer size (HTTP " + String(status) + ")";
+  if (status == 401 || status == 403) return "Alloy API key rejected (HTTP " + String(status) + ")";
+  if (status == 409) return "session was already finalized (HTTP 409)";
+  if (status == 429) return "upload rate limited (HTTP 429); delivery is retrying";
+  if (status >= 500) return "Alloy ingest temporarily unavailable (HTTP " + String(status) + "); delivery is retrying";
+  return "upload failed (HTTP " + String(status) + ")";
+}
+
 bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* dataUrl) {
   if (_started) return true;
+  if (!apiKey || !apiKey[0] || !meshPath || !meshPath[0]) {
+    _lastStatus = ALLOY_STATUS_CONFIG;
+    return false;
+  }
   _apiKey = apiKey; _meshPath = meshPath;
   if (_dev) { strncpy(_devId, _dev, sizeof(_devId)-1); _devId[sizeof(_devId)-1] = 0; }
   else {
@@ -350,7 +410,8 @@ bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* da
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) delay(200);
   }
-  if (WiFi.status() != WL_CONNECTED) return false;
+  if (WiFi.status() != WL_CONNECTED) { _lastStatus = ALLOY_STATUS_WIFI; return false; }
+  WiFi.setAutoReconnect(true);
 
   // UTC clock: cloud mode needs it for t_ns stamps + the session id; direct mode also for SigV4
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
@@ -361,10 +422,12 @@ bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* da
   _freeQ = xQueueCreate(_nBuf, sizeof(Buf*));
   _pendingQ = xQueueCreate(_nBuf, sizeof(Buf*));
   _mtx = xSemaphoreCreateMutex();
-  if (!_pool || !_freeQ || !_pendingQ || !_mtx) { teardown(); return false; }
+  if (!_pool || !_freeQ || !_pendingQ || !_mtx) {
+    _lastStatus = ALLOY_STATUS_MEMORY; teardown(); return false;
+  }
   for (uint8_t i = 0; i < _nBuf; i++) {
     _pool[i].data = (char*)malloc(_bufBytes); _pool[i].len = 0; _pool[i].chan[0] = 0;
-    if (!_pool[i].data) { teardown(); return false; }
+    if (!_pool[i].data) { _lastStatus = ALLOY_STATUS_MEMORY; teardown(); return false; }
     Buf* p = &_pool[i]; xQueueSend(_freeQ, &p, 0);
   }
 
@@ -374,9 +437,15 @@ bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* da
   if (_scopeOn) scopeScan();
 
   _started = true;
-  xTaskCreatePinnedToCore(taskTramp, "alloy_up", 12288, this, 4, nullptr, _core);
-  if (_nWatch > 0 || _scopeOn)   // v2: drive watch()/scope() signals with no code in the user's loop
-    xTaskCreatePinnedToCore(samplerTramp, "alloy_smp", 8192, this, 3, nullptr, _core);
+  if (xTaskCreatePinnedToCore(taskTramp, "alloy_up", 12288, this, 4, &_uploadTask, _core) != pdPASS) {
+    _started = false; _uploadTask = nullptr; _lastStatus = ALLOY_STATUS_TASK; teardown(); return false;
+  }
+  if ((_nWatch > 0 || _scopeOn) &&
+      xTaskCreatePinnedToCore(samplerTramp, "alloy_smp", 8192, this, 3, &_samplerTask, _core) != pdPASS) {
+    vTaskDelete(_uploadTask); _uploadTask = nullptr;
+    _started = false; _samplerTask = nullptr; _lastStatus = ALLOY_STATUS_TASK; teardown(); return false;
+  }
+  _lastStatus = 0;
   return true;
 }
 
@@ -392,19 +461,22 @@ AlloyLogger::Slot* AlloyLogger::slotFor(const char* chan) {
 
 void AlloyLogger::commitRow(const char* chan, const char* hdr, int hlen, const char* row, int rlen,
                             uint32_t sig) {
-  if (!_started) return;
-  if ((size_t)hlen + 1 + (size_t)rlen + 1 > _bufBytes) return;   // row can never fit a buffer — drop
+  if (!_started || _ending) return;
+  if (hlen <= 0 || rlen <= 0 || (size_t)hlen + 1 + (size_t)rlen + 1 > _bufBytes) {
+    _droppedRows++; return;                                      // row can never fit a buffer
+  }
   xSemaphoreTake(_mtx, portMAX_DELAY);
+  if (_ending) { xSemaphoreGive(_mtx); return; }                  // end() won the boundary race
 
   Slot* s = slotFor(chan);
-  if (!s) { xSemaphoreGive(_mtx); return; }                 // too many channels — drop
+  if (!s) { _droppedRows++; xSemaphoreGive(_mtx); return; } // too many channels — drop
 
   // Field set changed mid-stream → close the current chunk so each file has one consistent schema.
   if (s->active && s->active->len > 0 && s->sig != sig) { seal(s->active); s->active = nullptr; }
 
   if (!s->active) {
     s->active = getFree();
-    if (!s->active) { xSemaphoreGive(_mtx); return; }
+    if (!s->active) { _droppedRows++; xSemaphoreGive(_mtx); return; }
     s->active->len = 0;
     strncpy(s->active->chan, chan, ALLOY_CHAN_MAX - 1); s->active->chan[ALLOY_CHAN_MAX - 1] = 0;
     alloySanitize(s->active->chan);
@@ -416,7 +488,7 @@ void AlloyLogger::commitRow(const char* chan, const char* hdr, int hlen, const c
   size_t need = (needHdr ? (size_t)hlen + 1 : 0) + (size_t)rlen + 1;
   if (b->len + need > _bufBytes) {                           // chunk full → seal, start a fresh one
     seal(b); s->active = getFree(b);                         // never cannibalise the chunk just sealed
-    if (!s->active) { xSemaphoreGive(_mtx); return; }
+    if (!s->active) { _droppedRows++; xSemaphoreGive(_mtx); return; }
     b = s->active; b->len = 0;
     strncpy(b->chan, chan, ALLOY_CHAN_MAX - 1); b->chan[ALLOY_CHAN_MAX - 1] = 0;
     alloySanitize(b->chan);
@@ -447,7 +519,8 @@ AlloyLogger::Buf* AlloyLogger::getFree(Buf* avoid) {
   if (xQueueReceive(_freeQ, &b, 0) == pdTRUE) return b;
   if (xQueueReceive(_pendingQ, &b, 0) == pdTRUE) {          // shed oldest pending
     if (b == avoid) { xQueueSend(_pendingQ, &b, 0); return nullptr; }  // sole pending is the chunk we just sealed — drop the new row instead
-    _droppedBufs++; b->len = 0; return b;
+    _droppedBufs++; _deliveryFailureStatus = alloy_logger_internal::kDataLossStatus;
+    b->len = 0; return b;
   }
   return nullptr;
 }
@@ -456,7 +529,11 @@ AlloyLogger::Buf* AlloyLogger::getFree(Buf* avoid) {
 void AlloyLogger::seal(Buf* b) {
   if (xQueueSend(_pendingQ, &b, 0) != pdTRUE) {
     Buf* old;
-    if (xQueueReceive(_pendingQ, &old, 0) == pdTRUE) { old->len = 0; _droppedBufs++; xQueueSend(_freeQ, &old, 0); }
+    if (xQueueReceive(_pendingQ, &old, 0) == pdTRUE) {
+      old->len = 0; _droppedBufs++;
+      _deliveryFailureStatus = alloy_logger_internal::kDataLossStatus;
+      xQueueSend(_freeQ, &old, 0);
+    }
     xQueueSend(_pendingQ, &b, 0);
   }
 }
@@ -465,6 +542,7 @@ String AlloyLogger::buildMetaJson() {
   JsonDocument doc;                                  // ArduinoJson handles string escaping
   doc["device"] = _devId;
   if (_fw) doc["firmware"] = _fw;
+  if (_mission && _mission[0]) doc["mission"] = _mission;
   time_t t = _session; struct tm tm; gmtime_r(&t, &tm);
   char iso[24]; strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &tm);
   doc["session"] = iso;
@@ -508,22 +586,68 @@ void AlloyLogger::rebaseRows(Buf* b) {
 // Graceful end-of-run: seal everything, give the uploader a bounded window to drain, then ask
 // the cloud service to finalize the .mcap immediately (instead of the inactivity wait —
 // ~2 min by default, see finalizeAfter()).
-void AlloyLogger::end(uint32_t drainMs) {
-  if (!_started || _direct) return;
+bool AlloyLogger::end(uint32_t drainMs) {
+  if (!_started) return false;
+  if (_endAccepted) return true;
+  _ending = true;                         // stop producers before sealing their active buffers
 
   xSemaphoreTake(_mtx, portMAX_DELAY);
   for (uint8_t i = 0; i < _nSlots; i++) {
     Slot& s = _slots[i];
-    if (s.active && s.active->len > 0) { seal(s.active); s.active = nullptr; }
+    if (!s.active) continue;
+    if (s.active->len > 0) seal(s.active);
+    else xQueueSend(_freeQ, &s.active, 0);
+    s.active = nullptr;
   }
   xSemaphoreGive(_mtx);
 
   uint32_t t0 = millis();
-  while (millis() - t0 < drainMs && uxQueueMessagesWaiting(_pendingQ) > 0)
+  // Metadata uses the same persistent HTTPClient as chunks and is uploaded first by the task.
+  // Gate on both metadata settlement and the exact all-N-buffers-returned condition so /end can
+  // never race that transport or finalize ahead of a buffer in the dequeue→inFlight handoff.
+  alloy_logger_internal::EndGate gate;
+  do {
+    gate = alloy_logger_internal::endGate(
+      _metaSettled, _metaDelivered, (unsigned)uxQueueMessagesWaiting(_freeQ),
+      (unsigned)_nBuf, _deliveryFailureStatus);
+    if (gate != alloy_logger_internal::END_WAITING) break;
+    if ((uint32_t)(millis() - t0) >= drainMs) break;
     vTaskDelay(pdMS_TO_TICKS(50));
-  vTaskDelay(pdMS_TO_TICKS(500));   // grace for a PUT the task already dequeued
+  } while (true);
+  if (gate == alloy_logger_internal::END_WAITING) {
+    _lastStatus = ALLOY_STATUS_DRAIN_TIMEOUT;
+    return false;                    // do not finalize ahead of metadata/data still being retried
+  }
+  if (gate == alloy_logger_internal::END_FAILED) {
+    _lastStatus = !_metaDelivered
+      ? (_metaStatus ? _metaStatus : alloy_logger_internal::kDataLossStatus)
+      : (_deliveryFailureStatus ? _deliveryFailureStatus : alloy_logger_internal::kDataLossStatus);
+    return false;                    // all buffers returned, but at least one was not delivered
+  }
+  if (_direct) { _endAccepted = true; return true; }
 
-  _cloud.postEnd();
+  // Use the remainder of the caller's bound to survive a dropped finalization request. A 202 or
+  // 204 proves the cloud accepted it; actual MCAP assembly may finish asynchronously.
+  uint8_t attempt = 0;
+  do {
+    uint32_t elapsed = (uint32_t)(millis() - t0);
+    uint32_t remain = elapsed < drainMs ? drainMs - elapsed : 0;
+    bool ok = waitForWiFi(remain > 1000 ? 1000 : remain);
+    if (ok) {
+      ok = _cloud.postEnd();
+      _lastStatus = _cloud.last();
+    }
+    if (ok) { _endAccepted = true; return true; }
+    if (!retryableStatus(_lastStatus)) return false;
+    _retried++;
+    uint32_t delayMs = retryDelayMs(attempt);
+    if (attempt < 6) attempt++;
+    elapsed = (uint32_t)(millis() - t0);
+    if (elapsed >= drainMs) break;
+    if (delayMs > drainMs - elapsed) delayMs = drainMs - elapsed;
+    if (delayMs) vTaskDelay(pdMS_TO_TICKS(delayMs));
+  } while ((uint32_t)(millis() - t0) < drainMs);
+  return false;
 }
 
 void AlloyLogger::taskTramp(void* self) { static_cast<AlloyLogger*>(self)->taskLoop(); }
@@ -540,34 +664,70 @@ void AlloyLogger::taskLoop() {
   // Each power-on gets its OWN folder under meshPath (a separate mission in Alloy).
   String sessionMesh = String(_meshPath) + "/" + String(_session);
   if (!_direct) _cloud.session(_devId, _session, _meshPath, _finalizeMs);
+  _ready = true;
 
-  // upload the semantics sidecar first (Alloy ingests metadata before data)
+  // Upload the semantics sidecar first. Transient auth/network/service failures must not turn a
+  // healthy key into a data-less session, so hold and retry it just like a data chunk.
   String meta = buildMetaJson();
   char fn[64]; snprintf(fn, sizeof(fn), "%s_meta.json", _devId);
-  for (int a = 0; a <= 3; a++) {
-    bool ok = _direct
-      ? _up.uploadBuffer((const uint8_t*)meta.c_str(), meta.length(), fn, sessionMesh.c_str(), "application/json")
-      : _cloud.postMeta((const uint8_t*)meta.c_str(), meta.length());
-    if (ok) break;
-    vTaskDelay(pdMS_TO_TICKS(1000UL << a));
+  uint8_t metaAttempt = 0;
+  bool metaOk = false;
+  for (;;) {
+    bool ok = waitForWiFi();
+    if (ok) {
+      ok = _direct
+        ? _up.uploadBuffer((const uint8_t*)meta.c_str(), meta.length(), fn, sessionMesh.c_str(), "application/json")
+        : _cloud.postMeta((const uint8_t*)meta.c_str(), meta.length());
+      if (_direct) _retried += _up.retries();
+      _lastStatus = _direct ? _up.last() : _cloud.last();
+    }
+    if (ok) { metaOk = true; break; }
+    if (!_direct && _lastStatus == 409) { _stale++; break; }
+    if (!retryableStatus(_lastStatus)) { _failed++; break; }
+    _retried++;
+    vTaskDelay(pdMS_TO_TICKS(retryDelayMs(metaAttempt)));
+    if (metaAttempt < 6) metaAttempt++;
   }
+  _metaStatus = _lastStatus;
+  _metaDelivered = metaOk;
+  _metaSettled = true;                 // set last: end() may use the shared HTTPClient after this
 
   Buf* b;
   for (;;) {
     if (xQueueReceive(_pendingQ, &b, pdMS_TO_TICKS(250)) == pdTRUE) {
+      _inFlight = true;
       rebaseRows(b);
       uint32_t seq = _seq++;                 // once per buffer — retries must reuse it (dedupe key)
       snprintf(fn, sizeof(fn), "%s_%s_%lu.csv", _devId, b->chan, (unsigned long)seq);
-      bool ok = false, stale = false;
-      for (int a = 0; a <= 4 && !ok; a++) {
-        if (a) vTaskDelay(pdMS_TO_TICKS(1000UL << (a - 1)));
-        ok = _direct
-          ? _up.uploadBuffer((const uint8_t*)b->data, b->len, fn, sessionMesh.c_str(), "text/csv")
-          : _cloud.postChunk((const uint8_t*)b->data, b->len, b->chan, seq);
-        if (!ok && !_direct && _cloud.last() == 409) { stale = true; break; }  // session finalized — terminal
+      bool ok = false, stale = false, terminal = false;
+      uint8_t attempt = 0;
+      for (;;) {
+        ok = waitForWiFi();
+        if (ok) {
+          ok = _direct
+            ? _up.uploadBuffer((const uint8_t*)b->data, b->len, fn, sessionMesh.c_str(), "text/csv")
+            : _cloud.postChunk((const uint8_t*)b->data, b->len, b->chan, seq);
+          if (_direct) _retried += _up.retries();
+          _lastStatus = _direct ? _up.last() : _cloud.last();
+        }
+        if (ok) break;
+        if (!_direct && _lastStatus == 409) { stale = true; break; } // finalized is terminal
+        if (!retryableStatus(_lastStatus)) { terminal = true; break; }
+        _retried++;
+        vTaskDelay(pdMS_TO_TICKS(retryDelayMs(attempt)));
+        if (attempt < 6) attempt++;
       }
-      if (ok) _uploaded++; else if (stale) _stale++; else _failed++;
+      if (ok) {
+        _uploaded++;
+      } else if (stale) {
+        _stale++; _deliveryFailureStatus = 409;
+      } else if (terminal) {
+        _failed++;
+        _deliveryFailureStatus = _lastStatus
+          ? _lastStatus : alloy_logger_internal::kDataLossStatus;
+      }
       b->len = 0; xQueueSend(_freeQ, &b, 0);
+      _inFlight = false;
     } else {
       xSemaphoreTake(_mtx, portMAX_DELAY);
       for (uint8_t i = 0; i < _nSlots; i++) {

@@ -1,5 +1,6 @@
 #include <alloy/device/core.h>
 #include <alloy/device/protocol.h>
+#include <AlloyReliability.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -1480,6 +1481,50 @@ static bool corruptionDuringDrainFaults() {
   return true;
 }
 
+static bool loggerEndRejectsReturnedLostBuffers() {
+  using namespace alloy_logger_internal;
+  CHECK(endGate(true, true, 4, 4, 403) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, 409) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, kDataLossStatus) == END_FAILED);
+  CHECK(endGate(true, true, 3, 4, 403) == END_WAITING);
+  CHECK(endGate(true, true, 4, 4, 0) == END_READY);
+  return true;
+}
+
+static bool loggerEndWaitsForMetadata() {
+  using namespace alloy_logger_internal;
+  CHECK(endGate(false, false, 4, 4, 0) == END_WAITING);
+  CHECK(endGate(true, false, 4, 4, 0) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, 0) == END_READY);
+  return true;
+}
+
+static bool directUploadSessionRecoveryPolicy() {
+  using namespace alloy_logger_internal;
+  const char* fields[] = {
+      "bucket", "https://r2.example", "auto", "uploads/path", "access", "secret", "token",
+  };
+  CHECK(uploadSessionComplete(fields[0], fields[1], fields[2], fields[3],
+                              fields[4], fields[5], fields[6]));
+  for (size_t missing = 0; missing < sizeof(fields) / sizeof(fields[0]); ++missing) {
+    const char* copy[7];
+    memcpy(copy, fields, sizeof(fields));
+    copy[missing] = "";
+    CHECK(!uploadSessionComplete(copy[0], copy[1], copy[2], copy[3],
+                                 copy[4], copy[5], copy[6]));
+  }
+  CHECK(!uploadSessionComplete("bucket", "r2.example", "auto", "uploads/path",
+                               "access", "secret", "token"));
+  CHECK(!uploadSessionComplete("bucket", "h", "auto", "uploads/path",
+                               "access", "secret", "token"));
+  CHECK(kUploadSessionProtocolError < 0);
+  CHECK(shouldRefreshUploadSession(401, false));
+  CHECK(shouldRefreshUploadSession(403, false));
+  CHECK(!shouldRefreshUploadSession(403, true));
+  CHECK(!shouldRefreshUploadSession(500, false));
+  return true;
+}
+
 struct TestCase {
   const char* name;
   bool (*function)();
@@ -1505,6 +1550,9 @@ int main() {
       {"sample batch boundaries", sampleBatchBoundaries},
       {"blocked END terminal latch", blockedEndLatchesAndCompletesExactly},
       {"drain corruption", corruptionDuringDrainFaults},
+      {"ESP32 end rejects returned lost buffers", loggerEndRejectsReturnedLostBuffers},
+      {"ESP32 end waits for metadata", loggerEndWaitsForMetadata},
+      {"ESP32 direct session recovery", directUploadSessionRecoveryPolicy},
   };
   size_t passed = 0;
   for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {

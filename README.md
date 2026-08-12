@@ -9,6 +9,73 @@ You usually don't declare anything: Alloy's AI reasons over your tag + field nam
 `heading` ranging 0–360 under a `bno055` tag → it's a magnetic heading). Optionally `describe()` a
 field to hand Alloy units/ranges for even sharper context.
 
+## Quick Start: confirm your first ESP32 mission
+
+This path needs only an ESP32 and 2.4 GHz Wi-Fi. The `FirstMission` example generates its own sample
+telemetry, prints each meaningful stage over Serial, and explicitly finalizes the run. No sensor or
+Alloy Edge installation is involved. Arduino UNO R4 WiFi users should start with the separate
+[UNO R4 guide](docs/uno-r4-wifi.md) and [starter example](examples/UnoR4Starter).
+
+### 1. Install the library
+
+1. Install the **esp32 by Espressif Systems** board package in Arduino IDE's Boards Manager.
+2. Install **ArduinoJson** in Library Manager.
+3. Download this repository as a ZIP, then choose **Sketch → Include Library → Add .ZIP Library**.
+4. Open **File → Examples → AlloyLogger → FirstMission** and select your ESP32 board and port.
+
+### 2. Create a data API key
+
+[Create an Alloy org free](https://www.usealloy.ai/setup-org?utm_source=github&utm_medium=referral&utm_campaign=alloylogger&utm_content=readme),
+then open **Dashboard → Mesh Storage → API key**. Copy the key when it is shown.
+
+> **Credential limitation today:** Alloy currently gives the ESP32 a long-lived, org-wide data API
+> key. It can read, write, and SQL-query the org's whole mesh; it is not write-only or restricted to
+> one mesh path. Use a test org for your first mission, never commit the key, and rotate it if the
+> sketch is shared. Path-scoped ingest keys remain a roadmap item, not part of this setup.
+
+### 3. Change the four settings and flash
+
+They are grouped at the top of `FirstMission.ino`:
+
+```cpp
+const char* WIFI_SSID       = "YOUR_2_4_GHZ_WIFI_NAME";
+const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";
+const char* ALLOY_API_KEY   = "YOUR_ALLOY_DATA_API_KEY";
+const char* ALLOY_MESH_PATH = "first-missions/esp32";
+```
+
+Upload the sketch and open Serial Monitor at **115200 baud**. It runs for 20 seconds. A confirmed
+device-side result ends like this:
+
+```text
+[4/4] Draining uploads and finalizing the mission...
+[progress] 20s / 20s | state=uploading | samples=... delivered=... queued=0 failed=0 retried=... dropped=0 dropped_rows=0 stale=0
+PASS: Alloy accepted the data and acknowledged mission finalization.
+```
+
+### 4. Confirm it in Alloy
+
+Open **Mesh Storage**, browse to `first-missions/esp32`, and open the new `.mcap` mission. Platform
+indexing can take a few minutes after the ESP32's `PASS`; that message confirms the device upload and
+finalization request were accepted, while the `.mcap` confirms the complete ESP32-to-Alloy path.
+
+If Serial prints `CHECK NEEDED`, use the diagnostics rather than guessing:
+
+| Signal | What it means | First thing to check |
+|---|---|---|
+| Wi-Fi timeout before `[2/4]` | The ESP32 never joined the network. | Exact SSID/password and a 2.4 GHz network. |
+| `state=syncing-clock` at the end | The uploader could not obtain UTC time. | The network may block NTP; retry on another network or phone hotspot. |
+| `last_status=401` or `403` | Alloy rejected the data API key. | Copy a fresh key and reflash; never paste it into Serial or an issue. |
+| Negative `last_status` | Wi-Fi, DNS, TLS, or the HTTPS connection failed. | Restore the network while the board stays powered; the retained buffer keeps retrying. |
+| `last_status=429` or `5xx` | Rate limit or temporary service failure. | Leave the board powered; delivery retries with bounded backoff. |
+| `dropped>0` or `dropped_rows>0` | RAM backpressure forced data loss before delivery. | Wi-Fi signal; retry the low-rate example unchanged. |
+| `stale>0` | Data was sent after that run had finalized. | Reset the ESP32 to begin a fresh mission. |
+| Finalization not acknowledged | Metadata/data was still retrying, or a terminal loss prevented a clean boundary. | Leave the board powered when `queued>0`; use status/drop/stale counters to distinguish terminal loss. Accepted cloud data still finalizes after silence. |
+
+Once this works, move the key into a gitignored `secrets.h` and adapt
+[BasicSensor](examples/BasicSensor), [AutoCapture](examples/AutoCapture), or
+[SelfBalancingRobot](examples/SelfBalancingRobot) to your real firmware.
+
 ## See it before you flash anything
 
 [![AlloyLogger live demo: ask why the robot fell over and the 3D replay jumps to the fall](docs/demo-screenshot.png)](https://alloylogger.com/demo/?src=github)
@@ -93,6 +160,7 @@ AlloyLogger alloy;
 |---|---|---|
 | `alloy.wifi(ssid, pass)` | Connect WiFi. Omit if your sketch already connected. | — |
 | `alloy.device(id, firmware)` | Device id + firmware tag (into `meta.json`). | id = sketch filename (`MyRobot.ino` → `MyRobot`) |
+| `alloy.mission(name)` | Human-readable label for this run, stored in the MCAP metadata. | — |
 | `alloy.buffers(count, bytes)` | RAM buffer pool. Keep count above your channel count, and the total well under half the free heap (a verified TLS handshake needs ~60 KB headroom). | `4 × 12 KB` |
 | `alloy.describe(channel, field, unit, min, max, about)` | Richer semantics for Alloy AI. | — |
 | `alloy.insecure()` | Skip TLS verification (TLS-intercepting proxies etc.). | verify via Mozilla roots |
@@ -139,14 +207,36 @@ semantics. Mix freely with explicit `log()` calls.
 
 **End of run (optional):**
 ```cpp
-alloy.end();   // seal + drain + finalize the mission .mcap now
+bool finalized = alloy.end();   // true after drain + accepted finalization (or drain in direct mode)
 ```
 Without it, the run finalizes automatically ~2 minutes after the last data (tune with
 `finalizeAfter()`; power loss is detected server-side, which is the only place it can be). `end()`
 just makes the mission appear immediately, e.g. on a kill switch or at the end of a scripted test.
+Once called, it establishes the final logging boundary: later `log()` and sampler rows are ignored.
+It waits for the metadata request before draining data, so finalization cannot race the mission
+label/field descriptions on the shared HTTPS connection. If it returns `false`, it did not finalize
+ahead of an unsettled request, or metadata/data inside the boundary was terminally rejected, stale,
+or dropped under backpressure. Retryable buffers remain retained; chunks already accepted by the
+cloud still have the inactivity-finalization fallback.
 
-**Stats:** `alloy.uploaded()`, `alloy.failed()`, `alloy.dropped()` (buffers shed under backpressure),
-`alloy.stale()` (chunks refused because the run had already finalized).
+**Readiness and delivery health:**
+
+- `alloy.ready()` becomes true after UTC clock sync and initialization of the run identity. It does
+  not by itself prove that Alloy accepted data; use the delivery counters and status below.
+- `alloy.delivered()` (also available as `uploaded()`) counts accepted data chunks;
+  `alloy.queued()` is a snapshot of sealed/in-flight chunks; `alloy.retried()` counts retryable
+  attempts. Wi-Fi/transport errors, HTTP `408`/`425`/`429`, and `5xx` responses retain the current
+  buffer and retry with bounded backoff.
+- In legacy `direct()` mode, an R2 PUT `401`/`403` invalidates the temporary upload session and is
+  retried once with newly minted credentials. Malformed successful upload-session responses are
+  treated as retryable protocol failures rather than successful delivery.
+- `alloy.failed()` counts terminal upload failures; `alloy.dropped()` counts whole buffers shed
+  under RAM backpressure; `alloy.droppedRows()` counts rows that could not be buffered; and
+  `alloy.stale()` counts chunks refused because the run had already finalized.
+- `alloy.lastStatus()` is the most recent HTTP status or a negative local/ESP transport code.
+  `alloy.lastError()` turns that status into a printable `String`; it is empty after a successful
+  request. A later success therefore replaces an earlier transient error in these last-result
+  diagnostics, while `retried()` remains cumulative.
 
 ## Arduino UNO R4 WiFi API
 
@@ -213,15 +303,19 @@ service stages them and, when the run ends (`alloy.end()` or ~2 min of silence),
 indexed `.mcap`** and uploads it into *your* Alloy mesh at `<meshPath>/<session>/`, together with
 the **`meta.json`** semantics sidecar built from your `describe()` calls:
 ```json
-{ "device":"sbr-01", "firmware":"fw16", "session":"2026-06-29T06:48:14Z",
+{ "device":"sbr-01", "firmware":"fw16", "mission":"driveway brake test", "session":"2026-06-29T06:48:14Z",
   "fields":[ {"channel":"env","name":"temp_c","unit":"degC","min":-40,"max":125,"about":"ambient temperature"} ] }
 ```
+The optional `mission()` label is copied into the assembled MCAP's `alloy` metadata; it does not
+change the device id, mesh path, or Alloy Device Wire v1 schema.
 Every power-on = one mission in Alloy: replayable, inspectable, SQL-queryable, visible to
 `list_missions` and the rest of the Alloy MCP surface.
 
 **Privacy note:** in cloud mode your telemetry and API key transit the AlloyLogger Cloud service.
-Chunks are staged only until the run's `.mcap` is uploaded, and the key is held only for the
-session's lifetime, then purged. If you'd rather not have a middleman, `alloy.direct()` uploads
+Chunks are staged only until the run's `.mcap` is uploaded, and the key is held for the session's
+finalize step, then purged after successful delivery or bounded retry exhaustion. An authenticated
+`end()` retry can rehydrate an exhausted session and rearm finalization. If you'd rather not have a
+middleman, `alloy.direct()` uploads
 SigV4-signed CSV chunks straight from the device to your mesh (queryable tables, but no per-run
 MCAP, replay, or mission view).
 
@@ -229,6 +323,8 @@ MCAP, replay, or mission view).
 
 ## Examples
 
+- **[FirstMission](examples/FirstMission)** — configure four values, stream generated data, and get
+  a clear Serial pass/fail result with explicit finalization.
 - **[BasicSensor](examples/BasicSensor)** — stream a sensor in ~10 lines.
 - **[AutoCapture](examples/AutoCapture)** — set-and-forget: `scope()` every pin + `watch()` variables, nothing in `loop()`.
 - **[SelfBalancingRobot](examples/SelfBalancingRobot)** — add streaming to a 100 Hz control loop
@@ -270,9 +366,9 @@ MCAP, replay, or mission view).
   committed) has the key. Keep it in a gitignored `secrets.h`, give each device its own key, and
   rotate on any suspicion.
 - **What the cloud holds.** In cloud mode the key rides along with each request; the service keeps
-  it only for the session's lifetime and purges it at finalize. The temporary upload credentials it
-  derives expire after 900 s — but that TTL covers the *derived* credentials, not your key. No raw
-  storage (R2) credentials ever reach the device.
+  it in the session state until successful finalization or bounded retry exhaustion, then purges
+  it. The temporary upload credentials it derives expire after 900 s — but that TTL covers the
+  *derived* credentials, not your key. No raw storage (R2) credentials ever reach the device.
 - Fine for a hobby rig today. Before putting this on a real fleet you want the write-only,
   path-scoped ingest keys on the [roadmap](#roadmap).
 

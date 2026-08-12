@@ -90,6 +90,8 @@ public:
   AlloyLogger& wifi(const char* ssid, const char* pass) { _ssid = ssid; _pass = pass; return *this; }
   // Optional override. Default device id is your sketch's filename (e.g. MyRobot.ino -> "MyRobot").
   AlloyLogger& device(const char* id, const char* firmware = nullptr) { _dev = id; _fw = firmware; return *this; }
+  // Human-readable label for this run, stored in MCAP metadata (for example, "driveway test").
+  AlloyLogger& mission(const char* name) { _mission = name; return *this; }
   AlloyLogger& buffers(uint8_t count, size_t bytes) { _nBuf = count; _bufBytes = bytes; return *this; }
   // Escape hatch for networks where TLS verification can't work (TLS-intercepting proxies etc.).
   // Default is full verification against the ESP32 core's embedded Mozilla root CA bundle.
@@ -133,14 +135,23 @@ public:
   // Graceful end-of-run (cloud mode): seals open buffers, drains uploads (bounded), then tells
   // the service to finalize the .mcap now instead of after the inactivity window (~2 min
   // default, see finalizeAfter()).
-  // Optional — power loss is handled server-side. No-op in direct mode.
-  void end(uint32_t drainMs = 8000);
+  // Optional — power loss is handled server-side. Direct mode drains without a finalize request.
+  // Returns true once every buffer is delivered and (in cloud mode) finalization is accepted;
+  // false means metadata/data is still retrying or something inside the boundary was lost/rejected.
+  bool end(uint32_t drainMs = 8000);
 
   // ---- stats ----
   uint32_t uploaded() const { return _uploaded; }
+  uint32_t delivered() const { return _uploaded; }     // successfully accepted data chunks
   uint32_t failed() const { return _failed; }
+  uint32_t retried() const { return _retried; }        // transient upload attempts retried
   uint32_t dropped() const { return _droppedBufs; }   // buffers shed under backpressure
+  uint32_t droppedRows() const { return _droppedRows; } // rows rejected before buffering
   uint32_t stale() const { return _stale; }           // chunks refused post-finalize (cloud 409)
+  uint32_t queued() const;                            // sealed/in-flight chunks (snapshot)
+  bool ready() const { return _ready; }               // UTC clock synced + run identity initialized
+  int lastStatus() const { return _lastStatus; }      // HTTP status, or negative local/transport code
+  String lastError() const;                           // printable explanation; empty after success
 
   uint64_t nowNs();   // wall-clock ns (gettimeofday); used to stamp records
 
@@ -156,6 +167,9 @@ private:
   void seal(Buf* b);
   void rebaseRows(Buf* b);
   void teardown();
+  bool waitForWiFi(uint32_t waitMs = 5000);
+  static bool retryableStatus(int status);
+  static uint32_t retryDelayMs(uint8_t attempt);
   Slot* slotFor(const char* chan);
   static uint32_t hashStr(const char* s, int n, uint32_t h = 2166136261u);
   static void taskTramp(void* self);
@@ -184,7 +198,7 @@ private:
   static void scopeIsrHandler(void* arg);
 
   // config
-  const char *_ssid = nullptr, *_pass = nullptr, *_dev = nullptr, *_fw = nullptr;
+  const char *_ssid = nullptr, *_pass = nullptr, *_dev = nullptr, *_fw = nullptr, *_mission = nullptr;
   // Default device id = the sketch's own filename. __BASE_FILE__ in this in-class initializer is
   // baked in by the implicit constructor, which the compiler emits in the translation unit that
   // constructs the object — the sketch (e.g. ".../MyRobot.ino.cpp"), not this library.
@@ -222,10 +236,15 @@ private:
   Buf*          _pool = nullptr;
   QueueHandle_t _freeQ = nullptr, _pendingQ = nullptr;
   SemaphoreHandle_t _mtx = nullptr;
+  TaskHandle_t   _uploadTask = nullptr, _samplerTask = nullptr;
   Slot          _slots[ALLOY_MAX_CHANNELS]; uint8_t _nSlots = 0;
   uint64_t      _bootOffsetNs = 0;   // wall-clock minus boot-clock ns, captured once SNTP lands
   uint32_t      _session = 0, _seq = 0;
   char          _devId[24] = {0};
-  volatile uint32_t _uploaded = 0, _failed = 0, _droppedBufs = 0, _stale = 0;
-  bool          _started = false;
+  volatile uint32_t _uploaded = 0, _failed = 0, _retried = 0;
+  volatile uint32_t _droppedBufs = 0, _droppedRows = 0, _stale = 0;
+  volatile int      _lastStatus = 0, _deliveryFailureStatus = 0, _metaStatus = 0;
+  volatile bool     _inFlight = false, _ending = false, _endAccepted = false, _ready = false;
+  volatile bool     _metaSettled = false, _metaDelivered = false;
+  bool              _started = false;
 };

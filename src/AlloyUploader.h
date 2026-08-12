@@ -19,6 +19,7 @@
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 #include "esp_arduino_version.h"
+#include "AlloyReliability.h"
 
 // The ESP32 Arduino core's prebuilt SDK embeds the full Mozilla root CA bundle
 // (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL) inside libmbedtls; reference its
@@ -37,18 +38,33 @@ public:
   // Upload `len` bytes as <meshPath>/<filename> in Alloy. Returns true on 2xx.
   bool uploadBuffer(const uint8_t* data, size_t len, const char* filename, const char* meshPath,
                     const char* contentType = "text/csv") {
-    if (!ensureSession(meshPath)) return false;
-    String key = _prefix + String(filename);
-    bool ok = putObject(key, data, len, contentType);
-    if (!ok) _haveSession = false;          // force a fresh session next time
-    return ok;
+    _retries = 0;
+    bool refreshed = false;
+    for (;;) {
+      if (!ensureSession(meshPath)) return false;
+      String key = _prefix + String(filename);
+      if (putObject(key, data, len, contentType)) return true;
+
+      const int putStatus = _last;
+      _haveSession = false;                 // any failed PUT invalidates the cached credentials
+      if (!alloy_logger_internal::shouldRefreshUploadSession(putStatus, refreshed)) return false;
+      refreshed = true;
+      _retries++;
+      // Loop once with _haveSession=false: mint fresh credentials and re-sign the exact payload.
+    }
   }
+
+  // HTTP code of the most recent upload-session/PUT call, or a negative transport/parse error.
+  int last() const { return _last; }
+  uint8_t retries() const { return _retries; }
 
 private:
   String _dataUrl, _apiKey;
   String _bucket, _endpoint, _region, _prefix, _ak, _sk, _tok, _meshCached;
   bool _insecure = false;
   bool _haveSession = false; time_t _sessAt = 0;
+  int _last = 0;
+  uint8_t _retries = 0;
   // Persistent keep-alive connection + HTTPClient for PUTs: a verified TLS handshake costs ~2s
   // on a classic ESP32, so per-file reconnects can't keep up with multiple channels flushing
   // every few seconds. Both must persist — a destructed HTTPClient stops the client, and
@@ -67,6 +83,7 @@ private:
   bool ensureSession(const char* meshPath) {
     time_t now = time(nullptr);
     if (_haveSession && _meshCached == meshPath && (now - _sessAt) < 720) return true;
+    _haveSession = false;
     if (!createSession(meshPath)) return false;
     _meshCached = meshPath; _sessAt = now; _haveSession = true;
     return true;
@@ -75,23 +92,33 @@ private:
   bool createSession(const char* meshPath) {
     WiFiClientSecure cli; setupTLS(cli);
     HTTPClient http;
-    if (!http.begin(cli, _dataUrl + "/mesh/storage/upload-session")) return false;
+    if (!http.begin(cli, _dataUrl + "/mesh/storage/upload-session")) {
+      _last = HTTPC_ERROR_CONNECTION_REFUSED;
+      return false;
+    }
     http.addHeader("Authorization", "Bearer " + _apiKey);
     http.addHeader("Content-Type", "application/json");
     JsonDocument body; body["path"] = meshPath; body["ttl_seconds"] = 900;
     String payload; serializeJson(body, payload);
     int code = http.POST(payload);
+    _last = code;
     if (code != 200 && code != 201) { http.end(); return false; }
     String resp = http.getString(); http.end();
     JsonDocument doc;
-    if (deserializeJson(doc, resp)) return false;
+    if (deserializeJson(doc, resp)) { _last = HTTPC_ERROR_NO_STREAM; return false; }
     _bucket = doc["bucket"].as<String>();   _endpoint = doc["endpoint_url"].as<String>();
     _region = doc["region"].as<String>();   _prefix   = doc["prefix"].as<String>();
     _ak = doc["credentials"]["access_key_id"].as<String>();
     _sk = doc["credentials"]["secret_access_key"].as<String>();
     _tok = doc["credentials"]["session_token"].as<String>();
+    if (!alloy_logger_internal::uploadSessionComplete(
+          _bucket.c_str(), _endpoint.c_str(), _region.c_str(), _prefix.c_str(),
+          _ak.c_str(), _sk.c_str(), _tok.c_str())) {
+      _last = alloy_logger_internal::kUploadSessionProtocolError;
+      return false;
+    }
     if (_prefix.length() && _prefix[_prefix.length()-1] != '/') _prefix += '/';
-    return _bucket.length() && _endpoint.length() && _ak.length();
+    return true;
   }
 
   bool putObject(const String& key, const uint8_t* data, size_t len, const char* contentType) {
@@ -131,7 +158,11 @@ private:
 
     setupTLS(_cli);                          // re-arm every PUT: any stop() memsets the attach cb
     if (!_reuseInit) { _http.setReuse(true); _reuseInit = true; }
-    if (!_http.begin(_cli, base + canonUri)) return false;
+    if (!_http.begin(_cli, base + canonUri)) {
+      _cli.stop();
+      _last = HTTPC_ERROR_CONNECTION_REFUSED;
+      return false;
+    }
     _http.addHeader("Authorization", auth);
     _http.addHeader("x-amz-content-sha256", ph);
     _http.addHeader("x-amz-date", amzdate);
@@ -140,6 +171,7 @@ private:
     int code = _http.sendRequest("PUT", (uint8_t*)data, len);
     _http.end();
     if (code < 0) _cli.stop();               // dead connection — force a fresh handshake next PUT
+    _last = code;
     return code == 200 || code == 204;
   }
 

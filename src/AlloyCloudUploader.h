@@ -8,7 +8,7 @@
 //   X-Alloy-Device / X-Alloy-Session / X-Alloy-Mesh-Path on every call,
 //   X-Alloy-Channel / X-Alloy-Seq on /v1/chunk.
 // 2xx = accepted. 409 = session already finalized (terminal — drop the buffer).
-// 429/5xx = retryable. The service finalizes ~10 min after the last chunk, or on /v1/end.
+// 429/5xx = retryable. The service finalizes ~2 min after the last chunk, or on /v1/end.
 
 #pragma once
 #include <Arduino.h>
@@ -43,7 +43,8 @@ public:
     return post("/v1/end", nullptr, 0, "application/octet-stream", nullptr, 0);
   }
 
-  int last() const { return _last; }   // HTTP code of the most recent post (409 = finalized)
+  // HTTP code of the most recent post, or the negative HTTPClient transport error.
+  int last() const { return _last; }
 
 private:
   String _url, _key, _dev, _mesh;
@@ -69,7 +70,11 @@ private:
             const char* chan, uint32_t seq) {
     setupTLS();
     if (!_reuseInit) { _http.setReuse(true); _reuseInit = true; }
-    if (!_http.begin(_cli, _url + route)) { _last = -1; return false; }
+    if (!_http.begin(_cli, _url + route)) {
+      _cli.stop();
+      _last = HTTPC_ERROR_CONNECTION_REFUSED;
+      return false;
+    }
     _http.addHeader("Authorization", "Bearer " + _key);
     _http.addHeader("X-Alloy-Device", _dev);
     _http.addHeader("X-Alloy-Session", String(_session));

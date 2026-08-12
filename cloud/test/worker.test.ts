@@ -22,6 +22,12 @@ import {
 
 const GOOD_KEY = "test-key-good";
 const BAD_KEY = "test-key-bad";
+const FLAKY_V1_KEY = "test-key-flaky-v1";
+const FLAKY_V2_KEY = "test-key-flaky-v2";
+const INVALID_401_KEY = "test-key-invalid-401";
+const INVALID_403_KEY = "test-key-invalid-403";
+const RATE_LIMITED_KEY = "test-key-rate-limited";
+const MALFORMED_2XX_KEY = "test-key-malformed-2xx";
 const DEVICE = "esp32-abc123";
 const MESH = "robots/test";
 // storage is shared across tests within this file — a unique session per test
@@ -50,10 +56,22 @@ let meshBodies = new Map<string, Uint8Array>();
 // module-level knobs (fetchMock was removed in vitest-pool-workers 0.13; the main
 // worker + DO run in the same isolate as tests, so patching globalThis.fetch applies)
 let failsLeft = 0;
+let sessionFailsLeft = 0;
+type UploadSessionReply = { status: number; body?: string; contentType?: string };
+let uploadSessionScripts = new Map<string, UploadSessionReply[]>();
+let uploadSessionCalls = new Map<string, number>();
 let mocksRegistered = false;
 
-function mockAlloy(opts: { failPuts?: number } = {}) {
+function mockAlloy(opts: {
+  failPuts?: number;
+  failSessions?: number;
+  sessionReplies?: Record<string, UploadSessionReply[]>;
+} = {}) {
   failsLeft = opts.failPuts ?? 0;
+  sessionFailsLeft = opts.failSessions ?? 0;
+  uploadSessionScripts = new Map(
+    Object.entries(opts.sessionReplies ?? {}).map(([key, replies]) => [key, [...replies]]),
+  );
   if (mocksRegistered) return;
   mocksRegistered = true;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -61,7 +79,29 @@ function mockAlloy(opts: { failPuts?: number } = {}) {
     const url = new URL(req.url);
     if (url.origin === "https://alloy.mock") {
       if (url.pathname === "/mesh/storage/upload-session" && req.method === "POST") {
-        if (req.headers.get("Authorization") === `Bearer ${GOOD_KEY}`) {
+        const auth = req.headers.get("Authorization");
+        const apiKey = auth?.replace(/^Bearer\s+/i, "") ?? "";
+        uploadSessionCalls.set(apiKey, (uploadSessionCalls.get(apiKey) ?? 0) + 1);
+        if (sessionFailsLeft > 0) {
+          sessionFailsLeft--;
+          return new Response("injected auth-oracle outage", { status: 503 });
+        }
+        const scripted = uploadSessionScripts.get(apiKey)?.shift();
+        if (scripted) {
+          return new Response(scripted.body ?? "", {
+            status: scripted.status,
+            headers: scripted.contentType
+              ? { "Content-Type": scripted.contentType }
+              : undefined,
+          });
+        }
+        if (
+          auth === `Bearer ${GOOD_KEY}` ||
+          auth === `Bearer ${FLAKY_V1_KEY}` ||
+          auth === `Bearer ${FLAKY_V2_KEY}` ||
+          auth === `Bearer ${RATE_LIMITED_KEY}` ||
+          auth === `Bearer ${MALFORMED_2XX_KEY}`
+        ) {
           return Response.json(uploadSessionBody());
         }
         return new Response("forbidden", { status: 403 });
@@ -179,6 +219,7 @@ interface StoredState {
   phase: string;
   finalizeAttempts: number;
   apiKey: string;
+  lastFinalizeError?: string;
   failure?: string;
 }
 
@@ -261,10 +302,38 @@ async function delayNextStagingPut(
   });
 }
 
+async function delayNextCsvStagingPut(
+  stub: Awaited<ReturnType<typeof sessionStub>>,
+): Promise<void> {
+  await runInDurableObject(stub, (instance: unknown) => {
+    Reflect.set(
+      instance as Record<string, unknown>,
+      "nextCsvStageDelayMs",
+      100,
+    );
+  });
+}
+
+async function failNextCsvCleanup(
+  stub: Awaited<ReturnType<typeof sessionStub>>,
+): Promise<void> {
+  await runInDurableObject(stub, (instance: unknown) => {
+    Reflect.set(
+      instance as Record<string, unknown>,
+      "nextCsvCleanupFailure",
+      true,
+    );
+  });
+}
+
 beforeEach(() => {
   SESSION = String(sessionCounter++);
   meshPuts = [];
   meshBodies = new Map();
+  failsLeft = 0;
+  sessionFailsLeft = 0;
+  uploadSessionScripts = new Map();
+  uploadSessionCalls = new Map();
 });
 
 describe("worker routing + auth", () => {
@@ -289,6 +358,81 @@ describe("worker routing + auth", () => {
       "X-Alloy-Seq": "0",
     });
     expect(res.status).toBe(401);
+  });
+
+  it("returns a retryable 503 when v1 auth is unavailable and does not negative-cache it", async () => {
+    mockAlloy({ failSessions: 1 });
+    const headers = {
+      Authorization: `Bearer ${FLAKY_V1_KEY}`,
+      "X-Alloy-Channel": "io",
+      "X-Alloy-Seq": "0",
+    };
+    const first = await post("/v1/chunk", "t_ns,x\n0000000000000000001,1\n", headers);
+    expect(first.status).toBe(503);
+    expect(await first.text()).toContain("temporarily unavailable");
+
+    const recovered = await post("/v1/chunk", "t_ns,x\n0000000000000000001,1\n", headers);
+    expect(recovered.status).toBe(204);
+  });
+
+  it("returns a retryable binary ACK when v2 auth is unavailable", async () => {
+    useBinaryRun();
+    mockAlloy({ failSessions: 1 });
+    const frame = binaryFrame(FrameType.Begin, beginPayload({ device: DEVICE }), 0);
+    const headers = { Authorization: `Bearer ${FLAKY_V2_KEY}` };
+
+    const first = await postBinary(frame, headers);
+    expect(first.status).toBe(503);
+    expect(await readAck(first)).toMatchObject({
+      status: AckStatus.Busy,
+      flags: AckFlag.Retryable,
+    });
+
+    const recovered = await postBinary(frame, headers);
+    expect(recovered.status).toBe(200);
+    expect(await readAck(recovered)).toMatchObject({ status: AckStatus.Accepted });
+  });
+
+  it("rejects and negative-caches only explicit upload-session 401/403 responses", async () => {
+    mockAlloy({
+      sessionReplies: {
+        [INVALID_401_KEY]: [{ status: 401, body: "unauthorized" }],
+        [INVALID_403_KEY]: [{ status: 403, body: "forbidden" }],
+      },
+    });
+    for (const apiKey of [INVALID_401_KEY, INVALID_403_KEY]) {
+      const headers = {
+        Authorization: `Bearer ${apiKey}`,
+        "X-Alloy-Channel": "io",
+        "X-Alloy-Seq": "0",
+      };
+      expect((await post("/v1/chunk", "t_ns,x\n1,1\n", headers)).status).toBe(401);
+      expect((await post("/v1/chunk", "t_ns,x\n1,1\n", headers)).status).toBe(401);
+      expect(uploadSessionCalls.get(apiKey)).toBe(1);
+    }
+  });
+
+  it("retries upload-session 429 and malformed 2xx responses without negative-caching", async () => {
+    mockAlloy({
+      sessionReplies: {
+        [RATE_LIMITED_KEY]: [{ status: 429, body: "rate limited" }],
+        [MALFORMED_2XX_KEY]: [
+          { status: 200, body: "{not-json", contentType: "application/json" },
+        ],
+      },
+    });
+    for (const apiKey of [RATE_LIMITED_KEY, MALFORMED_2XX_KEY]) {
+      const headers = {
+        Authorization: `Bearer ${apiKey}`,
+        "X-Alloy-Channel": "io",
+        "X-Alloy-Seq": "0",
+      };
+      const transient = await post("/v1/chunk", "t_ns,x\n1,1\n", headers);
+      expect(transient.status).toBe(503);
+      expect(transient.headers.get("Retry-After")).toBe("5");
+      expect((await post("/v1/chunk", "t_ns,x\n1,1\n", headers)).status).toBe(204);
+      expect(uploadSessionCalls.get(apiKey)).toBe(2);
+    }
   });
 
   it("rejects malformed headers", async () => {
@@ -428,6 +572,7 @@ describe("session lifecycle", () => {
     // attempt 1 auto-fires and fails against the injected 500; backoff alarm gets set
     const st = await waitForState((s) => s.finalizeAttempts === 1);
     expect(st.phase).toBe("finalizing");
+    expect(st.lastFinalizeError).toBe("mesh PUT HTTP 500");
 
     // chunks are refused mid-finalize
     expect((await chunk("io", 1, "t_ns,btn\n0000000000000000200,0\n")).status).toBe(503);
@@ -437,6 +582,136 @@ describe("session lifecycle", () => {
     expect(fired).toBe(true);
     await waitForState((s) => s.phase === "done");
     expect(meshPuts.some((p) => p.endsWith(".mcap"))).toBe(true);
+  });
+
+  it("serializes a delayed CSV staging PUT with finalization without restoring stale receiving state", async () => {
+    mockAlloy();
+    await chunk("io", 0, "t_ns,btn\n0000000000000000100,1\n");
+    const stub = await sessionStub();
+    await delayNextCsvStagingPut(stub);
+
+    const delayedChunk = chunk("io", 1, "t_ns,btn\n0000000000000000200,2\n");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const alarmRequest = runDurableObjectAlarm(stub);
+
+    const [chunkResponse, alarmRan] = await Promise.all([delayedChunk, alarmRequest]);
+    expect(chunkResponse.status).toBe(204);
+    expect(alarmRan).toBe(true);
+    const done = await waitForState((state) => state.phase === "done");
+    expect(done.apiKey).toBe("");
+
+    const path = `/test-bucket/uploads/sdk-uploads/${MESH}/${SESSION}/${DEVICE}_${SESSION}.mcap`;
+    const bytes = meshBodies.get(path);
+    expect(bytes).toBeDefined();
+    const reader = await McapIndexedReader.Initialize({ readable: new BufferReadable(bytes!) });
+    const payloads: Record<string, unknown>[] = [];
+    for await (const message of reader.readMessages({ topics: ["/io"] })) {
+      payloads.push(JSON.parse(new TextDecoder().decode(message.data)));
+    }
+    expect(payloads).toEqual([{ btn: 1 }, { btn: 2 }]);
+  });
+
+  it("purges CSV credentials on retry exhaustion and recovers through authenticated /v1/end", async () => {
+    mockAlloy({ failPuts: 10 });
+    await chunk("io", 0, "t_ns,btn\n0000000000000000100,1\n");
+    await post("/v1/end", null);
+
+    const stub = await sessionStub();
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      await runDurableObjectAlarm(stub);
+      await waitForState(
+        (state) => state.phase === "failed" || state.finalizeAttempts >= attempt,
+        5000,
+      );
+      if ((await storedState(stub))?.phase === "failed") break;
+    }
+    const failed = await waitForState((state) => state.phase === "failed", 5000);
+    expect(failed).toMatchObject({
+      finalizeAttempts: 10,
+      apiKey: "",
+      failure: "finalize_exhausted",
+    });
+    expect(await runInDurableObject(
+      stub,
+      (_instance: unknown, state: DurableObjectState) => state.storage.getAlarm(),
+    )).toBeNull();
+
+    mockAlloy({ failPuts: 0 });
+    expect((await post("/v1/end", null)).status).toBe(202);
+    await runDurableObjectAlarm(stub);
+    await waitForState((state) => state.phase === "done", 5000);
+    expect(meshPuts.some((path) => path.endsWith(".mcap"))).toBe(true);
+  });
+
+  it("migrates a legacy exhausted CSV state and recovers it through authenticated /v1/end", async () => {
+    mockAlloy();
+    await chunk("io", 0, "t_ns,btn\n0000000000000000100,1\n");
+    const stub = await sessionStub();
+    await runInDurableObject(stub, async (_instance: unknown, state: DurableObjectState) => {
+      const current = await state.storage.get<Record<string, unknown>>("state");
+      expect(current).toBeDefined();
+      await state.storage.put("state", {
+        ...current!,
+        phase: "finalizing",
+        finalizeAttempts: 10,
+        apiKey: "legacy-retained-key",
+        lastFinalizeError: "legacy terminal failure",
+      });
+      await state.storage.deleteAlarm();
+    });
+
+    // Fail the first recovered attempt so the test can observe both the rehydrated credential and
+    // the newly armed retry before allowing the deterministic retry to complete.
+    mockAlloy({ failPuts: 1 });
+    expect((await post("/v1/end", null)).status).toBe(202);
+    const recovering = await waitForState(
+      (state) => state.phase === "finalizing" && state.finalizeAttempts === 1,
+      5000,
+    );
+    expect(recovering.apiKey).toBe(GOOD_KEY);
+    expect(await runInDurableObject(
+      stub,
+      (_instance: unknown, state: DurableObjectState) => state.storage.getAlarm(),
+    )).not.toBeNull();
+
+    mockAlloy();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const done = await waitForState((state) => state.phase === "done", 5000);
+    expect(done.apiKey).toBe("");
+    expect(meshPuts.filter((path) => path.endsWith(".mcap"))).toHaveLength(1);
+  });
+
+  it("keeps CSV delivered state when staging cleanup fails after tombstone persistence", async () => {
+    mockAlloy();
+    await chunk("io", 0, "t_ns,btn\n0000000000000000100,1\n");
+    const stub = await sessionStub();
+    await failNextCsvCleanup(stub);
+
+    expect((await post("/v1/end", null)).status).toBe(202);
+    await runDurableObjectAlarm(stub);
+    const done = await waitForState((state) => state.phase === "done");
+    expect(done.apiKey).toBe("");
+
+    const durable = await runInDurableObject(
+      stub,
+      async (_instance: unknown, state: DurableObjectState) => ({
+        tombstone: await state.storage.get<{ mcapBytes: number }>("tombstone"),
+        alarm: await state.storage.getAlarm(),
+        chunks: state.storage.sql
+          .exec<{ count: number }>("SELECT COUNT(*) AS count FROM chunks")
+          .toArray()[0]!.count,
+      }),
+    );
+    expect(durable.tombstone?.mcapBytes).toBeGreaterThan(0);
+    expect(durable.alarm).toBeNull();
+    expect(durable.chunks).toBe(1);
+    const staged = await env.STAGING.list();
+    expect(staged.objects.some((object: R2Object) => object.key.includes(`/${SESSION}/`))).toBe(
+      true,
+    );
+    expect(meshPuts.filter((path) => path.endsWith(".mcap"))).toHaveLength(1);
+    expect((await chunk("io", 1, "t_ns,btn\n0000000000000000200,0\n")).status).toBe(409);
+    expect((await post("/v1/end", null)).status).toBe(204);
   });
 });
 

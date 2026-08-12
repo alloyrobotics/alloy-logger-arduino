@@ -102,6 +102,7 @@ export async function assembleMcap(
     ["mesh_path", info.meshPath],
   ]);
   if (meta?.firmware) sessionMeta.set("firmware", meta.firmware);
+  if (meta?.mission) sessionMeta.set("mission", meta.mission);
   if (meta?.session) sessionMeta.set("session_iso", meta.session);
   await writer.addMetadata({ name: "alloy", metadata: sessionMeta });
 
