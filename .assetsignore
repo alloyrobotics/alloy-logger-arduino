@@ -40,4 +40,4 @@ preview-worker.js
 wrangler.preview.jsonc
 assets-src/
 test/
-.uno-probe/
+extras/uno-probe/

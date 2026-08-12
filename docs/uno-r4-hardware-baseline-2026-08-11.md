@@ -91,8 +91,8 @@ The required conditions are now proven on physical hardware:
 - verified outbound TLS and HTTP; and
 - bounded failure reporting when optional NTP is unavailable.
 
-The temporary reproducible probe remains in `.uno-probe/UnoProbe` with its credential-free host
-runner in `.uno-probe/run_probe.py`.
+The temporary reproducible probe remains in `extras/uno-probe/UnoProbe` with its credential-free
+host runner in `extras/uno-probe/run_probe.py`.
 
 ## Physical binary-ingest matrix
 
