@@ -154,7 +154,7 @@ private:
   static String uriEncode(const String& s) {
     String o; for (size_t i = 0; i < s.length(); i++) { char c = s[i];
       if (isalnum((uint8_t)c) || c=='/'||c=='-'||c=='_'||c=='.'||c=='~') o += c;
-      else { char b[4]; sprintf(b, "%%%02X", (uint8_t)c); o += b; } }
+      else { char b[4]; snprintf(b, sizeof(b), "%%%02X", (uint8_t)c); o += b; } }
     return o;
   }
 };
