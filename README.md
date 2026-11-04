@@ -120,7 +120,8 @@ tasks were ported to the RA4M1.
 - **Non-blocking.** `log()` formats one compact CSV row on the caller's stack (one `%.6g` per
   field) and appends it to a RAM buffer under a short mutex — tens of microseconds, no network,
   no filesystem, no allocation. A background task on **core 0** does the TLS upload, so a control
-  loop on core 1 is never disturbed.
+  loop on core 1 is never disturbed. Single-core chips (ESP32-C3, C6, S2) share that one core:
+  see the note on cores below.
 - **Reliable by default.** RAM-buffered with **store-and-forward** — if WiFi drops, buffers queue and
   flush on reconnect; if the uplink can't keep up, the oldest buffer is shed (counted), never a crash.
 - **Zero flash wear.** Nothing touches the filesystem, so it coexists with OTA / `min_spiffs` layouts.
@@ -349,7 +350,11 @@ MCAP, replay, or mission view).
   calls `log()`.)
 - **The library's tasks run on core 0** (uploader at priority 4, sampler at 3). Arduino `loop()`
   on core 1 is unaffected; if your sketch pins its own work to core 0, keep it below priority 4 or
-  expect brief preemption during TLS writes.
+  expect brief preemption during TLS writes. On single-core chips (ESP32-C3, C6, S2) `loop()`
+  shares the core with the uploader: each TLS handshake pauses it for about 1.5 s (measured on an
+  ESP32-C3 at 160 MHz; one per connection, and the connection is reused between uploads). Rows
+  keep their true timestamps, so the pause shows as a gap, not as wrong data. Run hard real-time
+  control on a dual-core ESP32 or ESP32-S3, or in your own higher-priority task.
 - **A real UTC clock is required** (timestamps + session ids; SigV4 in direct mode) — the library
   runs SNTP automatically. If SNTP hasn't synced 5 s after the uploader starts (some networks
   filter or delay NTP for a minute or more), it sets the clock to the second from the `Date`
