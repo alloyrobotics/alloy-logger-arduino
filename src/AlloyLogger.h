@@ -173,6 +173,7 @@ private:
   Slot* slotFor(const char* chan);
   static uint32_t hashStr(const char* s, int n, uint32_t h = 2166136261u);
   static void taskTramp(void* self);
+  bool clockFromServer();           // SNTP fallback: set the clock from the server's Date header
   void taskLoop();
   String buildMetaJson();
 
@@ -215,6 +216,7 @@ private:
   bool     _insecure = false;
   bool     _direct = false;
   const char* _ingestUrl = "https://ingest.alloylogger.com";
+  String   _clockUrl;         // clockFromServer() target: ingest /v1/health, or the data API
   uint32_t _finalizeMs = 0;   // 0 = server default
 
   // describe() store

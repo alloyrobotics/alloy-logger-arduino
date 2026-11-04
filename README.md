@@ -64,7 +64,7 @@ If Serial prints `CHECK NEEDED`, use the diagnostics rather than guessing:
 | Signal | What it means | First thing to check |
 |---|---|---|
 | Wi-Fi timeout before `[2/4]` | The ESP32 never joined the network. | Exact SSID/password and a 2.4 GHz network. |
-| `state=syncing-clock` at the end | The uploader could not obtain UTC time. | The network may block NTP; retry on another network or phone hotspot. |
+| `state=syncing-clock` at the end | The uploader could get UTC time from neither NTP nor the Alloy server. | Both need internet access; check the network reaches the internet, or retry on a phone hotspot. |
 | `last_status=401` or `403` | Alloy rejected the data API key. | Copy a fresh key and reflash; never paste it into Serial or an issue. |
 | Negative `last_status` | Wi-Fi, DNS, TLS, or the HTTPS connection failed. | Restore the network while the board stays powered; the retained buffer keeps retrying. |
 | `last_status=429` or `5xx` | Rate limit or temporary service failure. | Leave the board powered; delivery retries with bounded backoff. |
@@ -201,7 +201,10 @@ alloy.begin(ALLOY_KEY, "demos/auto");       // register before begin()
 ```
 `scope()` emits an `io` row only when a pin changes (plus a heartbeat every few seconds), so a
 quiet board costs almost nothing. Pins configured *after* `begin()` are picked up by a periodic
-re-scan. `gpioN_hz` is a measured floor — MHz buses read as "very fast", not exact. Watched fields
+re-scan. `gpioN_hz` is a measured floor — MHz buses read as "very fast", not exact. Pin discovery
+runs on ESP32, ESP32-S3 and ESP32-C3 and never touches flash, PSRAM, serial-console or USB pads;
+boot-strapping pins with a reset-default pull (GPIO0, and GPIO45/46 on the S3) also appear. On
+other ESP32 chips `scope()` still streams `sys` but finds no pins. Watched fields
 sharing a channel are written as one aligned row per tick — same CSV tables, same `describe()`
 semantics. Mix freely with explicit `log()` calls.
 
@@ -348,9 +351,11 @@ MCAP, replay, or mission view).
   on core 1 is unaffected; if your sketch pins its own work to core 0, keep it below priority 4 or
   expect brief preemption during TLS writes.
 - **A real UTC clock is required** (timestamps + session ids; SigV4 in direct mode) — the library
-  runs SNTP automatically. Records logged
-  before the first sync are stamped with a boot-relative clock and rebased to wall-clock time
-  in-buffer once SNTP lands, so nothing is lost or mis-timed.
+  runs SNTP automatically. If SNTP hasn't synced 5 s after the uploader starts (some networks
+  filter or delay NTP for a minute or more), it sets the clock to the second from the `Date`
+  header of a verified HTTPS request to the Alloy server it already uses, and SNTP refines it
+  later. Records logged before the clock is set are stamped with a boot-relative clock and rebased
+  to wall-clock time in-buffer, so nothing is lost or mis-timed.
 - **TLS is verified by default.** ESP32 uses its embedded Mozilla bundle and retains the explicit
   `alloy.insecure()` escape hatch. UNO R4 delegates to WiFiS3's verified public roots and has no
   insecure fallback.

@@ -1525,6 +1525,31 @@ static bool directUploadSessionRecoveryPolicy() {
   return true;
 }
 
+static bool httpDateClockFallback() {
+  using namespace alloy_logger_internal;
+  uint32_t epoch = 0;
+  CHECK(parseHttpDate("Thu, 01 Jan 1970 00:00:00 GMT", &epoch) && epoch == 0u);
+  CHECK(parseHttpDate("Sun, 06 Nov 1994 08:49:37 GMT", &epoch) && epoch == 784111777u);
+  CHECK(parseHttpDate("Wed, 04 Nov 2026 13:06:33 GMT", &epoch) && epoch == 1793797593u);
+  CHECK(parseHttpDate("Thu, 29 Feb 2024 23:59:59 GMT", &epoch) && epoch == 1709251199u);
+  CHECK(parseHttpDate("Fri, 01 Mar 2024 00:00:00 GMT", &epoch) && epoch == 1709251200u);
+  CHECK(parseHttpDate("Thu, 31 Dec 2099 23:59:59 GMT", &epoch) && epoch == 4102444799u);
+  epoch = 7;
+  CHECK(!parseHttpDate("Sun, 29 Feb 2026 00:00:00 GMT", &epoch));   // 2026 is not a leap year
+  CHECK(!parseHttpDate("Sun, 06 Nov 1994 08:49:37 UTC", &epoch));
+  CHECK(!parseHttpDate("Sunday, 06-Nov-94 08:49:37 GMT", &epoch));  // obsolete RFC 850 form
+  CHECK(!parseHttpDate("Sun Nov  6 08:49:37 1994", &epoch));        // obsolete asctime form
+  CHECK(!parseHttpDate("Sun, 06 Foo 1994 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 06 Nov 1994 24:00:00 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 6 Nov 1994 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 06 Nov 1969 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("", &epoch));
+  CHECK(!parseHttpDate(nullptr, &epoch));
+  CHECK(epoch == 7u);                                                  // untouched on failure
+  CHECK(kSntpGraceMs > 0u);
+  return true;
+}
+
 struct TestCase {
   const char* name;
   bool (*function)();
@@ -1553,6 +1578,7 @@ int main() {
       {"ESP32 end rejects returned lost buffers", loggerEndRejectsReturnedLostBuffers},
       {"ESP32 end waits for metadata", loggerEndWaitsForMetadata},
       {"ESP32 direct session recovery", directUploadSessionRecoveryPolicy},
+      {"ESP32 HTTP Date clock fallback", httpDateClockFallback},
   };
   size_t passed = 0;
   for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {

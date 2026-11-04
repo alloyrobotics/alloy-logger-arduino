@@ -13,6 +13,51 @@
 #include "soc/gpio_sig_map.h"     // scope(): SIG_GPIO_OUT_IDX
 #include "AlloyReliability.h"
 
+// scope() reads the GPIO matrix registers directly. Chips differ in pin count (one or two 32-bit
+// banks), register field names, and which pads belong to flash, PSRAM, the serial console and
+// native USB. Supported: ESP32, ESP32-S3, ESP32-C3. On other chips scope() still enables the
+// "sys" channel but discovers no pins.
+#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#define ALLOY_SCOPE_PINS 1
+static inline uint64_t alloyGpioIn()    { return ((uint64_t)GPIO.in1.val << 32) | GPIO.in; }
+static inline uint64_t alloyGpioOutEn() { return ((uint64_t)GPIO.enable1.val << 32) | GPIO.enable; }
+static inline volatile uint32_t* alloyGpioInReg(uint8_t pin) { return pin < 32 ? &GPIO.in : &GPIO.in1.val; }
+static inline uint32_t alloyOutSel(int pin) { return GPIO.func_out_sel_cfg[pin].func_sel; }
+static inline uint32_t alloyInSel(int sig)  { return GPIO.func_in_sel_cfg[sig].func_sel; }
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+#define ALLOY_SCOPE_PINS 1
+static inline uint64_t alloyGpioIn()    { return GPIO.in.val; }
+static inline uint64_t alloyGpioOutEn() { return GPIO.enable.val; }
+static inline volatile uint32_t* alloyGpioInReg(uint8_t) { return &GPIO.in.val; }
+static inline uint32_t alloyOutSel(int pin) { return GPIO.func_out_sel_cfg[pin].out_sel; }
+static inline uint32_t alloyInSel(int sig)  { return GPIO.func_in_sel_cfg[sig].in_sel; }
+#else
+#define ALLOY_SCOPE_PINS 0
+#endif
+
+#if ALLOY_SCOPE_PINS
+// Pads scope() must never probe: touching a flash or PSRAM bus pad crashes the chip, and the
+// console and USB pads carry the serial monitor.
+static uint64_t alloyScopeReserved() {
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  uint64_t m = (0x3FULL << 6) | (1ULL << 1) | (1ULL << 3);  // flash 6-11, UART0 TX/RX
+  if (psramFound()) m |= (1ULL << 16) | (1ULL << 17);        // WROVER PSRAM clock/cs
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+  uint64_t m = (0x7FULL << 26)                              // flash/quad PSRAM 26-32
+             | (1ULL << 43) | (1ULL << 44)                  // UART0 TX/RX
+             | (1ULL << 19) | (1ULL << 20);                 // USB D-/D+
+#if defined(CONFIG_SPIRAM_MODE_OCT) || defined(CONFIG_ESPTOOLPY_OCT_FLASH)
+  m |= 0x1FULL << 33;                                        // octal PSRAM/flash 33-37
+#endif
+#else  // ESP32-C3
+  uint64_t m = (0x3FULL << 12)                              // flash 12-17
+             | (1ULL << 20) | (1ULL << 21)                  // UART0 RX/TX
+             | (1ULL << 18) | (1ULL << 19);                 // USB D-/D+
+#endif
+  return m;
+}
+#endif
+
 // Local status values are deliberately outside HTTPClient's small negative error range.
 static constexpr int ALLOY_STATUS_WIFI          = -1000;
 static constexpr int ALLOY_STATUS_CONFIG        = -1001;
@@ -146,9 +191,10 @@ AlloyLogger& AlloyLogger::scope() {
 // Count level transitions on a pin by spinning on the input register for `us` microseconds.
 // Faithful to ~1MHz; undercounts above (a measured floor — "very fast" is the honest answer).
 uint32_t AlloyLogger::scopePollBurst(uint8_t pin, uint32_t us) {
+#if ALLOY_SCOPE_PINS
   uint32_t n = 0;
   uint32_t bit = 1UL << (pin & 31);
-  volatile uint32_t* reg = (pin < 32) ? &GPIO.in : &GPIO.in1.val;
+  volatile uint32_t* reg = alloyGpioInReg(pin);
   bool last = (*reg & bit) != 0;
   uint32_t t0 = micros();
   while ((uint32_t)(micros() - t0) < us) {
@@ -156,6 +202,10 @@ uint32_t AlloyLogger::scopePollBurst(uint8_t pin, uint32_t us) {
     if (v != last) { n++; last = v; }
   }
   return n;
+#else
+  (void)pin; (void)us;
+  return 0;
+#endif
 }
 
 // IRAM so it keeps counting during flash ops. Only ever increments and CLEARS int_ena —
@@ -163,7 +213,9 @@ uint32_t AlloyLogger::scopePollBurst(uint8_t pin, uint32_t us) {
 void IRAM_ATTR AlloyLogger::scopeIsrHandler(void* arg) {
   ScopeIsr* c = (ScopeIsr*)arg;
   c->edges = c->edges + 1;
+#if ALLOY_SCOPE_PINS
   if (c->edges - c->tickBase > ALLOY_SCOPE_BURST_CAP) GPIO.pin[c->pin].int_ena = 0;
+#endif
 }
 
 void AlloyLogger::scopeAddPin(uint8_t pin) {
@@ -187,28 +239,34 @@ void AlloyLogger::scopeAddPin(uint8_t pin) {
 // outputs, pins routed to peripherals through the GPIO matrix (either direction), and
 // inputs with a pull configured. Cheap enough to re-run every ~2s to catch late pinMode()s.
 void AlloyLogger::scopeScan() {
-  uint64_t inUse = ((uint64_t)GPIO.enable1.val << 32) | GPIO.enable;      // software outputs
-  for (int p = 0; p < 40; p++)                                            // peripheral outputs
-    if (GPIO.func_out_sel_cfg[p].func_sel != SIG_GPIO_OUT_IDX) inUse |= (1ULL << p);
-  for (int sig = 0; sig < 256; sig++) {                                   // peripheral inputs
-    if (GPIO.func_in_sel_cfg[sig].sig_in_sel && GPIO.func_in_sel_cfg[sig].func_sel < 40)
-      inUse |= (1ULL << GPIO.func_in_sel_cfg[sig].func_sel);
+#if ALLOY_SCOPE_PINS
+  const int nPins = SOC_GPIO_PIN_COUNT;
+  const int nSigs = sizeof(GPIO.func_in_sel_cfg) / sizeof(GPIO.func_in_sel_cfg[0]);
+  uint64_t inUse = alloyGpioOutEn();                                      // software outputs
+  for (int p = 0; p < nPins; p++)                                         // peripheral outputs
+    if (alloyOutSel(p) != SIG_GPIO_OUT_IDX) inUse |= (1ULL << p);
+  for (int sig = 0; sig < nSigs; sig++) {                                 // peripheral inputs
+    if (GPIO.func_in_sel_cfg[sig].sig_in_sel && alloyInSel(sig) < (uint32_t)nPins)
+      inUse |= (1ULL << alloyInSel(sig));
   }
-  for (int p = 0; p < 40; p++) {                                          // configured inputs
+  for (int p = 0; p < nPins; p++) {                                       // configured inputs
     if (!GPIO_IS_VALID_GPIO((gpio_num_t)p)) continue;
     uint32_t mux = REG_READ(GPIO_PIN_MUX_REG[p]);
+#if defined(CONFIG_IDF_TARGET_ESP32)
     // pins 34-39 have no pull circuitry, so bare FUN_IE is the configured-input signal there
     if ((mux & FUN_IE) && ((mux & (FUN_PU | FUN_PD)) || p >= 34)) inUse |= (1ULL << p);
+#else
+    if ((mux & FUN_IE) && (mux & (FUN_PU | FUN_PD))) inUse |= (1ULL << p);
+#endif
   }
 
-  inUse &= ~(0x3FULL << 6);                                // flash pins 6-11: never touch
-  inUse &= ~((1ULL << 1) | (1ULL << 3));                   // UART0 TX/RX (serial console)
-  if (psramFound()) inUse &= ~((1ULL << 16) | (1ULL << 17)); // WROVER PSRAM clock/cs: fatal to probe
+  inUse &= ~alloyScopeReserved();                          // flash/PSRAM/console/USB: never touch
   for (uint8_t i = 0; i < _nWatch; i++)                    // pins the user watches as analog
     if (_watch[i].kind == 1) inUse &= ~(1ULL << _watch[i].pin);
 
-  for (int p = 0; p < 40; p++)
+  for (int p = 0; p < nPins; p++)
     if (((inUse >> p) & 1) && GPIO_IS_VALID_GPIO((gpio_num_t)p)) scopeAddPin((uint8_t)p);
+#endif
 }
 
 void AlloyLogger::scopeInit() {
@@ -272,7 +330,11 @@ void AlloyLogger::scopeTick() {
     }
   }
 
-  uint64_t lv = (((uint64_t)GPIO.in1.val << 32) | GPIO.in) & _scopeMask;
+#if ALLOY_SCOPE_PINS
+  uint64_t lv = alloyGpioIn() & _scopeMask;
+#else
+  uint64_t lv = 0;
+#endif
   if (lv != _scopeLevels) activity = true;
 
   _scopeSinceRow++;
@@ -417,6 +479,7 @@ bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* da
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   if (_direct) _up.begin(dataUrl, apiKey, _insecure);
   else         _cloud.begin(_ingestUrl, apiKey, _insecure);
+  _clockUrl = _direct ? String(dataUrl) : String(_ingestUrl) + "/v1/health";
 
   _pool = new Buf[_nBuf]();
   _freeQ = xQueueCreate(_nBuf, sizeof(Buf*));
@@ -652,8 +715,50 @@ bool AlloyLogger::end(uint32_t drainMs) {
 
 void AlloyLogger::taskTramp(void* self) { static_cast<AlloyLogger*>(self)->taskLoop(); }
 
+// Set the clock from the HTTP Date header of the server the uploader already talks to. The
+// ESP32 cores build mbedTLS without certificate date checks, so this verified request works
+// before the clock is set. Date is truncated to the second and generated before the reply
+// leaves the server, so this clock runs slightly behind and a later SNTP sync steps it forward,
+// never back. SNTP keeps running; the session's boot offset is captured once, so a run stays
+// internally consistent either way.
+bool AlloyLogger::clockFromServer() {
+  WiFiClientSecure cli;
+  if (_insecure) cli.setInsecure();
+  else {
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+    cli.setCACertBundle(alloy_crt_bundle_start, alloy_crt_bundle_end - alloy_crt_bundle_start);
+#else
+    cli.setCACertBundle(alloy_crt_bundle_start);
+#endif
+  }
+  HTTPClient http;
+  if (!http.begin(cli, _clockUrl)) return false;
+  const char* keys[] = {"Date"};
+  http.collectHeaders(keys, 1);
+  int code = http.GET();                               // any status carries a Date header
+  String date = code > 0 ? http.header("Date") : String();
+  http.end();
+  uint32_t epoch = 0;
+  if (!alloy_logger_internal::parseHttpDate(date.c_str(), &epoch) || epoch < ALLOY_EPOCH_SANE)
+    return false;
+  if (time(nullptr) >= ALLOY_EPOCH_SANE) return true;  // SNTP landed during the request
+  struct timeval tv = {(time_t)epoch, 0};
+  return settimeofday(&tv, nullptr) == 0;
+}
+
 void AlloyLogger::taskLoop() {
-  while (time(nullptr) < ALLOY_EPOCH_SANE) vTaskDelay(pdMS_TO_TICKS(200));  // wait for SNTP (SigV4 needs UTC)
+  // UTC is needed for the session id, row stamps and (direct mode) SigV4. Prefer SNTP; if it
+  // hasn't landed after a short grace, take the server's clock rather than hold every buffer.
+  uint32_t t0 = millis(), nextTry = alloy_logger_internal::kSntpGraceMs;
+  uint8_t clockAttempt = 0;
+  while (time(nullptr) < ALLOY_EPOCH_SANE) {
+    if ((uint32_t)(millis() - t0) >= nextTry) {
+      if (waitForWiFi() && clockFromServer()) break;
+      nextTry = (uint32_t)(millis() - t0) + retryDelayMs(clockAttempt);
+      if (clockAttempt < 6) clockAttempt++;
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
   _session = (uint32_t)time(nullptr);
 
   // Clock is now real: capture the boot→wall offset used to rebase pre-sync row stamps.
