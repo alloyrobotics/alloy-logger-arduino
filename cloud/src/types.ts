@@ -20,6 +20,8 @@ export interface ChunkMeta {
 export interface DeviceMeta {
   device?: string;
   firmware?: string;
+  /** Human-readable run label set by AlloyLogger::mission(). */
+  mission?: string;
   session?: string; // ISO
   fields?: MetaField[];
 }

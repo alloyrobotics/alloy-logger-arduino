@@ -120,6 +120,24 @@ describe("assembleMcap edge cases", () => {
     expect(reader.channelsById.size).toBe(2);
   });
 
+  it("preserves a human-readable mission label in MCAP metadata", async () => {
+    const src = sourceFromBuffers("battery", [
+      csv("t_ns,volts\n0000000000000000100,12.4\n"),
+    ]);
+    const bytes = (await assembleMcap([src], { mission: "driveway brake test" }, {
+      device: "rover-01",
+      session: "1",
+      meshPath: "robots/rover",
+    }))!;
+    const reader = await McapIndexedReader.Initialize({
+      readable: new BufferReadable(bytes),
+    });
+    const metadata = [];
+    for await (const item of reader.readMetadata({ name: "alloy" })) metadata.push(item);
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]!.metadata.get("mission")).toBe("driveway brake test");
+  });
+
   it("starts a new schema generation when a channel's field set changes", async () => {
     const src = sourceFromBuffers("io", [
       csv("t_ns,btn\n0000000000000000100,1\n"),

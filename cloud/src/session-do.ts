@@ -93,7 +93,7 @@ function validateProjectedBounds(
 
 interface State {
   phase: "receiving" | "finalizing" | "done" | "failed";
-  apiKey: string; // held ONLY for the session's lifetime; purged the moment finalize succeeds
+  apiKey: string; // held only while receiving/finalizing; purged on success or retry exhaustion
   keyHash16: string;
   device: string;
   session: string;
@@ -101,6 +101,7 @@ interface State {
   lastChunkAt: number;
   finalizeAttempts: number;
   inactivityMs: number;
+  lastFinalizeError?: string;
   /** Missing on v1 objects created before the binary route existed; those are CSV sessions. */
   format?: "csv" | "binary";
   runIdHex?: string;
@@ -120,6 +121,8 @@ export class SessionDO implements DurableObject {
   // interleaving/crash boundaries without moving an I/O object across workerd contexts.
   private nextBinaryStageDelayMs = 0;
   private nextBinaryStageFailureAfterPut = false;
+  private nextCsvStageDelayMs = 0;
+  private nextCsvCleanupFailure = false;
 
   constructor(
     private ctx: DurableObjectState,
@@ -200,12 +203,25 @@ export class SessionDO implements DurableObject {
     return object;
   }
 
+  private async stageCsvObject(r2key: string, bytes: Uint8Array): Promise<R2Object | null> {
+    const delayMs = this.nextCsvStageDelayMs;
+    this.nextCsvStageDelayMs = 0;
+    if (delayMs > 0) await scheduler.wait(delayMs);
+    return this.env.STAGING.put(r2key, bytes);
+  }
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const route = url.pathname; // /v1/* or /v2/frame (Worker validated everything)
 
     if (route === "/v2/frame") return this.serializedBinaryFrame(req);
 
+    // R2 awaits yield the input gate. Serialize the legacy CSV path with alarms as well, so a
+    // staging request cannot resume after finalization and overwrite `done` with stale state.
+    return this.withBinaryLock(() => this.onCsvRequest(req, route));
+  }
+
+  private async onCsvRequest(req: Request, route: string): Promise<Response> {
     let s = await this.state();
 
     // Legacy objects predate the format field and are therefore CSV. A format can never change
@@ -215,8 +231,45 @@ export class SessionDO implements DurableObject {
     if (s?.phase === "done") {
       return route === "/v1/end" ? new Response(null, { status: 204 }) : new Response("session finalized", { status: 409 });
     }
+    // Releases before the key-purge terminal state left exhausted CSV sessions persisted as
+    // `finalizing` with no alarm. Normalize that legacy shape before routing the request so the
+    // retained credential is removed, and an authenticated /v1/end can recover it below.
+    if (s?.phase === "finalizing" && s.finalizeAttempts >= MAX_FINALIZE_ATTEMPTS) {
+      s = {
+        ...s,
+        phase: "failed",
+        apiKey: "",
+        failure: "finalize_exhausted",
+        failedAt: s.failedAt ?? Date.now(),
+      };
+      await this.ctx.storage.put("state", s);
+      await this.ctx.storage.deleteAlarm();
+    }
+    if (s?.phase === "failed") {
+      if (route !== "/v1/end") {
+        return new Response("finalization failed; retry /v1/end", { status: 503 });
+      }
+      s = {
+        ...s,
+        phase: "finalizing",
+        apiKey: (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, ""),
+        finalizeAttempts: 0,
+        lastFinalizeError: undefined,
+        failure: undefined,
+        failedAt: undefined,
+      };
+      // Arm first so a persisted credential is never left without a durable cleanup attempt.
+      await this.ctx.storage.setAlarm(Date.now());
+      await this.ctx.storage.put("state", s);
+      return new Response(null, { status: 202 });
+    }
     if (s?.phase === "finalizing") {
-      if (route === "/v1/end") return new Response(null, { status: 202 });
+      if (route === "/v1/end") {
+        return new Response("finalize in progress", {
+          status: 202,
+          headers: { "Retry-After": "2" },
+        });
+      }
       return new Response("finalize in progress", { status: 503, headers: { "Retry-After": "5" } });
     }
 
@@ -253,9 +306,9 @@ export class SessionDO implements DurableObject {
   }
 
   /**
-   * R2 awaits permit Durable Object request interleaving. Keep the entire binary state transition
-   * serialized so no request can ACK data derived from a frame another request later rolls back.
-   * Alarms use this same queue, so finalization always observes one committed frame snapshot.
+   * R2 awaits permit Durable Object request interleaving. Keep every ingest state transition
+   * serialized so no request can commit against a stale lifecycle snapshot. Alarms use this same
+   * queue, so finalization always observes one committed staging snapshot.
    */
   private async withBinaryLock<T>(operation: () => Promise<T>): Promise<T> {
     const preceding = this.binaryTail;
@@ -426,6 +479,7 @@ export class SessionDO implements DurableObject {
         phase: "finalizing",
         apiKey: (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, ""),
         finalizeAttempts: 0,
+        lastFinalizeError: undefined,
         failure: undefined,
         failedAt: undefined,
       };
@@ -1159,7 +1213,7 @@ export class SessionDO implements DurableObject {
 
     const body = new Uint8Array(await req.arrayBuffer());
     const r2key = `${this.stagePrefix(s)}${channel}/${String(seq).padStart(10, "0")}.csv`;
-    await this.env.STAGING.put(r2key, body);
+    await this.stageCsvObject(r2key, body);
     this.ctx.storage.sql.exec(
       "INSERT INTO chunks(channel, seq, r2key, bytes) VALUES (?, ?, ?, ?)",
       channel,
@@ -1173,7 +1227,7 @@ export class SessionDO implements DurableObject {
 
   private async onMeta(req: Request, s: State): Promise<Response> {
     const body = new Uint8Array(await req.arrayBuffer());
-    await this.env.STAGING.put(`${this.stagePrefix(s)}_meta.json`, body); // idempotent overwrite
+    await this.stageCsvObject(`${this.stagePrefix(s)}_meta.json`, body); // idempotent overwrite
     await this.armAlarm(s);
     return new Response(null, { status: 204 });
   }
@@ -1207,8 +1261,9 @@ export class SessionDO implements DurableObject {
       await this.finalize(s);
     } catch (err) {
       s.finalizeAttempts++;
+      s.lastFinalizeError = (err instanceof Error ? err.message : String(err)).slice(0, 240);
       console.error(
-        `finalize failed (attempt ${s.finalizeAttempts}) device=${s.device} session=${s.session}: ${err}`,
+        `finalize failed (attempt ${s.finalizeAttempts}) device=${s.device} session=${s.session}: ${s.lastFinalizeError}`,
       );
       if (s.finalizeAttempts < MAX_FINALIZE_ATTEMPTS) {
         if (s.format === "binary") {
@@ -1216,8 +1271,8 @@ export class SessionDO implements DurableObject {
         } else {
           await this.ctx.storage.put("state", s);
         }
-        const backoffMin = Math.min(2 ** s.finalizeAttempts, 60);
-        await this.ctx.storage.setAlarm(Date.now() + backoffMin * 60_000);
+        const backoffSeconds = Math.min(2 ** s.finalizeAttempts, 60);
+        await this.ctx.storage.setAlarm(Date.now() + backoffSeconds * 1000);
       } else if (s.format === "binary") {
         s.phase = "failed";
         s.apiKey = "";
@@ -1226,8 +1281,12 @@ export class SessionDO implements DurableObject {
         this.ctx.storage.transactionSync(() => this.writeBinaryState(s));
         await this.ctx.storage.deleteAlarm();
       } else {
-        // Keep legacy v1 exhaustion behavior unchanged.
+        s.phase = "failed";
+        s.apiKey = "";
+        s.failure = "finalize_exhausted";
+        s.failedAt = Date.now();
         await this.ctx.storage.put("state", s);
+        await this.ctx.storage.deleteAlarm();
       }
     }
   }
@@ -1289,9 +1348,7 @@ export class SessionDO implements DurableObject {
         `${s.meshPath}/${s.session}`,
       );
       if (!sess) throw new Error("upload-session mint failed at finalize");
-      if (!(await putToMesh(sess, `${s.device}_${s.session}.mcap`, mcap, "application/octet-stream"))) {
-        throw new Error("mcap PUT failed");
-      }
+      await putToMesh(sess, `${s.device}_${s.session}.mcap`, mcap, "application/octet-stream");
       if (metaBytes) {
         // best-effort: the semantics sidecar helps Alloy AI but must not fail the run
         await putToMesh(sess, `${s.device}_meta.json`, metaBytes, "application/json").catch(() => {});
@@ -1377,9 +1434,7 @@ export class SessionDO implements DurableObject {
         `${s.meshPath}/${s.session}`,
       );
       if (!sess) throw new Error("upload-session mint failed at binary finalize");
-      if (!(await putToMesh(sess, `${s.device}_${s.session}.mcap`, mcap, "application/octet-stream"))) {
-        throw new Error("binary mcap PUT failed");
-      }
+      await putToMesh(sess, `${s.device}_${s.session}.mcap`, mcap, "application/octet-stream");
     }
 
     await this.markDone(s, mcap.byteLength);
@@ -1400,6 +1455,7 @@ export class SessionDO implements DurableObject {
       meshPath: s.meshPath,
       format: s.format ?? "csv",
       mcapBytes,
+      finalizeAttempts: s.finalizeAttempts,
       finalizedAt: Date.now(),
     };
 
@@ -1440,17 +1496,30 @@ export class SessionDO implements DurableObject {
       return;
     }
 
-    // Preserve the legacy CSV cleanup/terminal ordering exactly.
+    // Publish the delivered tombstone before cleanup. If the isolate dies after the deterministic
+    // mesh PUT, retries must not depend on staging objects that cleanup may already have removed.
+    await this.ctx.storage.put<unknown>({ state: doneState, tombstone });
+    await this.ctx.storage.deleteAlarm();
+
+    // Best-effort cleanup. The bucket lifecycle is the fallback after delivery is recorded.
     const keys = this.ctx.storage.sql
       .exec<{ r2key: string }>("SELECT r2key FROM chunks")
       .toArray()
       .map((r) => r.r2key);
     keys.push(`${this.stagePrefix(s)}_meta.json`);
-    for (let i = 0; i < keys.length; i += 1000) {
-      await this.env.STAGING.delete(keys.slice(i, i + 1000));
+    try {
+      if (this.nextCsvCleanupFailure) {
+        this.nextCsvCleanupFailure = false;
+        throw new Error("injected CSV staging cleanup failure");
+      }
+      for (let i = 0; i < keys.length; i += 1000) {
+        await this.env.STAGING.delete(keys.slice(i, i + 1000));
+      }
+      this.ctx.storage.sql.exec("DELETE FROM chunks");
+    } catch (error) {
+      console.warn(
+        `staging cleanup deferred device=${s.device} session=${s.session}: ${String(error)}`,
+      );
     }
-    this.ctx.storage.sql.exec("DELETE FROM chunks");
-    await this.ctx.storage.put<unknown>({ state: doneState, tombstone });
-    await this.ctx.storage.deleteAlarm();
   }
 }

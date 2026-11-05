@@ -1,5 +1,6 @@
 #include <alloy/device/core.h>
 #include <alloy/device/protocol.h>
+#include <AlloyReliability.h>
 
 #include <math.h>
 #include <stdint.h>
@@ -1480,6 +1481,75 @@ static bool corruptionDuringDrainFaults() {
   return true;
 }
 
+static bool loggerEndRejectsReturnedLostBuffers() {
+  using namespace alloy_logger_internal;
+  CHECK(endGate(true, true, 4, 4, 403) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, 409) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, kDataLossStatus) == END_FAILED);
+  CHECK(endGate(true, true, 3, 4, 403) == END_WAITING);
+  CHECK(endGate(true, true, 4, 4, 0) == END_READY);
+  return true;
+}
+
+static bool loggerEndWaitsForMetadata() {
+  using namespace alloy_logger_internal;
+  CHECK(endGate(false, false, 4, 4, 0) == END_WAITING);
+  CHECK(endGate(true, false, 4, 4, 0) == END_FAILED);
+  CHECK(endGate(true, true, 4, 4, 0) == END_READY);
+  return true;
+}
+
+static bool directUploadSessionRecoveryPolicy() {
+  using namespace alloy_logger_internal;
+  const char* fields[] = {
+      "bucket", "https://r2.example", "auto", "uploads/path", "access", "secret", "token",
+  };
+  CHECK(uploadSessionComplete(fields[0], fields[1], fields[2], fields[3],
+                              fields[4], fields[5], fields[6]));
+  for (size_t missing = 0; missing < sizeof(fields) / sizeof(fields[0]); ++missing) {
+    const char* copy[7];
+    memcpy(copy, fields, sizeof(fields));
+    copy[missing] = "";
+    CHECK(!uploadSessionComplete(copy[0], copy[1], copy[2], copy[3],
+                                 copy[4], copy[5], copy[6]));
+  }
+  CHECK(!uploadSessionComplete("bucket", "r2.example", "auto", "uploads/path",
+                               "access", "secret", "token"));
+  CHECK(!uploadSessionComplete("bucket", "h", "auto", "uploads/path",
+                               "access", "secret", "token"));
+  CHECK(kUploadSessionProtocolError < 0);
+  CHECK(shouldRefreshUploadSession(401, false));
+  CHECK(shouldRefreshUploadSession(403, false));
+  CHECK(!shouldRefreshUploadSession(403, true));
+  CHECK(!shouldRefreshUploadSession(500, false));
+  return true;
+}
+
+static bool httpDateClockFallback() {
+  using namespace alloy_logger_internal;
+  uint32_t epoch = 0;
+  CHECK(parseHttpDate("Thu, 01 Jan 1970 00:00:00 GMT", &epoch) && epoch == 0u);
+  CHECK(parseHttpDate("Sun, 06 Nov 1994 08:49:37 GMT", &epoch) && epoch == 784111777u);
+  CHECK(parseHttpDate("Wed, 04 Nov 2026 13:06:33 GMT", &epoch) && epoch == 1793797593u);
+  CHECK(parseHttpDate("Thu, 29 Feb 2024 23:59:59 GMT", &epoch) && epoch == 1709251199u);
+  CHECK(parseHttpDate("Fri, 01 Mar 2024 00:00:00 GMT", &epoch) && epoch == 1709251200u);
+  CHECK(parseHttpDate("Thu, 31 Dec 2099 23:59:59 GMT", &epoch) && epoch == 4102444799u);
+  epoch = 7;
+  CHECK(!parseHttpDate("Sun, 29 Feb 2026 00:00:00 GMT", &epoch));   // 2026 is not a leap year
+  CHECK(!parseHttpDate("Sun, 06 Nov 1994 08:49:37 UTC", &epoch));
+  CHECK(!parseHttpDate("Sunday, 06-Nov-94 08:49:37 GMT", &epoch));  // obsolete RFC 850 form
+  CHECK(!parseHttpDate("Sun Nov  6 08:49:37 1994", &epoch));        // obsolete asctime form
+  CHECK(!parseHttpDate("Sun, 06 Foo 1994 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 06 Nov 1994 24:00:00 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 6 Nov 1994 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("Sun, 06 Nov 1969 08:49:37 GMT", &epoch));
+  CHECK(!parseHttpDate("", &epoch));
+  CHECK(!parseHttpDate(nullptr, &epoch));
+  CHECK(epoch == 7u);                                                  // untouched on failure
+  CHECK(kSntpGraceMs > 0u);
+  return true;
+}
+
 struct TestCase {
   const char* name;
   bool (*function)();
@@ -1505,6 +1575,10 @@ int main() {
       {"sample batch boundaries", sampleBatchBoundaries},
       {"blocked END terminal latch", blockedEndLatchesAndCompletesExactly},
       {"drain corruption", corruptionDuringDrainFaults},
+      {"ESP32 end rejects returned lost buffers", loggerEndRejectsReturnedLostBuffers},
+      {"ESP32 end waits for metadata", loggerEndWaitsForMetadata},
+      {"ESP32 direct session recovery", directUploadSessionRecoveryPolicy},
+      {"ESP32 HTTP Date clock fallback", httpDateClockFallback},
   };
   size_t passed = 0;
   for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {
