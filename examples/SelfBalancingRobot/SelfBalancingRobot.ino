@@ -5,14 +5,14 @@
 // core 1 are never disturbed. log() is a non-blocking memcpy. This sketch simulates the loop so it
 // runs standalone — drop the same calls into your firmware (e.g. the SBR right after computePID()).
 
-#include <AlloyLogger.h>
+#include <AlloyStorage.h>
 #include <math.h>
 
 const char* WIFI_SSID = "your-2.4GHz-ssid";
 const char* WIFI_PASS = "your-wifi-password";
 const char* ALLOY_KEY = "your-alloy-api-key";
 
-AlloyLogger alloy;
+AlloyStorage alloy;
 
 void setup() {
   Serial.begin(115200);

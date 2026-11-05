@@ -47,7 +47,7 @@ public:
 
       const int putStatus = _last;
       _haveSession = false;                 // any failed PUT invalidates the cached credentials
-      if (!alloy_logger_internal::shouldRefreshUploadSession(putStatus, refreshed)) return false;
+      if (!alloy_storage_internal::shouldRefreshUploadSession(putStatus, refreshed)) return false;
       refreshed = true;
       _retries++;
       // Loop once with _haveSession=false: mint fresh credentials and re-sign the exact payload.
@@ -111,10 +111,10 @@ private:
     _ak = doc["credentials"]["access_key_id"].as<String>();
     _sk = doc["credentials"]["secret_access_key"].as<String>();
     _tok = doc["credentials"]["session_token"].as<String>();
-    if (!alloy_logger_internal::uploadSessionComplete(
+    if (!alloy_storage_internal::uploadSessionComplete(
           _bucket.c_str(), _endpoint.c_str(), _region.c_str(), _prefix.c_str(),
           _ak.c_str(), _sk.c_str(), _tok.c_str())) {
-      _last = alloy_logger_internal::kUploadSessionProtocolError;
+      _last = alloy_storage_internal::kUploadSessionProtocolError;
       return false;
     }
     if (_prefix.length() && _prefix[_prefix.length()-1] != '/') _prefix += '/';

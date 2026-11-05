@@ -1,13 +1,18 @@
-# AlloyLogger
+# Alloy Storage SDK for Arduino
 
 Stream Arduino sensor and telemetry data **straight to [Alloy](https://usealloy.ai)** from an ESP32
-or Arduino UNO R4 WiFi. ESP32 keeps the existing background `AlloyLogger` API; UNO R4 uses a separate
+or Arduino UNO R4 WiFi. ESP32 uses the background `AlloyStorage` API; UNO R4 uses a separate
 cooperative `AlloyUnoR4` adapter with typed binary capture and a fixed six-slot RAM journal. **Every
 power-on lands in Alloy as one MCAP mission** for replay, inspection, SQL, and MCP analysis.
 
 You usually don't declare anything: Alloy's AI reasons over your tag + field names + values (a
 `heading` ranging 0–360 under a `bno055` tag → it's a magnetic heading). Optionally `describe()` a
 field to hand Alloy units/ranges for even sharper context.
+
+> **Formerly AlloyLogger.** 0.6.0 renames the library to the Alloy Storage SDK. Existing sketches keep
+> compiling: `#include <AlloyLogger.h>` and `AlloyLogger alloy;` still work, with a deprecation warning.
+> New code uses `#include <AlloyStorage.h>` and `AlloyStorage alloy;`; every method is unchanged. This
+> library is the Arduino part of the [Alloy Storage SDK](https://github.com/alloyrobotics/alloy-storage-sdk).
 
 ## Quick Start: confirm your first ESP32 mission
 
@@ -20,8 +25,10 @@ Alloy Edge installation is involved. Arduino UNO R4 WiFi users should start with
 
 1. Install the **esp32 by Espressif Systems** board package in Arduino IDE's Boards Manager.
 2. Install **ArduinoJson** in Library Manager.
-3. Download this repository as a ZIP, then choose **Sketch → Include Library → Add .ZIP Library**.
-4. Open **File → Examples → AlloyLogger → FirstMission** and select your ESP32 board and port.
+3. Install **AlloyStorage** in Library Manager. Until the 0.6 rename reaches Library Manager, download
+   the ZIP from the [Arduino release repo](https://github.com/alloyrobotics/alloy-logger-arduino/releases)
+   and choose **Sketch → Include Library → Add .ZIP Library**.
+4. Open **File → Examples → AlloyStorage → FirstMission** and select your ESP32 board and port.
 
 ### 2. Create a data API key
 
@@ -78,7 +85,7 @@ Once this works, move the key into a gitignored `secrets.h` and adapt
 
 ## See it before you flash anything
 
-[![AlloyLogger live demo: ask why the robot fell over and the 3D replay jumps to the fall](docs/demo-screenshot.png)](https://alloylogger.com/demo/?src=github)
+[![Alloy Storage SDK live demo: ask why the robot fell over and the 3D replay jumps to the fall](docs/demo-screenshot.png)](https://alloylogger.com/demo/?src=github)
 
 **[Open the live demo →](https://alloylogger.com/demo/?src=github)** Replay a robot mission in your
 browser: pick a robot (balancer, 6-axis arm, survey quad, tracked rescue), ask the analyst why it
@@ -86,12 +93,12 @@ failed, and watch the 3D replay and telemetry jump to the exact moment it went w
 in it came through `alloy.log()`-style channels. No account, no hardware, nothing to install.
 
 > Verified end-to-end on real hardware: the existing ESP32 CSV path and the UNO R4 binary path both
-> produced indexed MCAP missions in Alloy Mesh Storage. The UNO gate covered normal upload, WiFi
+> produced indexed MCAP missions in Alloy Storage. The UNO gate covered normal upload, WiFi
 > reconnect, dropped-response retry, fixed-RAM overflow, reset-before-END, and clean post-reset capture.
 
 ```cpp
-#include <AlloyLogger.h>
-AlloyLogger alloy;
+#include <AlloyStorage.h>
+AlloyStorage alloy;
 
 void setup() {
   alloy.wifi("ssid", "pass");                 // optional — omit if already connected
@@ -112,7 +119,7 @@ void loop() {
 ## Why it's nice
 
 The bullets below describe the ESP32 path. UNO R4 deliberately uses a cooperative API documented in
-[AlloyLogger on Arduino UNO R4 WiFi](docs/uno-r4-wifi.md), rather than pretending FreeRTOS background
+[the SDK on Arduino UNO R4 WiFi](docs/uno-r4-wifi.md), rather than pretending FreeRTOS background
 tasks were ported to the RA4M1.
 
 - **Self-documenting calls.** The field name sits next to its value — nothing to declare, nothing to
@@ -124,6 +131,9 @@ tasks were ported to the RA4M1.
   see the note on cores below.
 - **Reliable by default.** RAM-buffered with **store-and-forward** — if WiFi drops, buffers queue and
   flush on reconnect; if the uplink can't keep up, the oldest buffer is shed (counted), never a crash.
+  While uploads are backed up, buffers fill completely instead of flushing every 4 s, so an outage
+  is limited by RAM, not time: the default pool (4 x 12 KB) rides out about a minute of no Wi-Fi at
+  600 bytes/s of logging (measured: a 25 s outage on an ESP32-C3 lost nothing).
 - **Zero flash wear.** Nothing touches the filesystem, so it coexists with OTA / `min_spiffs` layouts.
 - **Alloy-native.** Each run becomes one indexed `.mcap` in your mesh: Replay/Inspect, mission
   summaries, and SQL all work out of the box, plus a one-time semantics sidecar for Alloy AI.
@@ -139,8 +149,8 @@ Depends on **ArduinoJson** (Library Manager).
 ```bash
 arduino-cli lib install ArduinoJson
 # clone this repo into your libraries folder, or for a one-off build:
-arduino-cli compile --fqbn esp32:esp32:esp32 --library /path/to/AlloyLogger your_sketch
-arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --library /path/to/AlloyLogger your_uno_sketch
+arduino-cli compile --fqbn esp32:esp32:esp32 --library /path/to/alloy-storage-sdk/mcu/arduino your_sketch
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --library /path/to/alloy-storage-sdk/mcu/arduino your_uno_sketch
 ```
 
 You need an Alloy account + a data-API key
@@ -153,7 +163,7 @@ sketch — see [Security](#security) for what it can do.
 ## ESP32 API
 
 ```cpp
-AlloyLogger alloy;
+AlloyStorage alloy;
 ```
 
 **Config (all optional, before `begin`)** — each returns `*this` so you can chain:
@@ -167,7 +177,7 @@ AlloyLogger alloy;
 | `alloy.insecure()` | Skip TLS verification (TLS-intercepting proxies etc.). | verify via Mozilla roots |
 | `alloy.direct()` | Legacy transport: SigV4 CSV chunks straight to your mesh, no MCAP assembly. | cloud |
 | `alloy.finalizeAfter(sec)` | How long after the last data the cloud declares the run over and finalizes its `.mcap`. | 2 min (server; clamped 30 s – 30 min) |
-| `alloy.ingestUrl(url)` | Override the AlloyLogger Cloud endpoint. | `https://ingest.alloylogger.com` |
+| `alloy.ingestUrl(url)` | Override the Alloy Storage ingest endpoint. | `https://ingest.alloylogger.com` |
 
 **Start:**
 ```cpp
@@ -294,7 +304,7 @@ t_ns,temp_c,humidity
 The header makes each ESP32 chunk **self-describing** and dropping per-row JSON keys roughly halves
 the bytes versus JSON. UNO R4 instead sends bounded **Alloy Device Wire v1** binary frames with typed
 schemas, CRC32C, exact duplicate/conflict semantics, clock anchors, explicit gaps/loss counters, and
-an exact 48-byte ACK. See the [wire contract](docs/alloy-device-wire-v1.md).
+an exact 48-byte ACK. See the [wire contract](https://github.com/alloyrobotics/alloy-storage-sdk/blob/main/spec/alloy-device-wire-v1.md).
 
 **Why CSV on the wire, MCAP at rest?** Text CSV is a deliberate v1 choice for the device side:
 you can eyeball a chunk over the serial monitor, replay one with `curl`, and a run that dies
@@ -302,7 +312,7 @@ mid-chunk still parses up to the last complete row. Nothing downstream reads it,
 cloud service assembles every run into a chunked, indexed **MCAP** with JSON-Schema channels, so
 replay, SQL, and tooling never touch CSV.
 
-Chunks go to **AlloyLogger Cloud** (`ingest.alloylogger.com`) over plain keep-alive HTTPS. The
+Chunks go to the **Alloy Storage ingest service** (`ingest.alloylogger.com`) over plain keep-alive HTTPS. The
 service stages them and, when the run ends (`alloy.end()` or ~2 min of silence), assembles **one
 indexed `.mcap`** and uploads it into *your* Alloy mesh at `<meshPath>/<session>/`, together with
 the **`meta.json`** semantics sidecar built from your `describe()` calls:
@@ -315,7 +325,7 @@ change the device id, mesh path, or Alloy Device Wire v1 schema.
 Every power-on = one mission in Alloy: replayable, inspectable, SQL-queryable, visible to
 `list_missions` and the rest of the Alloy MCP surface.
 
-**Privacy note:** in cloud mode your telemetry and API key transit the AlloyLogger Cloud service.
+**Privacy note:** in cloud mode your telemetry and API key transit the Alloy Storage ingest service.
 Chunks are staged only until the run's `.mcap` is uploaded, and the key is held for the session's
 finalize step, then purged after successful delivery or bounded retry exhaustion. An authenticated
 `end()` retry can rehydrate an exhausted session and rearm finalization. If you'd rather not have a

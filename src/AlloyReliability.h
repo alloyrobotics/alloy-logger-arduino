@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-namespace alloy_logger_internal {
+namespace alloy_storage_internal {
 
 // Outside HTTPClient's transport-error range; negative so the logger retains and retries data.
 static const int kUploadSessionProtocolError = -1010;
@@ -97,4 +97,4 @@ inline bool shouldRefreshUploadSession(int putStatus, bool refreshAlreadyAttempt
   return !refreshAlreadyAttempted && (putStatus == 401 || putStatus == 403);
 }
 
-}  // namespace alloy_logger_internal
+}  // namespace alloy_storage_internal

@@ -3,14 +3,14 @@
 // Fill in WiFi + your Alloy API key (Dashboard → Mesh Storage → API key), flash, and watch the
 // data appear in Alloy Mesh Storage under demos/basic/. No SD card, nothing blocks loop().
 
-#include <AlloyLogger.h>
+#include <AlloyStorage.h>
 #include <math.h>
 
 const char* WIFI_SSID = "your-2.4GHz-ssid";
 const char* WIFI_PASS = "your-wifi-password";
 const char* ALLOY_KEY = "your-alloy-api-key";
 
-AlloyLogger alloy;
+AlloyStorage alloy;
 
 void setup() {
   Serial.begin(115200);

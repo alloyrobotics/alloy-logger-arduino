@@ -5,14 +5,14 @@
 // watchAnalog()/watch() for ADC pins and variables. So when something unexpected happens, the
 // data is already there: no reflash to add a probe, no serial monitor, no SD card.
 
-#include <AlloyLogger.h>
+#include <AlloyStorage.h>
 #include <math.h>
 
 const char* WIFI_SSID = "your-2.4GHz-ssid";
 const char* WIFI_PASS = "your-wifi-password";
 const char* ALLOY_KEY = "your-alloy-api-key";
 
-AlloyLogger alloy;
+AlloyStorage alloy;
 
 // Any variable you want streamed: expose it through a captureless function and watch() it.
 float g_pitch = 0;

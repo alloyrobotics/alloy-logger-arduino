@@ -1482,7 +1482,7 @@ static bool corruptionDuringDrainFaults() {
 }
 
 static bool loggerEndRejectsReturnedLostBuffers() {
-  using namespace alloy_logger_internal;
+  using namespace alloy_storage_internal;
   CHECK(endGate(true, true, 4, 4, 403) == END_FAILED);
   CHECK(endGate(true, true, 4, 4, 409) == END_FAILED);
   CHECK(endGate(true, true, 4, 4, kDataLossStatus) == END_FAILED);
@@ -1492,7 +1492,7 @@ static bool loggerEndRejectsReturnedLostBuffers() {
 }
 
 static bool loggerEndWaitsForMetadata() {
-  using namespace alloy_logger_internal;
+  using namespace alloy_storage_internal;
   CHECK(endGate(false, false, 4, 4, 0) == END_WAITING);
   CHECK(endGate(true, false, 4, 4, 0) == END_FAILED);
   CHECK(endGate(true, true, 4, 4, 0) == END_READY);
@@ -1500,7 +1500,7 @@ static bool loggerEndWaitsForMetadata() {
 }
 
 static bool directUploadSessionRecoveryPolicy() {
-  using namespace alloy_logger_internal;
+  using namespace alloy_storage_internal;
   const char* fields[] = {
       "bucket", "https://r2.example", "auto", "uploads/path", "access", "secret", "token",
   };
@@ -1526,7 +1526,7 @@ static bool directUploadSessionRecoveryPolicy() {
 }
 
 static bool httpDateClockFallback() {
-  using namespace alloy_logger_internal;
+  using namespace alloy_storage_internal;
   uint32_t epoch = 0;
   CHECK(parseHttpDate("Thu, 01 Jan 1970 00:00:00 GMT", &epoch) && epoch == 0u);
   CHECK(parseHttpDate("Sun, 06 Nov 1994 08:49:37 GMT", &epoch) && epoch == 784111777u);

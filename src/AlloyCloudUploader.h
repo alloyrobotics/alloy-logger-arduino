@@ -1,4 +1,4 @@
-// AlloyCloudUploader.h — internal: posts sealed buffers to AlloyLogger Cloud
+// AlloyCloudUploader.h — internal: posts sealed buffers to Alloy Storage ingest
 // (ingest.alloylogger.com), which assembles each power-on into ONE indexed .mcap and uploads it
 // into your Alloy mesh. This is the default transport: plain keep-alive HTTPS POSTs, no SigV4,
 // no upload-session dance on the device. See AlloyUploader.h for the legacy direct path.

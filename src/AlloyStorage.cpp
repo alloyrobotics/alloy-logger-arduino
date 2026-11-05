@@ -1,6 +1,6 @@
 #if defined(ARDUINO_ARCH_ESP32)
 
-#include "AlloyLogger.h"
+#include "AlloyStorage.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <sys/time.h>
@@ -71,15 +71,15 @@ static void alloySanitize(char* s) {
 }
 
 // ----------------------------- AlloyRecord ---------------------------------
-AlloyRecord::AlloyRecord(AlloyLogger* log, const char* chan) : _log(log), _done(false) {
+AlloyRecord::AlloyRecord(AlloyStorage* log, const char* chan) : _log(log), _done(false) {
   strncpy(_chan, chan ? chan : "", ALLOY_CHAN_MAX - 1); _chan[ALLOY_CHAN_MAX - 1] = 0;
   uint64_t ns = log ? log->nowNs() : 0;
   _hlen = snprintf(_hdr, ALLOY_HDR_MAX, "t_ns");
   // Fixed 19-digit stamp: pre-SNTP boot-relative values get rebased in place before upload
-  // (same width, no buffer rebuild). See AlloyLogger::rebaseRows.
+  // (same width, no buffer rebuild). See AlloyStorage::rebaseRows.
   _rlen = snprintf(_row, ALLOY_ROW_MAX, "%019llu", (unsigned long long)ns);
   if (_hlen < 0 || _rlen < 0) { _hlen = _rlen = 0; _done = true; }
-  _sig = AlloyLogger::hashStr(_hdr, _hlen);
+  _sig = AlloyStorage::hashStr(_hdr, _hlen);
 }
 
 AlloyRecord::AlloyRecord(AlloyRecord&& o) noexcept
@@ -108,7 +108,7 @@ AlloyRecord& AlloyRecord::set(const char* name, float v) {
   if (hfits && rn > 0 && rn < ALLOY_ROW_MAX - _rlen) {
     _hdr[_hlen] = ',';
     memcpy(_hdr + _hlen + 1, name, nn + 1);
-    _sig = AlloyLogger::hashStr(_hdr + _hlen, 1 + nn, _sig);    // same bytes as the header text
+    _sig = AlloyStorage::hashStr(_hdr + _hlen, 1 + nn, _sig);    // same bytes as the header text
     _hlen += 1 + nn; _rlen += rn;
   } else {                       // field didn't fit — roll back both so header and row stay aligned
     _hdr[_hlen] = 0; _row[_rlen] = 0;
@@ -121,8 +121,8 @@ AlloyRecord::~AlloyRecord() {
   if (_rlen > 0) _log->commitRow(_chan, _hdr, _hlen, _row, _rlen, _sig);
 }
 
-// ----------------------------- AlloyLogger ---------------------------------
-AlloyLogger& AlloyLogger::describe(const char* channel, const char* field,
+// ----------------------------- AlloyStorage ---------------------------------
+AlloyStorage& AlloyStorage::describe(const char* channel, const char* field,
                                    const char* unit, float lo, float hi, const char* about) {
   if (!channel || !field || _nDesc >= ALLOY_MAX_DESC) return *this;
   Desc& d = _desc[_nDesc++];
@@ -141,7 +141,7 @@ static float alloy_sysRssi()   { return (float)WiFi.RSSI(); }
 // Seconds, not ms: float's 24-bit mantissa loses ms precision after ~4.6 h of uptime.
 static float alloy_sysUptime() { return (float)(esp_timer_get_time() / 1000000.0); }
 
-AlloyLogger& AlloyLogger::addWatch(const char* chan, const char* field,
+AlloyStorage& AlloyStorage::addWatch(const char* chan, const char* field,
                                    uint8_t kind, uint8_t pin, float (*fn)()) {
   if (_started || _nWatch >= ALLOY_MAX_WATCH) return *this;   // watches must be registered before begin()
   Watch& w = _watch[_nWatch++];
@@ -151,18 +151,18 @@ AlloyLogger& AlloyLogger::addWatch(const char* chan, const char* field,
   return *this;
 }
 
-AlloyLogger& AlloyLogger::watchAnalog(uint8_t pin, const char* field) {
+AlloyStorage& AlloyStorage::watchAnalog(uint8_t pin, const char* field) {
   char f[24];
   if (field) { strncpy(f, field, sizeof(f) - 1); f[sizeof(f) - 1] = 0; }
   else snprintf(f, sizeof(f), "adc%u", (unsigned)pin);
   return addWatch("adc", f, 1, pin, nullptr);
 }
 
-AlloyLogger& AlloyLogger::watch(const char* channel, const char* field, float (*fn)()) {
+AlloyStorage& AlloyStorage::watch(const char* channel, const char* field, float (*fn)()) {
   return addWatch(channel, field, 2, 0, fn);
 }
 
-float AlloyLogger::readWatch(const Watch& w) {
+float AlloyStorage::readWatch(const Watch& w) {
   switch (w.kind) {
     case 1:  return (float)analogRead(w.pin);
     default: return w.fn ? w.fn() : NAN;
@@ -176,7 +176,7 @@ float AlloyLogger::readWatch(const Watch& w) {
 // poll-burst first and summarized as frequency. Activity is never invisible: a pulse too
 // short to show as a level change still shows as hz > 0.
 
-AlloyLogger& AlloyLogger::scope() {
+AlloyStorage& AlloyStorage::scope() {
   if (_started || _scopeOn) return *this;
   _scopeOn = true;
   addWatch("sys", "heap",      2, 0, alloy_sysHeap);
@@ -190,7 +190,7 @@ AlloyLogger& AlloyLogger::scope() {
 
 // Count level transitions on a pin by spinning on the input register for `us` microseconds.
 // Faithful to ~1MHz; undercounts above (a measured floor — "very fast" is the honest answer).
-uint32_t AlloyLogger::scopePollBurst(uint8_t pin, uint32_t us) {
+uint32_t AlloyStorage::scopePollBurst(uint8_t pin, uint32_t us) {
 #if ALLOY_SCOPE_PINS
   uint32_t n = 0;
   uint32_t bit = 1UL << (pin & 31);
@@ -210,7 +210,7 @@ uint32_t AlloyLogger::scopePollBurst(uint8_t pin, uint32_t us) {
 
 // IRAM so it keeps counting during flash ops. Only ever increments and CLEARS int_ena —
 // self-disarming bounds an interrupt storm even if the sampler task is starved.
-void IRAM_ATTR AlloyLogger::scopeIsrHandler(void* arg) {
+void IRAM_ATTR AlloyStorage::scopeIsrHandler(void* arg) {
   ScopeIsr* c = (ScopeIsr*)arg;
   c->edges = c->edges + 1;
 #if ALLOY_SCOPE_PINS
@@ -218,7 +218,7 @@ void IRAM_ATTR AlloyLogger::scopeIsrHandler(void* arg) {
 #endif
 }
 
-void AlloyLogger::scopeAddPin(uint8_t pin) {
+void AlloyStorage::scopeAddPin(uint8_t pin) {
   if (_nScope >= ALLOY_MAX_SCOPE || (_scopeMask >> pin) & 1) return;
   ScopePin& sp = _scope[_nScope++];
   sp.pin = pin; sp.mode = 2; sp.quiet = 0; sp.hz = 0;
@@ -238,7 +238,7 @@ void AlloyLogger::scopeAddPin(uint8_t pin) {
 // Which pins does this sketch actually use? Read the hardware's own config: software
 // outputs, pins routed to peripherals through the GPIO matrix (either direction), and
 // inputs with a pull configured. Cheap enough to re-run every ~2s to catch late pinMode()s.
-void AlloyLogger::scopeScan() {
+void AlloyStorage::scopeScan() {
 #if ALLOY_SCOPE_PINS
   const int nPins = SOC_GPIO_PIN_COUNT;
   const int nSigs = sizeof(GPIO.func_in_sel_cfg) / sizeof(GPIO.func_in_sel_cfg[0]);
@@ -269,13 +269,13 @@ void AlloyLogger::scopeScan() {
 #endif
 }
 
-void AlloyLogger::scopeInit() {
+void AlloyStorage::scopeInit() {
   // ESP_ERR_INVALID_STATE = the sketch already installed the service — fine, share it.
   gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
 }
 
 // Full edge-counting attach. Safe to call repeatedly: handler_add replaces the existing entry.
-void AlloyLogger::scopeAttach(ScopePin& sp) {
+void AlloyStorage::scopeAttach(ScopePin& sp) {
   sp.prevEdges = sp.isr.edges; sp.isr.tickBase = sp.isr.edges;
   gpio_set_intr_type((gpio_num_t)sp.pin, GPIO_INTR_ANYEDGE);
   gpio_isr_handler_add((gpio_num_t)sp.pin, scopeIsrHandler, (void*)&sp.isr);
@@ -285,7 +285,7 @@ void AlloyLogger::scopeAttach(ScopePin& sp) {
 
 // Poll-burst FIRST, attach an ISR only if the pin is provably slow. This is what makes a
 // 26MHz SPI clock safe: it's detected in 1ms of polling and never gets an interrupt at all.
-void AlloyLogger::scopeClassify(ScopePin& sp) {
+void AlloyStorage::scopeClassify(ScopePin& sp) {
   uint32_t tr = scopePollBurst(sp.pin, 1000);
   if (tr >= 2) {                                           // >= ~1kHz: frequency-summarized
     sp.mode = 1; sp.hz = tr * 500.0f;
@@ -294,7 +294,7 @@ void AlloyLogger::scopeClassify(ScopePin& sp) {
   }
 }
 
-void AlloyLogger::scopeTick() {
+void AlloyStorage::scopeTick() {
   _scopeTicks++;
   bool periodic = (_scopeTicks % 20) == 0;                 // ~2s at the default 100ms tick
   if (periodic) scopeScan();                               // catch pins configured after begin()
@@ -354,7 +354,7 @@ void AlloyLogger::scopeTick() {
 }
 
 // Build one aligned row per distinct channel, reading each of that channel's watched fields.
-void AlloyLogger::sampleTick() {
+void AlloyStorage::sampleTick() {
   for (uint8_t i = 0; i < _nWatch; i++) {
     bool first = true;                                    // process a channel only at first sight
     for (uint8_t k = 0; k < i; k++)
@@ -368,9 +368,9 @@ void AlloyLogger::sampleTick() {
   }
 }
 
-void AlloyLogger::samplerTramp(void* self) { static_cast<AlloyLogger*>(self)->samplerLoop(); }
+void AlloyStorage::samplerTramp(void* self) { static_cast<AlloyStorage*>(self)->samplerLoop(); }
 
-void AlloyLogger::samplerLoop() {
+void AlloyStorage::samplerLoop() {
   // No need to wait for SNTP: pre-sync rows carry boot-relative stamps and get rebased on upload.
   if (_scopeOn) scopeInit();   // ISR service installs here so interrupts land on _core
   const TickType_t period = pdMS_TO_TICKS(_sampleMs ? _sampleMs : 100);
@@ -378,7 +378,7 @@ void AlloyLogger::samplerLoop() {
   for (;;) { if (_scopeOn) scopeTick(); sampleTick(); vTaskDelayUntil(&next, period); }
 }
 
-uint64_t AlloyLogger::nowNs() {
+uint64_t AlloyStorage::nowNs() {
   // Before SNTP lands, stamp with boot-relative ns (< 1e18, vs ~1.8e18 for real epoch ns);
   // the uploader rebases those rows to wall-clock once the offset is known.
   if (time(nullptr) < ALLOY_EPOCH_SANE) return (uint64_t)esp_timer_get_time() * 1000ULL;
@@ -386,7 +386,7 @@ uint64_t AlloyLogger::nowNs() {
   return (uint64_t)tv.tv_sec * 1000000000ULL + (uint64_t)tv.tv_usec * 1000ULL;
 }
 
-uint32_t AlloyLogger::hashStr(const char* s, int n, uint32_t h) {
+uint32_t AlloyStorage::hashStr(const char* s, int n, uint32_t h) {
   // FNV-1a — cheap field-set fingerprint. Seedable so AlloyRecord can fold names in one at a
   // time as set() appends them, matching a single pass over the full header text.
   for (int i = 0; i < n; i++) { h ^= (uint8_t)s[i]; h *= 16777619u; }
@@ -394,7 +394,7 @@ uint32_t AlloyLogger::hashStr(const char* s, int n, uint32_t h) {
 }
 
 // frees everything begin() allocated, so a failed begin() can be retried safely
-void AlloyLogger::teardown() {
+void AlloyStorage::teardown() {
   _ready = false;
   if (_pool) { for (uint8_t i = 0; i < _nBuf; i++) free(_pool[i].data); delete[] _pool; _pool = nullptr; }
   if (_freeQ)    { vQueueDelete(_freeQ);    _freeQ = nullptr; }
@@ -402,7 +402,7 @@ void AlloyLogger::teardown() {
   if (_mtx)      { vSemaphoreDelete(_mtx);  _mtx = nullptr; }
 }
 
-bool AlloyLogger::waitForWiFi(uint32_t waitMs) {
+bool AlloyStorage::waitForWiFi(uint32_t waitMs) {
   if (WiFi.status() == WL_CONNECTED) return true;
   _lastStatus = ALLOY_STATUS_WIFI;
   if (_ssid) WiFi.begin(_ssid, _pass);
@@ -413,32 +413,32 @@ bool AlloyLogger::waitForWiFi(uint32_t waitMs) {
   return WiFi.status() == WL_CONNECTED;
 }
 
-bool AlloyLogger::retryableStatus(int status) {
+bool AlloyStorage::retryableStatus(int status) {
   return status <= 0 || status == 408 || status == 425 || status == 429 || status >= 500;
 }
 
-uint32_t AlloyLogger::retryDelayMs(uint8_t attempt) {
+uint32_t AlloyStorage::retryDelayMs(uint8_t attempt) {
   uint8_t shift = attempt > 5 ? 5 : attempt;
   uint32_t ms = 1000UL << shift;
   return ms > 30000UL ? 30000UL : ms;
 }
 
-uint32_t AlloyLogger::queued() const {
+uint32_t AlloyStorage::queued() const {
   if (!_pendingQ) return _inFlight ? 1 : 0;
   return (uint32_t)uxQueueMessagesWaiting(_pendingQ) + (_inFlight ? 1U : 0U);
 }
 
-String AlloyLogger::lastError() const {
+String AlloyStorage::lastError() const {
   int status = _lastStatus;
   if (status == 0 || (status >= 200 && status < 300)) return String();
   if (status == ALLOY_STATUS_WIFI) return "WiFi disconnected";
   if (status == ALLOY_STATUS_CONFIG) return "missing API key or mesh path";
-  if (status == ALLOY_STATUS_MEMORY) return "could not allocate AlloyLogger buffers";
-  if (status == ALLOY_STATUS_TASK) return "could not start AlloyLogger background task";
+  if (status == ALLOY_STATUS_MEMORY) return "could not allocate AlloyStorage buffers";
+  if (status == ALLOY_STATUS_TASK) return "could not start AlloyStorage background task";
   if (status == ALLOY_STATUS_DRAIN_TIMEOUT) return "metadata or buffer drain timed out; delivery is still retrying";
-  if (status == alloy_logger_internal::kDataLossStatus)
+  if (status == alloy_storage_internal::kDataLossStatus)
     return "a buffered data chunk was dropped before delivery";
-  if (status == alloy_logger_internal::kUploadSessionProtocolError)
+  if (status == alloy_storage_internal::kUploadSessionProtocolError)
     return "upload-session response was incomplete; delivery is retrying";
   if (status < 0) return "network or TLS transport error (" + String(status) + "); delivery is retrying";
   if (status == 400 || status == 413) return "upload rejected; check mesh path and buffer size (HTTP " + String(status) + ")";
@@ -449,7 +449,7 @@ String AlloyLogger::lastError() const {
   return "upload failed (HTTP " + String(status) + ")";
 }
 
-bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* dataUrl) {
+bool AlloyStorage::begin(const char* apiKey, const char* meshPath, const char* dataUrl) {
   if (_started) return true;
   if (!apiKey || !apiKey[0] || !meshPath || !meshPath[0]) {
     _lastStatus = ALLOY_STATUS_CONFIG;
@@ -513,7 +513,7 @@ bool AlloyLogger::begin(const char* apiKey, const char* meshPath, const char* da
 }
 
 // caller holds _mtx
-AlloyLogger::Slot* AlloyLogger::slotFor(const char* chan) {
+AlloyStorage::Slot* AlloyStorage::slotFor(const char* chan) {
   for (uint8_t i = 0; i < _nSlots; i++) if (!strcmp(_slots[i].chan, chan)) return &_slots[i];
   if (_nSlots >= ALLOY_MAX_CHANNELS) return nullptr;
   Slot& s = _slots[_nSlots++];
@@ -522,7 +522,7 @@ AlloyLogger::Slot* AlloyLogger::slotFor(const char* chan) {
   return &s;
 }
 
-void AlloyLogger::commitRow(const char* chan, const char* hdr, int hlen, const char* row, int rlen,
+void AlloyStorage::commitRow(const char* chan, const char* hdr, int hlen, const char* row, int rlen,
                             uint32_t sig) {
   if (!_started || _ending) return;
   if (hlen <= 0 || rlen <= 0 || (size_t)hlen + 1 + (size_t)rlen + 1 > _bufBytes) {
@@ -563,10 +563,12 @@ void AlloyLogger::commitRow(const char* chan, const char* hdr, int hlen, const c
 
   // 90%-full seals unconditionally — that's genuine backpressure. A time-based flush instead
   // claims its replacement buffer atomically (or defers): otherwise simultaneous multi-channel
-  // flushes race for one free buffer and shed each other's sealed data.
+  // flushes race for one free buffer and shed each other's sealed data. It also waits while a
+  // sealed chunk is still queued: during an outage, sealing part-full buffers on the timer would
+  // spend the pool on mostly empty chunks and shed data the RAM could have held.
   if (b->len >= (_bufBytes * 9) / 10) {
     seal(b); s->active = nullptr;
-  } else if ((millis() - s->since) >= _flushMs) {
+  } else if ((millis() - s->since) >= _flushMs && uxQueueMessagesWaiting(_pendingQ) == 0) {
     Buf* nb;
     if (xQueueReceive(_freeQ, &nb, 0) == pdTRUE) {
       nb->len = 0; memcpy(nb->chan, b->chan, ALLOY_CHAN_MAX);
@@ -577,31 +579,31 @@ void AlloyLogger::commitRow(const char* chan, const char* hdr, int hlen, const c
 }
 
 // caller holds _mtx
-AlloyLogger::Buf* AlloyLogger::getFree(Buf* avoid) {
+AlloyStorage::Buf* AlloyStorage::getFree(Buf* avoid) {
   Buf* b = nullptr;
   if (xQueueReceive(_freeQ, &b, 0) == pdTRUE) return b;
   if (xQueueReceive(_pendingQ, &b, 0) == pdTRUE) {          // shed oldest pending
     if (b == avoid) { xQueueSend(_pendingQ, &b, 0); return nullptr; }  // sole pending is the chunk we just sealed — drop the new row instead
-    _droppedBufs++; _deliveryFailureStatus = alloy_logger_internal::kDataLossStatus;
+    _droppedBufs++; _deliveryFailureStatus = alloy_storage_internal::kDataLossStatus;
     b->len = 0; return b;
   }
   return nullptr;
 }
 
 // caller holds _mtx
-void AlloyLogger::seal(Buf* b) {
+void AlloyStorage::seal(Buf* b) {
   if (xQueueSend(_pendingQ, &b, 0) != pdTRUE) {
     Buf* old;
     if (xQueueReceive(_pendingQ, &old, 0) == pdTRUE) {
       old->len = 0; _droppedBufs++;
-      _deliveryFailureStatus = alloy_logger_internal::kDataLossStatus;
+      _deliveryFailureStatus = alloy_storage_internal::kDataLossStatus;
       xQueueSend(_freeQ, &old, 0);
     }
     xQueueSend(_pendingQ, &b, 0);
   }
 }
 
-String AlloyLogger::buildMetaJson() {
+String AlloyStorage::buildMetaJson() {
   JsonDocument doc;                                  // ArduinoJson handles string escaping
   doc["device"] = _devId;
   if (_fw) doc["firmware"] = _fw;
@@ -625,7 +627,7 @@ String AlloyLogger::buildMetaJson() {
 
 // Rows stamped before SNTP sync carry boot-relative ns (19 zero-padded digits, < 1e18).
 // Rewrite them to wall-clock ns in place: same width, so the buffer layout is untouched.
-void AlloyLogger::rebaseRows(Buf* b) {
+void AlloyStorage::rebaseRows(Buf* b) {
   if (!_bootOffsetNs) return;
   char* p = b->data; char* end = b->data + b->len;
   while (p < end) {
@@ -649,7 +651,7 @@ void AlloyLogger::rebaseRows(Buf* b) {
 // Graceful end-of-run: seal everything, give the uploader a bounded window to drain, then ask
 // the cloud service to finalize the .mcap immediately (instead of the inactivity wait —
 // ~2 min by default, see finalizeAfter()).
-bool AlloyLogger::end(uint32_t drainMs) {
+bool AlloyStorage::end(uint32_t drainMs) {
   if (!_started) return false;
   if (_endAccepted) return true;
   _ending = true;                         // stop producers before sealing their active buffers
@@ -668,23 +670,23 @@ bool AlloyLogger::end(uint32_t drainMs) {
   // Metadata uses the same persistent HTTPClient as chunks and is uploaded first by the task.
   // Gate on both metadata settlement and the exact all-N-buffers-returned condition so /end can
   // never race that transport or finalize ahead of a buffer in the dequeue→inFlight handoff.
-  alloy_logger_internal::EndGate gate;
+  alloy_storage_internal::EndGate gate;
   do {
-    gate = alloy_logger_internal::endGate(
+    gate = alloy_storage_internal::endGate(
       _metaSettled, _metaDelivered, (unsigned)uxQueueMessagesWaiting(_freeQ),
       (unsigned)_nBuf, _deliveryFailureStatus);
-    if (gate != alloy_logger_internal::END_WAITING) break;
+    if (gate != alloy_storage_internal::END_WAITING) break;
     if ((uint32_t)(millis() - t0) >= drainMs) break;
     vTaskDelay(pdMS_TO_TICKS(50));
   } while (true);
-  if (gate == alloy_logger_internal::END_WAITING) {
+  if (gate == alloy_storage_internal::END_WAITING) {
     _lastStatus = ALLOY_STATUS_DRAIN_TIMEOUT;
     return false;                    // do not finalize ahead of metadata/data still being retried
   }
-  if (gate == alloy_logger_internal::END_FAILED) {
+  if (gate == alloy_storage_internal::END_FAILED) {
     _lastStatus = !_metaDelivered
-      ? (_metaStatus ? _metaStatus : alloy_logger_internal::kDataLossStatus)
-      : (_deliveryFailureStatus ? _deliveryFailureStatus : alloy_logger_internal::kDataLossStatus);
+      ? (_metaStatus ? _metaStatus : alloy_storage_internal::kDataLossStatus)
+      : (_deliveryFailureStatus ? _deliveryFailureStatus : alloy_storage_internal::kDataLossStatus);
     return false;                    // all buffers returned, but at least one was not delivered
   }
   if (_direct) { _endAccepted = true; return true; }
@@ -713,7 +715,7 @@ bool AlloyLogger::end(uint32_t drainMs) {
   return false;
 }
 
-void AlloyLogger::taskTramp(void* self) { static_cast<AlloyLogger*>(self)->taskLoop(); }
+void AlloyStorage::taskTramp(void* self) { static_cast<AlloyStorage*>(self)->taskLoop(); }
 
 // Set the clock from the HTTP Date header of the server the uploader already talks to. The
 // ESP32 cores build mbedTLS without certificate date checks, so this verified request works
@@ -721,7 +723,7 @@ void AlloyLogger::taskTramp(void* self) { static_cast<AlloyLogger*>(self)->taskL
 // leaves the server, so this clock runs slightly behind and a later SNTP sync steps it forward,
 // never back. SNTP keeps running; the session's boot offset is captured once, so a run stays
 // internally consistent either way.
-bool AlloyLogger::clockFromServer() {
+bool AlloyStorage::clockFromServer() {
   WiFiClientSecure cli;
   if (_insecure) cli.setInsecure();
   else {
@@ -739,17 +741,17 @@ bool AlloyLogger::clockFromServer() {
   String date = code > 0 ? http.header("Date") : String();
   http.end();
   uint32_t epoch = 0;
-  if (!alloy_logger_internal::parseHttpDate(date.c_str(), &epoch) || epoch < ALLOY_EPOCH_SANE)
+  if (!alloy_storage_internal::parseHttpDate(date.c_str(), &epoch) || epoch < ALLOY_EPOCH_SANE)
     return false;
   if (time(nullptr) >= ALLOY_EPOCH_SANE) return true;  // SNTP landed during the request
   struct timeval tv = {(time_t)epoch, 0};
   return settimeofday(&tv, nullptr) == 0;
 }
 
-void AlloyLogger::taskLoop() {
+void AlloyStorage::taskLoop() {
   // UTC is needed for the session id, row stamps and (direct mode) SigV4. Prefer SNTP; if it
   // hasn't landed after a short grace, take the server's clock rather than hold every buffer.
-  uint32_t t0 = millis(), nextTry = alloy_logger_internal::kSntpGraceMs;
+  uint32_t t0 = millis(), nextTry = alloy_storage_internal::kSntpGraceMs;
   uint8_t clockAttempt = 0;
   while (time(nullptr) < ALLOY_EPOCH_SANE) {
     if ((uint32_t)(millis() - t0) >= nextTry) {
@@ -829,7 +831,7 @@ void AlloyLogger::taskLoop() {
       } else if (terminal) {
         _failed++;
         _deliveryFailureStatus = _lastStatus
-          ? _lastStatus : alloy_logger_internal::kDataLossStatus;
+          ? _lastStatus : alloy_storage_internal::kDataLossStatus;
       }
       b->len = 0; xQueueSend(_freeQ, &b, 0);
       _inFlight = false;
@@ -837,6 +839,7 @@ void AlloyLogger::taskLoop() {
       xSemaphoreTake(_mtx, portMAX_DELAY);
       for (uint8_t i = 0; i < _nSlots; i++) {
         Slot& s = _slots[i];
+        if (uxQueueMessagesWaiting(_pendingQ) > 0) break;  // backlog: keep filling (see commitRow)
         if (s.active && s.active->len > 0 && (millis() - s.since) >= _flushMs) {
           Buf* nb;                                     // claim the replacement atomically, else retry in 250ms
           if (xQueueReceive(_freeQ, &nb, 0) != pdTRUE) continue;

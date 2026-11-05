@@ -4,7 +4,7 @@
 // records generated telemetry for 20 seconds, prints upload health as it runs, and explicitly
 // finalizes the mission. No sensors are required.
 
-#include <AlloyLogger.h>
+#include <AlloyStorage.h>
 #include <WiFi.h>
 #include <math.h>
 
@@ -19,7 +19,7 @@ const char* ALLOY_MESH_PATH = "first-missions/esp32";  // letters, numbers, _, -
 // to ALLOY_MESH_PATH. Do not commit the real value; rotate it if this sketch is ever shared.
 
 constexpr uint32_t MISSION_SECONDS = 20;
-AlloyLogger alloy;
+AlloyStorage alloy;
 
 bool unchanged(const char* value, const char* placeholder) {
   return !value || !value[0] || strcmp(value, placeholder) == 0;
@@ -90,7 +90,7 @@ void printRecoveryGuidance(bool finalized) {
   } else if (status == 409) {
     Serial.println("- This run had already finalized. Reset the ESP32 to start a fresh mission.");
   } else if (status == 429 || status >= 500) {
-    Serial.println("- AlloyLogger Cloud is temporarily unavailable. The retained buffer will keep retrying.");
+    Serial.println("- Alloy Storage ingest is temporarily unavailable. The retained buffer will keep retrying.");
   } else if (status < 0 && error.length()) {
     Serial.println("- HTTPS could not complete. Restore Wi-Fi or try another network while the board stays powered.");
   }
@@ -106,7 +106,7 @@ void setup() {
   delay(1000);
 
   Serial.println();
-  Serial.println("=== AlloyLogger first mission ===");
+  Serial.println("=== Alloy Storage first mission ===");
 
   if (unchanged(WIFI_SSID, "YOUR_2_4_GHZ_WIFI_NAME"))
     stopWithMessage("WIFI_SSID is still the placeholder.");
@@ -130,7 +130,7 @@ void setup() {
     stopWithMessage("Wi-Fi did not connect in 20 seconds. Check the SSID, password, and 2.4 GHz network.");
   Serial.printf("      Connected: %s | RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
-  Serial.printf("[2/4] Starting AlloyLogger | mesh path: %s\n", ALLOY_MESH_PATH);
+  Serial.printf("[2/4] Starting the Alloy Storage SDK | mesh path: %s\n", ALLOY_MESH_PATH);
   alloy.device("esp32-first-mission", "first-mission-v1")
        .mission("first ESP32 mission")
        .finalizeAfter(30);
@@ -142,7 +142,7 @@ void setup() {
       Serial.print("      ");
       Serial.println(error);
     }
-    stopWithMessage("AlloyLogger could not start.");
+    stopWithMessage("The Alloy Storage SDK could not start.");
   }
 
   Serial.printf("[3/4] Recording generated data for %lu seconds...\n", (unsigned long)MISSION_SECONDS);

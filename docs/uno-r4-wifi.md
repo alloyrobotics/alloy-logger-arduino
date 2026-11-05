@@ -1,4 +1,4 @@
-# AlloyLogger on Arduino UNO R4 WiFi
+# Alloy Storage SDK on Arduino UNO R4 WiFi
 
 UNO R4 support is a separate adapter, not a port of the ESP32/FreeRTOS logger. Include
 `<AlloyUnoR4.h>` and call `poll()` from the sketch. The portable binary core owns schemas, samples,
