@@ -14,7 +14,6 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include "esp_arduino_version.h"
 
 // Same embedded-Mozilla-CA-bundle trick as AlloyUploader.h (identical extern redeclaration is fine).
 extern "C" {
@@ -59,11 +58,7 @@ private:
 
   void setupTLS() {
     if (_insecure) { _cli.setInsecure(); return; }
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     _cli.setCACertBundle(alloy_crt_bundle_start, alloy_crt_bundle_end - alloy_crt_bundle_start);
-#else
-    _cli.setCACertBundle(alloy_crt_bundle_start);
-#endif
   }
 
   bool post(const char* route, const uint8_t* data, size_t len, const char* contentType,

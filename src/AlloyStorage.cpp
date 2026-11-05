@@ -727,11 +727,7 @@ bool AlloyStorage::clockFromServer() {
   WiFiClientSecure cli;
   if (_insecure) cli.setInsecure();
   else {
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     cli.setCACertBundle(alloy_crt_bundle_start, alloy_crt_bundle_end - alloy_crt_bundle_start);
-#else
-    cli.setCACertBundle(alloy_crt_bundle_start);
-#endif
   }
   HTTPClient http;
   if (!http.begin(cli, _clockUrl)) return false;

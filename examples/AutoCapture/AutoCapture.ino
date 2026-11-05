@@ -10,7 +10,7 @@
 
 const char* WIFI_SSID = "your-2.4GHz-ssid";
 const char* WIFI_PASS = "your-wifi-password";
-const char* ALLOY_KEY = "your-alloy-api-key";
+const char* ALLOY_KEY = "your-alloy-device-key";
 
 AlloyStorage alloy;
 

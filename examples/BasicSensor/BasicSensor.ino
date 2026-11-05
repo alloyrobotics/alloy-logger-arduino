@@ -1,6 +1,6 @@
 // BasicSensor — stream a sensor's readings to Alloy in ~10 lines.
 //
-// Fill in WiFi + your Alloy API key (Dashboard → Mesh Storage → API key), flash, and watch the
+// Fill in WiFi + this robot's Alloy device key (never the org API key), flash, and watch the
 // data appear in Alloy Mesh Storage under demos/basic/. No SD card, nothing blocks loop().
 
 #include <AlloyStorage.h>
@@ -8,7 +8,7 @@
 
 const char* WIFI_SSID = "your-2.4GHz-ssid";
 const char* WIFI_PASS = "your-wifi-password";
-const char* ALLOY_KEY = "your-alloy-api-key";
+const char* ALLOY_KEY = "your-alloy-device-key";
 
 AlloyStorage alloy;
 

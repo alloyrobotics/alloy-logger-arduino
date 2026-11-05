@@ -22,6 +22,16 @@
 
 #pragma once
 #include <Arduino.h>
+
+// Arduino-ESP32 3.x only. Under 2.x (PlatformIO espressif32 7.x and older) a classic ESP32 reset on
+// the task watchdog during the first verified-TLS upload, and scope() uses IDF 5 register names.
+#if __has_include("esp_arduino_version.h")
+#include "esp_arduino_version.h"
+#endif
+#if !defined(ESP_ARDUINO_VERSION_MAJOR) || ESP_ARDUINO_VERSION_MAJOR < 3
+#error "AlloyStorage needs Arduino-ESP32 3.0 or newer: esp32 board package 3.x in the Arduino IDE, or platform espressif32 8.x (or pioarduino) in PlatformIO"
+#endif
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"

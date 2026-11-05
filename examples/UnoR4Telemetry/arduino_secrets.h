@@ -4,4 +4,4 @@
 // in a private working copy for flashing, then clear them before committing.
 #define SECRET_WIFI_SSID ""
 #define SECRET_WIFI_PASSWORD ""
-#define SECRET_ALLOY_API_KEY ""
+#define SECRET_ALLOY_API_KEY ""  // this board's device key, never the org API key

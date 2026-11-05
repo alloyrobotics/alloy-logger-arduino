@@ -11,12 +11,13 @@
 // --------------------------- CHANGE THESE ---------------------------------
 const char* WIFI_SSID       = "YOUR_2_4_GHZ_WIFI_NAME";
 const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";
-const char* ALLOY_API_KEY   = "YOUR_ALLOY_DATA_API_KEY";
+const char* ALLOY_API_KEY   = "YOUR_ALLOY_DEVICE_KEY";
 const char* ALLOY_MESH_PATH = "first-missions/esp32";  // letters, numbers, _, -, and / only
 // --------------------------------------------------------------------------
 
-// Current limitation: this is a long-lived, org-wide data API key, not a write-only key scoped
-// to ALLOY_MESH_PATH. Do not commit the real value; rotate it if this sketch is ever shared.
+// ALLOY_API_KEY is this robot's own device key (ask your coding agent to create one through the
+// Alloy MCP). Never flash the org API key from Mesh Storage → API keys. Do not commit the real
+// value; reject the device in Mesh Storage → Devices if the board is lost or the sketch is shared.
 
 constexpr uint32_t MISSION_SECONDS = 20;
 AlloyStorage alloy;
@@ -86,7 +87,7 @@ void printRecoveryGuidance(bool finalized) {
   if (status == 400 || status == 413) {
     Serial.println("- A setting or payload was rejected. Re-check the mesh path and retry this example unchanged.");
   } else if (status == 401 || status == 403) {
-    Serial.println("- The Alloy data API key was rejected. Copy a fresh key and reflash.");
+    Serial.println("- Alloy rejected the device key. Create a new device key and reflash.");
   } else if (status == 409) {
     Serial.println("- This run had already finalized. Reset the ESP32 to start a fresh mission.");
   } else if (status == 429 || status >= 500) {
@@ -112,7 +113,7 @@ void setup() {
     stopWithMessage("WIFI_SSID is still the placeholder.");
   if (unchanged(WIFI_PASSWORD, "YOUR_WIFI_PASSWORD"))
     stopWithMessage("WIFI_PASSWORD is still the placeholder.");
-  if (unchanged(ALLOY_API_KEY, "YOUR_ALLOY_DATA_API_KEY"))
+  if (unchanged(ALLOY_API_KEY, "YOUR_ALLOY_DEVICE_KEY"))
     stopWithMessage("ALLOY_API_KEY is still the placeholder.");
   if (!validMeshPath(ALLOY_MESH_PATH))
     stopWithMessage("ALLOY_MESH_PATH must be 1-128 characters using only letters, numbers, _, -, and / (no edge slash).");

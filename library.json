@@ -1,0 +1,32 @@
+{
+  "name": "AlloyStorage",
+  "version": "0.6.0",
+  "description": "Alloy Storage SDK for Arduino: stream ESP32 and Arduino UNO R4 WiFi sensor telemetry straight to Alloy Storage (usealloy.ai). Every power-on becomes one MCAP mission. Formerly AlloyLogger.",
+  "keywords": "alloy, telemetry, logging, robotics, mcap, esp32, uno-r4, wifi",
+  "homepage": "https://usealloy.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alloyrobotics/alloy-storage-sdk.git"
+  },
+  "authors": [
+    {
+      "name": "Hugh Phan",
+      "email": "hugh@usealloy.ai",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": ["espressif32", "renesas-ra"],
+  "headers": ["Alloy.h", "AlloyStorage.h", "AlloyUnoR4.h"],
+  "dependencies": [
+    {
+      "owner": "bblanchon",
+      "name": "ArduinoJson",
+      "version": "^7.0.0"
+    }
+  ],
+  "export": {
+    "exclude": ["test", "extras", ".pio"]
+  }
+}

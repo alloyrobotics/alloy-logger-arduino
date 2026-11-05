@@ -18,7 +18,6 @@
 #include <ArduinoJson.h>
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
-#include "esp_arduino_version.h"
 #include "AlloyReliability.h"
 
 // The ESP32 Arduino core's prebuilt SDK embeds the full Mozilla root CA bundle
@@ -73,11 +72,7 @@ private:
 
   void setupTLS(WiFiClientSecure& cli) {
     if (_insecure) { cli.setInsecure(); return; }
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     cli.setCACertBundle(alloy_crt_bundle_start, alloy_crt_bundle_end - alloy_crt_bundle_start);
-#else
-    cli.setCACertBundle(alloy_crt_bundle_start);
-#endif
   }
 
   bool ensureSession(const char* meshPath) {
