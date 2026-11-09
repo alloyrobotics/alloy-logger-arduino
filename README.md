@@ -25,9 +25,8 @@ Alloy Edge installation is involved. Arduino UNO R4 WiFi users should start with
 
 1. Install the **esp32 by Espressif Systems** board package (3.0 or newer) in Arduino IDE's Boards Manager.
 2. Install **ArduinoJson** in Library Manager.
-3. Install **AlloyStorage** in Library Manager. Until the 0.6 rename reaches Library Manager, download
-   the ZIP from the [Arduino release repo](https://github.com/alloyrobotics/alloy-logger-arduino/releases)
-   and choose **Sketch → Include Library → Add .ZIP Library**.
+3. Install **AlloyStorage** in Library Manager (**Sketch → Include Library → Manage Libraries**, search
+   "AlloyStorage").
 4. Open **File → Examples → AlloyStorage → FirstMission** and select your ESP32 board and port.
 
 ### 2. Get a device key for this robot
